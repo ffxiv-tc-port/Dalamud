@@ -209,6 +209,14 @@ public class StyleModelV1 : StyleModel
         return model;
     }
 
+    public override StyleModel Clone()
+    {
+        var clone = (StyleModelV1)this.MemberwiseClone();
+        clone.Colors        = new Dictionary<string, Vector4>(this.Colors);
+        clone.BuiltInColors = this.BuiltInColors?.Clone();
+        return clone;
+    }
+
     /// <summary>
     /// Apply this StyleModel via ImGui.
     /// </summary>
