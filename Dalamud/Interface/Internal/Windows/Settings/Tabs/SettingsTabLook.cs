@@ -191,7 +191,9 @@ internal sealed class SettingsTabLook : SettingsTab
 
         ImGui.AlignTextToFramePadding();
         ImGui.Text(Loc.Localize("DalamudSettingsGlobalUiScale", "Global Font Scale"));
-
+        
+        ImGui.Spacing();
+        
         var buttonSize =
             GlobalUiScalePresets
                 .Select(x => ImGui.CalcTextSize(x.Item1, true))
