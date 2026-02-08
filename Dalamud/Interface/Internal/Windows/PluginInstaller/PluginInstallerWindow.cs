@@ -3851,10 +3851,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         totalScore += CalculateMatchScore(searchTerms, manifest.Description,  weight: 100);
 
         if (manifest.Tags != null)
-        {
-            foreach (var tag in manifest.Tags)
-                totalScore += CalculateMatchScore(searchTerms, tag, weight: 100);
-        }
+            scores.Add(matcher.MatchesAny(manifest.Tags.Select(tag => tag.ToLowerInvariant()).ToArray()) * 100);
 
         // 完全没匹配到的结果应该返回一个负分，确保它们排在最后
         if (totalScore == 0) return -100;
