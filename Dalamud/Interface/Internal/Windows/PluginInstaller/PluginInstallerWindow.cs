@@ -6,6 +6,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -3843,7 +3844,6 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         var totalScore = 0;
 
-        // 基于各种元数据字段计算匹配分数，权重递减
         totalScore += CalculateMatchScore(searchTerms, manifest.Name,         weight: 200);
         totalScore += CalculateMatchScore(searchTerms, manifest.InternalName, weight: 180);
         totalScore += CalculateMatchScore(searchTerms, manifest.Author,       weight: 150);
@@ -3851,14 +3851,16 @@ internal class PluginInstallerWindow : Window, IDisposable
         totalScore += CalculateMatchScore(searchTerms, manifest.Description,  weight: 100);
 
         if (manifest.Tags != null)
-            scores.Add(matcher.MatchesAny(manifest.Tags.Select(tag => tag.ToLowerInvariant()).ToArray()) * 100);
-
-        // 完全没匹配到的结果应该返回一个负分，确保它们排在最后
+        {
+            foreach (var tag in manifest.Tags)
+                totalScore += CalculateMatchScore(searchTerms, tag,  weight: 100);
+        }
+        
         if (totalScore == 0) return -100;
         return totalScore;
     }
 
-    private int CalculateMatchScore(string[] searchTerms, string? target, int weight, bool requireFullMatch = false)
+    private int CalculateMatchScore(string[] searchTerms, string? target, int weight)
     {
         if (string.IsNullOrWhiteSpace(target))
             return 0;
@@ -3869,32 +3871,19 @@ internal class PluginInstallerWindow : Window, IDisposable
         foreach (var term in searchTerms)
         {
             if (term.Length < 2) continue; // 忽略过短的搜索词
-
-            if (requireFullMatch)
-            {
-                if (targetLower.Equals(term))
-                    score += weight;
-            }
-            else
-            {
-                // 完全匹配给予最高分
-                if (targetLower.Equals(term))
-                    score += weight * 2;
-                // 作为单词起始给予高分（适用于英文和拼音搜索）
-                else if (targetLower.StartsWith(term, StringComparison.OrdinalIgnoreCase) ||
-                        targetLower.Contains(" " + term, StringComparison.OrdinalIgnoreCase))
-                    score += (int)(weight * 1.5);
-                // 包含搜索词给予基础分
-                else if (targetLower.Contains(term, StringComparison.OrdinalIgnoreCase))
-                    score += weight;
+            
+            if (targetLower.Equals(term))
+                score += weight * 2;
+            else if (targetLower.StartsWith(term, StringComparison.OrdinalIgnoreCase) ||
+                     targetLower.Contains(" " + term, StringComparison.OrdinalIgnoreCase))
+                score += (int)(weight * 1.5);
+            else if (targetLower.Contains(term, StringComparison.OrdinalIgnoreCase))
+                score += weight;
                 
-                // 对中文搜索特别优化：中文通常没有单词边界，所以部分匹配也很重要
-                if (ContainsHanScript(term) && targetLower.Contains(term))
-                    score += (int)(weight * 1.3);
-            }
+            if (IsChinese(term) && targetLower.Contains(term))
+                score += (int)(weight * 1.3);
         }
 
-        // 对于长搜索词给予额外加分（4个字符以上）
         foreach (var term in searchTerms.Where(t => t.Length >= 4))
         {
             if (targetLower.Contains(term))
@@ -3903,17 +3892,30 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         return score;
     }
-
-    private bool ContainsHanScript(string text)
+    
+    private static bool IsChinese(string input)
     {
-        // 检查字符串中是否包含汉字
-        foreach (char c in text)
+        if (string.IsNullOrEmpty(input))
+            return false;
+
+        foreach (var rune in input.EnumerateRunes())
         {
-            if ((c >= 0x4E00 && c <= 0x9FFF) || // CJK统一汉字
-                (c >= 0x3400 && c <= 0x4DBF))   // CJK扩展A
-                return true;
+            if (!IsChineseRune(rune))
+                return false;
         }
-        return false;
+
+        return true;
+        
+        static bool IsChineseRune(Rune rune)
+        {
+            var value = (uint)rune.Value;
+
+            return value - 0x4E00u  <= 0x9FFFu  - 0x4E00u  ||
+                   value - 0x3400u  <= 0x4DBFu  - 0x3400u  ||
+                   value - 0x20000u <= 0x2FA1Fu - 0x20000u ||
+                   value - 0x30000u <= 0x323AFu - 0x30000u ||
+                   value - 0xF900u  <= 0xFAFFu  - 0xF900u;
+        }
     }
 
     private (bool IsInstalled, LocalPlugin Plugin) IsManifestInstalled(IPluginManifest? manifest)
