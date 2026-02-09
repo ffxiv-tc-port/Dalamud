@@ -865,7 +865,7 @@ int main() {
 
         if (exinfo.ExceptionRecord.ExceptionCode == 0x12345678) {
             std::cout << "Restart requested" << std::endl;
-            TerminateProcess(g_hProcess, 0);
+            TerminateProcess(g_hProcess, 0x12345678);
             restart_game_using_injector(IdRadioRestartNormal, *launcherArgs);
             break;
         }
