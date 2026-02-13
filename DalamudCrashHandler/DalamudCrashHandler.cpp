@@ -29,6 +29,9 @@
 #include <shlobj_core.h>
 #include <winhttp.h>
 
+#include <dxgi.h>
+#pragma comment(lib, "dxgi.lib")
+
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(linker, "/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
@@ -469,6 +472,32 @@ void open_folder_and_select_items(HWND hwndOpener, const std::wstring& path) {
 
     if (piid)
         ILFree(piid);
+}
+
+std::vector<IDXGIAdapter1*> enum_dxgi_adapters()
+{
+    std::vector<IDXGIAdapter1*> vAdapters;
+
+    IDXGIFactory1* pFactory = NULL;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory)))
+    {
+        return vAdapters;
+    }
+
+    IDXGIAdapter1* pAdapter;
+    for (UINT i = 0;
+        pFactory->EnumAdapters1(i, &pAdapter) != DXGI_ERROR_NOT_FOUND;
+        ++i)
+    {
+        vAdapters.push_back(pAdapter);
+    }
+
+    if (pFactory)
+    {
+        pFactory->Release();
+    }
+
+    return vAdapters;
 }
 
 void export_tspack(HWND hWndParent, const std::filesystem::path& logDir, const std::string& crashLog, const std::string& troubleshootingPackData) {
@@ -1055,8 +1084,15 @@ int main() {
         else
             log << std::format(L"转储错误: {}", dumpError) << std::endl;
         log << std::format(L"系统时间: {0:%F} {0:%T} {0:%Ez}", std::chrono::system_clock::now()) << std::endl;
-        log << std::format(L"CPU 厂商: {}", vendor) << std::endl;
-        log << std::format(L"CPU 品牌: {}", brand) << std::endl;
+        log << std::format(L"处理器厂商: {}", vendor) << std::endl;
+        log << std::format(L"处理器品牌: {}", brand) << std::endl;
+
+        for (IDXGIAdapter1* adapter : enum_dxgi_adapters()) {
+            DXGI_ADAPTER_DESC1 adapterDescription{};
+            adapter->GetDesc1(&adapterDescription);
+            log << std::format(L"显卡描述: {}", adapterDescription.Description) << std::endl;
+        }
+
         log << L"\n" << stackTrace << std::endl;
 
         if (pProgressDialog)
