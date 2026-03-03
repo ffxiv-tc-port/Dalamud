@@ -237,6 +237,9 @@ internal class PluginInstallerWindow : Window, IDisposable
         Testing,
         Updateable,
         Dev,
+        Enabled,
+        Disabled,
+        Incompatible,
     }
 
     private bool AnyOperationInProgress => this.installStatus == OperationStatus.InProgress ||
@@ -1536,6 +1539,15 @@ internal class PluginInstallerWindow : Window, IDisposable
             if (filter == InstalledPluginListFilter.Testing && !manager.HasTestingOptIn(plugin.Manifest))
                 continue;
 
+            if (filter == InstalledPluginListFilter.Enabled && (!plugin.IsWantedByAnyProfile || plugin.IsOutdated || plugin.IsBanned || plugin.IsOrphaned || plugin.IsDecommissioned))
+                continue;
+
+            if (filter == InstalledPluginListFilter.Disabled && (plugin.IsWantedByAnyProfile || plugin.IsOutdated || plugin.IsBanned || plugin.IsOrphaned || plugin.IsDecommissioned))
+                continue;
+
+            if (filter == InstalledPluginListFilter.Incompatible && !(plugin.IsOutdated || plugin.IsBanned || plugin.IsOrphaned || plugin.IsDecommissioned))
+                continue;
+
             // Find applicable update and manifest, if we have them
             AvailablePluginUpdate? update = null;
             RemotePluginManifest? remoteManifest = null;
@@ -1584,6 +1596,9 @@ internal class PluginInstallerWindow : Window, IDisposable
                 InstalledPluginListFilter.Testing => Locs.TabBody_NoPluginsTesting,
                 InstalledPluginListFilter.Updateable => Locs.TabBody_NoPluginsUpdateable,
                 InstalledPluginListFilter.Dev => Locs.TabBody_NoPluginsDev,
+                InstalledPluginListFilter.Enabled => Locs.TabBody_NoPluginsEnabled,
+                InstalledPluginListFilter.Disabled => Locs.TabBody_NoPluginsDisabled,
+                InstalledPluginListFilter.Incompatible => Locs.TabBody_NoPluginsIncompatible,
                 _ => throw new ArgumentException(null, nameof(filter)),
             };
 
@@ -1822,6 +1837,18 @@ internal class PluginInstallerWindow : Window, IDisposable
 
                     case PluginCategoryManager.CategoryKind.UpdateablePlugins:
                         this.DrawInstalledPluginList(InstalledPluginListFilter.Updateable);
+                        break;
+
+                    case PluginCategoryManager.CategoryKind.EnabledPlugins:
+                        this.DrawInstalledPluginList(InstalledPluginListFilter.Enabled);
+                        break;
+
+                    case PluginCategoryManager.CategoryKind.DisabledPlugins:
+                        this.DrawInstalledPluginList(InstalledPluginListFilter.Disabled);
+                        break;
+
+                    case PluginCategoryManager.CategoryKind.IncompatiblePlugins:
+                        this.DrawInstalledPluginList(InstalledPluginListFilter.Incompatible);
                         break;
 
                     case PluginCategoryManager.CategoryKind.PluginProfiles:
@@ -4173,14 +4200,30 @@ internal class PluginInstallerWindow : Window, IDisposable
         #endregion
 
         #region Tab body
-        public static string TabBody_LoadingPlugins => "正在加载插件...";
-        public static string TabBody_DownloadFailed => "下载失败。";
-        public static string TabBody_SafeMode => "Dalamud 正在安全模式下运行，重启游戏以激活插件。";
-        public static string TabBody_NoPluginsTesting => "当前无测试中的插件。\n可在插件上下文菜单中选择加入测试版。";
-        public static string TabBody_NoPluginsInstalled => "未安装任何插件。\n可从\"所有插件\"标签页安装。";
-        public static string TabBody_NoPluginsAvailable => "当前无可用插件。";
-        public static string TabBody_NoPluginsUpdateable => "当前无可更新插件。";
-        public static string TabBody_NoPluginsDev => "无开发版插件。请从设置中添加。";
+
+        public static string TabBody_LoadingPlugins => Loc.Localize("InstallerLoading", "Loading plugins...");
+
+        public static string TabBody_DownloadFailed => Loc.Localize("InstallerDownloadFailed", "Download failed.");
+
+        public static string TabBody_SafeMode => Loc.Localize("InstallerSafeMode", "Dalamud is running in Plugin Safe Mode, restart to activate plugins.");
+
+        public static string TabBody_NoPluginsTesting => Loc.Localize("InstallerNoPluginsTesting", "You aren't testing any plugins at the moment!\nYou can opt in to testing versions in the plugin context menu.");
+
+        public static string TabBody_NoPluginsInstalled =>
+            string.Format(Loc.Localize("InstallerNoPluginsInstalled", "You don't have any plugins installed yet!\nYou can install them from the \"{0}\" tab."), PluginCategoryManager.Locs.Category_All);
+
+        public static string TabBody_NoPluginsAvailable => Loc.Localize("InstallerNoPluginsAvailable", "No plugins are available at the moment.");
+
+        public static string TabBody_NoPluginsUpdateable => Loc.Localize("InstallerNoPluginsUpdate", "No plugins have updates available at the moment.");
+
+        public static string TabBody_NoPluginsDev => Loc.Localize("InstallerNoPluginsDev", "You don't have any dev plugins. Add them from the settings.");
+
+        public static string TabBody_NoPluginsEnabled => Loc.Localize("InstallerNoPluginsEnabled", "You don't have any enabled plugins.");
+
+        public static string TabBody_NoPluginsDisabled => Loc.Localize("InstallerNoPluginsDisabled", "You don't have any disabled plugins.");
+
+        public static string TabBody_NoPluginsIncompatible => Loc.Localize("InstallerNoPluginsIncompatible", "You don't have any incompatible plugins.");
+
         #endregion
 
         #region Search text
