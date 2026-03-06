@@ -16,6 +16,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Console;
 using Dalamud.Game.Command;
+using Dalamud.Game.Player;
 using Dalamud.Interface.Animation.EasingFunctions;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Components;
@@ -3224,7 +3225,7 @@ internal class PluginInstallerWindow : Window, IDisposable
                         .GetAwaiter().GetResult();
                 }
 
-                Task.Run(profileManager.ApplyAllWantStatesAsync)
+                Task.Run(() => profileManager.ApplyAllWantStatesAsync("Remove from profile"))
                     .ContinueWith(this.DisplayErrorContinuation, Locs.ErrorModal_ProfileApplyFail);
             }
 
@@ -3237,6 +3238,8 @@ internal class PluginInstallerWindow : Window, IDisposable
         var inMultipleProfiles = !isDefaultPlugin && !isInSingleProfile;
         var inSingleNonDefaultProfileWhichIsDisabled =
             isInSingleProfile && !profilesThatWantThisPlugin.First().IsEnabled;
+        var inSingleNonDefaultProfileWhichDoesNotWantActive =
+            isInSingleProfile && !profilesThatWantThisPlugin.First().CheckWantsActiveFromGameState(Service<PlayerState>.Get().ContentId);
 
         if (plugin.State is PluginState.UnloadError or PluginState.LoadError or PluginState.DependencyResolutionFailed && !plugin.IsDev && !plugin.IsOutdated)
         {
@@ -3249,7 +3252,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         {
             ImGuiComponents.DisabledToggleButton(toggleId, this.loadingIndicatorKind == LoadingIndicatorKind.EnablingSingle);
         }
-        else if (disabled || inMultipleProfiles || inSingleNonDefaultProfileWhichIsDisabled || pluginManager.SafeMode)
+        else if (disabled || inMultipleProfiles || inSingleNonDefaultProfileWhichIsDisabled || inSingleNonDefaultProfileWhichDoesNotWantActive || pluginManager.SafeMode)
         {
             ImGuiComponents.DisabledToggleButton(toggleId, isLoadedAndUnloadable);
 
@@ -3259,6 +3262,8 @@ internal class PluginInstallerWindow : Window, IDisposable
                 ImGui.SetTooltip(Locs.PluginButtonToolTip_NeedsToBeInSingleProfile);
             else if (inSingleNonDefaultProfileWhichIsDisabled && ImGui.IsItemHovered())
                 ImGui.SetTooltip(Locs.PluginButtonToolTip_SingleProfileDisabled(profilesThatWantThisPlugin.First().Name));
+            else if (inSingleNonDefaultProfileWhichDoesNotWantActive && ImGui.IsItemHovered())
+                ImGui.SetTooltip(Locs.PluginButtonToolTip_SingleProfileDoesNotWantActive(profilesThatWantThisPlugin.First().Name));
         }
         else
         {
@@ -4301,25 +4306,47 @@ internal class PluginInstallerWindow : Window, IDisposable
         #endregion
 
         #region Plugin button tooltips
-        public static string PluginButtonToolTip_OpenUi => "打开此插件的界面";
-        public static string PluginButtonToolTip_OpenConfiguration => "打开此插件的设置";
-        public static string PluginButtonToolTip_PickProfiles => "为此插件选择合集";
-        public static string PluginButtonToolTip_ProfilesNotSupported => "此插件不支持合集";
-        public static string PluginButtonToolTip_StartOnBoot => "启动时加载";
-        public static string PluginButtonToolTip_AutomaticReloading => "自动重新加载";
-        public static string PluginButtonToolTip_NotifyForErrors => "当此插件产生错误时显示 Dalamud 通知";
-        public static string PluginButtonToolTip_DeletePlugin => "删除插件";
-        public static string PluginButtonToolTip_DeletePluginRestricted => "目前无法删除 - 请重启游戏。";
-        public static string PluginButtonToolTip_DeletePluginScheduled => "下次重启时删除插件";
-        public static string PluginButtonToolTip_DeletePluginScheduledCancel => "取消计划删除";
-        public static string PluginButtonToolTip_DeletePluginLoaded => "删除前请先禁用此插件。";
-        public static string PluginButtonToolTip_VisitPluginUrl => "访问插件网址";
-        public static string PluginButtonToolTip_UpdateSingle(string version) => $"更新到 {version}";
-        public static string PluginButtonToolTip_LoadUnloadFailed => "插件加载/卸载失败，请重启游戏并重试。";
-        public static string PluginButtonToolTip_NeedsToBeInDefault => "此插件在一个或多个合集中。启用或禁用需通过启用或禁用包含它的合集。\n若要手动管理，请将其从所有合集中移除。";
-        public static string PluginButtonToolTip_NeedsToBeInSingleProfile => "此插件在多个合集中。启用或禁用需通过启用或禁用包含它的合集。\n若要在此处管理，请确保它只在单个合集中。";
-        public static string PluginButtonToolTip_SafeMode => "安全模式下无法启用插件。";
-        public static string PluginButtonToolTip_SingleProfileDisabled(string name) => $"包含此插件的合集'{name}'已禁用。\n请在合集管理器中启用它，以便单独切换插件。";
+
+        public static string PluginButtonToolTip_OpenUi => Loc.Localize("InstallerTooltipOpenUi", "Open this plugin's interface");
+
+        public static string PluginButtonToolTip_OpenConfiguration => Loc.Localize("InstallerTooltipOpenConfig", "Open this plugin's settings");
+
+        public static string PluginButtonToolTip_PickProfiles => Loc.Localize("InstallerPickProfiles", "Pick collections for this plugin");
+
+        public static string PluginButtonToolTip_ProfilesNotSupported => Loc.Localize("InstallerProfilesNotSupported", "This plugin does not support collections");
+
+        public static string PluginButtonToolTip_StartOnBoot => Loc.Localize("InstallerStartOnBoot", "Start on boot");
+
+        public static string PluginButtonToolTip_AutomaticReloading => Loc.Localize("InstallerAutomaticReloading", "Automatic reloading");
+
+        public static string PluginButtonToolTip_NotifyForErrors => Loc.Localize("InstallerNotifyForErrors", "Show Dalamud notifications when this plugin is creating errors");
+
+        public static string PluginButtonToolTip_DeletePlugin => Loc.Localize("InstallerDeletePlugin ", "Delete plugin");
+
+        public static string PluginButtonToolTip_DeletePluginRestricted => Loc.Localize("InstallerDeletePluginRestricted", "Cannot delete right now - please restart the game.");
+
+        public static string PluginButtonToolTip_DeletePluginScheduled => Loc.Localize("InstallerDeletePluginScheduled", "Delete plugin on next restart");
+
+        public static string PluginButtonToolTip_DeletePluginScheduledCancel => Loc.Localize("InstallerDeletePluginScheduledCancel", "Cancel scheduled deletion");
+
+        public static string PluginButtonToolTip_DeletePluginLoaded => Loc.Localize("InstallerDeletePluginLoaded", "Disable this plugin before deleting it.");
+
+        public static string PluginButtonToolTip_VisitPluginUrl => Loc.Localize("InstallerVisitPluginUrl", "Visit plugin URL");
+
+        public static string PluginButtonToolTip_UpdateSingle(string version) => Loc.Localize("InstallerUpdateSingle", "Update to {0}").Format(version);
+
+        public static string PluginButtonToolTip_LoadUnloadFailed => Loc.Localize("InstallerLoadUnloadFailedTooltip", "Plugin load/unload failed, please restart your game and try again.");
+
+        public static string PluginButtonToolTip_NeedsToBeInDefault => Loc.Localize("InstallerUnloadNeedsToBeInDefault", "This plugin is in one or more collections. If you want to enable or disable it, please do so by enabling or disabling the collections it is in.\nIf you want to manage it manually, remove it from all collections.");
+
+        public static string PluginButtonToolTip_NeedsToBeInSingleProfile => Loc.Localize("InstallerUnloadNeedsToBeInSingleProfile", "This plugin is in more than one collection. If you want to enable or disable it, please do so by enabling or disabling the collections it is in.\nIf you want to manage it here, make sure it is only in a single collection.");
+
+        public static string PluginButtonToolTip_SafeMode => Loc.Localize("InstallerButtonSafeModeTooltip", "Cannot enable plugins in safe mode.");
+
+        public static string PluginButtonToolTip_SingleProfileDisabled(string name) => Loc.Localize("InstallerSingleProfileDisabled", "The collection '{0}' which contains this plugin is disabled.\nPlease enable it in the collections manager to toggle the plugin individually.").Format(name);
+
+        public static string PluginButtonToolTip_SingleProfileDoesNotWantActive(string name) => Loc.Localize("InstallerSingleProfileDoesNotWantActive", "The collection '{0}' which contains this plugin is active, but is not set to activate on this character.\nPlease change the collection's settings or remove the plugin from that collection to toggle the plugin individually.").Format(name);
+
         #endregion
 
         #region Notifications

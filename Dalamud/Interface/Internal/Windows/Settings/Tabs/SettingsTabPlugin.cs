@@ -278,6 +278,21 @@ internal class SettingsTabPlugin : SettingsTab
 
         ImGuiHelpers.ScaledDummy(15f);
 
+        var enableCharacter = Config.ProfilesEnableCharacters;
+        if (ImGui.Checkbox("插件合集角色隔离", ref receiveTest))
+        {
+            Config.ProfilesEnableCharacters = enableCharacter;
+            Config.QueueSave();
+        }
+
+        ImGui.TextColoredWrapped(ImGuiColors.DalamudGrey, "启用后，可将插件合集设置为仅对特定角色生效。\n此设置尚未经过充分测试，属于实验性功能，可能会导致某些插件出现问题。");
+        
+        ImGuiHelpers.ScaledDummy(15f);
+
+        ImGui.Separator();
+
+        ImGuiHelpers.ScaledDummy(15f);
+
         ImGui.TextColoredWrapped(ImGuiColors.DalamudGrey,
                                  "Dalamud 与插件总内存占用: " + Util.FormatBytes(GC.GetTotalMemory(false)));
 

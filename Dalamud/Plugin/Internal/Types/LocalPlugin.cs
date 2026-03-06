@@ -170,6 +170,12 @@ internal class LocalPlugin : IAsyncDisposable
     public bool IsLoaded => this.State == PluginState.Loaded;
 
     /// <summary>
+    /// Gets a value indicating whether this plugin is in the default profile.
+    /// </summary>
+    public bool IsInDefaultProfile =>
+        Service<ProfileManager>.Get().IsInDefaultProfile(this.EffectiveWorkingPluginId);
+
+    /// <summary>
     /// 获取一个值，表示此插件是否被任何配置文件希望激活。
     /// 包括默认配置文件。
     /// </summary>
