@@ -287,7 +287,7 @@ internal class PluginInstallerWindow : Window, IDisposable
     {
         var pluginManager = Service<PluginManager>.Get();
 
-        _ = pluginManager.ReloadPluginMastersAsync();
+        _ = pluginManager.ReloadAllReposAsync();
         _ = pluginManager.ScanDevPluginsAsync();
 
         if (!this.isSearchTextPrefilled)
@@ -792,7 +792,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         
         ImGui.SameLine();
         if (ImGui.Button("刷新插件列表"))
-            _ = pluginManager.ReloadPluginMastersAsync();
+            _ = pluginManager.ReloadAllReposAsync();
         
         ImGui.SameLine();
         ImGui.TextDisabled("|");
@@ -2724,7 +2724,6 @@ internal class PluginInstallerWindow : Window, IDisposable
             {
                 configuration.SeenPluginInternalName.AddRange(this.pluginListAvailable.Select(x => x.InternalName));
                 configuration.QueueSave();
-                pluginManager.RefilterPluginMasters();
             }
 
             var isHidden = configuration.HiddenPluginInternalName.Contains(manifest.InternalName);
@@ -2733,12 +2732,10 @@ internal class PluginInstallerWindow : Window, IDisposable
                 case false when ImGui.Selectable(Locs.PluginContext_HidePlugin):
                     configuration.HiddenPluginInternalName.Add(manifest.InternalName);
                     configuration.QueueSave();
-                    pluginManager.RefilterPluginMasters();
                     break;
                 case true when ImGui.Selectable(Locs.PluginContext_UnhidePlugin):
                     configuration.HiddenPluginInternalName.Remove(manifest.InternalName);
                     configuration.QueueSave();
-                    pluginManager.RefilterPluginMasters();
                     break;
             }
 
@@ -3107,7 +3104,7 @@ internal class PluginInstallerWindow : Window, IDisposable
                     }
 
                     configuration.QueueSave();
-                    _ = pluginManager.ReloadPluginMastersAsync();
+                    _ = pluginManager.ReloadAllReposAsync();
                 }
 
                 if (repoManifest?.IsTestingExclusive == true)

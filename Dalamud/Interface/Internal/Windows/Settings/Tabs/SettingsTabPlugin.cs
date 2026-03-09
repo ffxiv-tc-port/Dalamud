@@ -224,7 +224,7 @@ internal class SettingsTabPlugin : SettingsTab
             Config.UseSoilPluginManager = true;
             Config.QueueSave();
 
-            _ = Service<PluginManager>.Get().ReloadPluginMastersAsync();
+            _ = Service<PluginManager>.Get().ReloadAllReposAsync();
         }
 
         if (ImGui.RadioButton("使用默认分类", !useSoilPluginManager))
@@ -232,7 +232,7 @@ internal class SettingsTabPlugin : SettingsTab
             Config.UseSoilPluginManager = false;
             Config.QueueSave();
 
-            _ = Service<PluginManager>.Get().ReloadPluginMastersAsync();
+            _ = Service<PluginManager>.Get().ReloadAllReposAsync();
         }
 
         ImGuiHelpers.ScaledDummy(15f);

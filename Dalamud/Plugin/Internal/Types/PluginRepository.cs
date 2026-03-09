@@ -135,8 +135,8 @@ internal class PluginRepository
     /// <summary>
     ///     异步重新加载插件列表
     /// </summary>
-    /// <returns>更新后的状态</returns>
-    public async Task ReloadPluginMasterAsync()
+    /// <returns>The new state.</returns>
+    public async Task ReloadAsync()
     {
         this.State        = PluginRepositoryState.InProgress;
         this.PluginMaster = new List<RemotePluginManifest>().AsReadOnly();
