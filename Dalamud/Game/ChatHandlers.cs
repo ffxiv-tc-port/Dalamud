@@ -1,8 +1,5 @@
-using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 
 using CheapLoc;
 
@@ -15,10 +12,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Internal;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Internal;
-using Dalamud.Support;
 using Dalamud.Utility;
-
-using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
 namespace Dalamud.Game;
 
@@ -29,9 +23,6 @@ namespace Dalamud.Game;
 internal partial class ChatHandlers : IServiceType
 {
     private static readonly ModuleLog Log = ModuleLog.Create<ChatHandlers>();
-
-    [ServiceManager.ServiceDependency]
-    private readonly Dalamud dalamud = Service<Dalamud>.Get();
 
     [ServiceManager.ServiceDependency]
     private readonly DalamudConfiguration configuration = Service<DalamudConfiguration>.Get();
@@ -87,10 +78,14 @@ internal partial class ChatHandlers : IServiceType
         // For injections while logged in
         if (clientState.IsLoggedIn && clientState.TerritoryType == 0 && !this.hasSeenLoadingMsg)
             this.PrintWelcomeMessage();
+
 #if !DEBUG && false
             if (!this.hasSeenLoadingMsg)
                 return;
 #endif
+
+        var messageCopy = message;
+        var senderCopy = sender;
 
         var linkMatch = CompiledUrlRegex().Match(message.TextValue);
         if (linkMatch.Value.Length > 0)
