@@ -15,7 +15,6 @@ using Dalamud.Console;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.ClientState;
 using Dalamud.Game.ClientState.Conditions;
-using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Gui;
 using Dalamud.Hooking;
 using Dalamud.Interface.Animation.EasingFunctions;
@@ -25,7 +24,6 @@ using Dalamud.Interface.ImGuiNotification.Internal;
 using Dalamud.Interface.Internal.Badge;
 using Dalamud.Interface.Internal.Windows;
 using Dalamud.Interface.Internal.Windows.Data;
-using Dalamud.Interface.Internal.Windows.Fools26;
 using Dalamud.Interface.Internal.Windows.PluginInstaller;
 using Dalamud.Interface.Internal.Windows.SelfTest;
 using Dalamud.Interface.Internal.Windows.Settings;
@@ -76,11 +74,7 @@ internal class DalamudInterface : IInternalDisposableService
     private readonly StyleEditorWindow styleEditorWindow;
     private readonly TitleScreenMenuWindow titleScreenMenuWindow;
     private readonly ProfilerWindow profilerWindow;
-    private readonly BranchSwitcherWindow branchSwitcherWindow;
     private readonly HitchSettingsWindow hitchSettingsWindow;
-
-    private readonly Fools26VerifyWindow fools26VerifyWindow;
-    private readonly Fools26ResultWindow fools26ResultWindow;
 
     private bool isCreditsDarkening = false;
     private OutCubic creditsDarkeningAnimation = new(TimeSpan.FromSeconds(10));
@@ -143,13 +137,8 @@ internal class DalamudInterface : IInternalDisposableService
             consoleManager,
             addonLifecycle) { IsOpen = false };
         this.profilerWindow = new ProfilerWindow() { IsOpen = false };
-        this.branchSwitcherWindow = new BranchSwitcherWindow() { IsOpen = false };
         this.hitchSettingsWindow = new HitchSettingsWindow() { IsOpen = false };
 
-        this.fools26VerifyWindow = new Fools26VerifyWindow() { IsOpen = false };
-        this.fools26ResultWindow = new Fools26ResultWindow() { IsOpen = false };
-
-        this.WindowSystem.AddWindow(this.changelogWindow);
         this.WindowSystem.AddWindow(this.colorDemoWindow);
         this.WindowSystem.AddWindow(this.componentDemoWindow);
         this.WindowSystem.AddWindow(this.dataWindow);
@@ -162,13 +151,8 @@ internal class DalamudInterface : IInternalDisposableService
         this.WindowSystem.AddWindow(this.styleEditorWindow);
         this.WindowSystem.AddWindow(this.titleScreenMenuWindow);
         this.WindowSystem.AddWindow(this.profilerWindow);
-        this.WindowSystem.AddWindow(this.branchSwitcherWindow);
         this.WindowSystem.AddWindow(this.hitchSettingsWindow);
 
-        this.WindowSystem.AddWindow(this.fools26VerifyWindow);
-        this.WindowSystem.AddWindow(this.fools26ResultWindow);
-
-        this.interfaceManager.ShowAsserts = configuration.ImGuiAssertsEnabledAtStartup ?? false;
         this.isImGuiDrawDevMenu = this.isImGuiDrawDevMenu || configuration.DevBarOpenAtStartup;
 
         this.interfaceManager.Draw += this.OnDraw;
@@ -248,10 +232,6 @@ internal class DalamudInterface : IInternalDisposableService
         set => this.pluginWindow.IsOpen = value;
     }
 
-#pragma warning disable SA1600
-    public Fools26VerifyWindow Fools26VerifyWindow => this.fools26VerifyWindow;
-#pragma warning restore SA1600
-
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
     {
@@ -260,9 +240,6 @@ internal class DalamudInterface : IInternalDisposableService
         this.WindowSystem.Windows.OfType<IDisposable>().AggregateToDisposable().Dispose();
         this.WindowSystem.RemoveAllWindows();
 
-        this.fools26VerifyWindow.Dispose();
-        this.fools26ResultWindow.Dispose();
-        this.changelogWindow.Dispose();
         this.consoleWindow.Dispose();
         this.pluginWindow.Dispose();
         this.titleScreenMenuWindow.Dispose();
@@ -401,33 +378,6 @@ internal class DalamudInterface : IInternalDisposableService
         this.hitchSettingsWindow.BringToFront();
     }
 
-    /// <summary>
-    /// Opens the <see cref="BranchSwitcherWindow"/>.
-    /// </summary>
-    public void OpenBranchSwitcher()
-    {
-        this.branchSwitcherWindow.IsOpen = true;
-        this.branchSwitcherWindow.BringToFront();
-    }
-
-    /// <summary>
-    /// April fools stuff.
-    /// </summary>
-    public void OpenFools26Verify()
-    {
-        this.fools26VerifyWindow.IsOpen = true;
-        this.fools26VerifyWindow.BringToFront();
-    }
-
-    /// <summary>
-    /// April fools stuff.
-    /// </summary>
-    public void OpenFools26Result()
-    {
-        this.fools26ResultWindow.IsOpen = true;
-        this.fools26ResultWindow.BringToFront();
-    }
-
     #endregion
 
     #region Close
@@ -509,11 +459,6 @@ internal class DalamudInterface : IInternalDisposableService
     /// Toggles the <see cref="ProfilerWindow"/>.
     /// </summary>
     public void ToggleProfilerWindow() => this.profilerWindow.Toggle();
-
-    /// <summary>
-    /// Toggles the <see cref="BranchSwitcherWindow"/>.
-    /// </summary>
-    public void ToggleBranchSwitcher() => this.branchSwitcherWindow.Toggle();
 
     #endregion
 
@@ -956,7 +901,7 @@ internal class DalamudInterface : IInternalDisposableService
                     ImGui.EndMenu();
                 }
 
-                if (ImGui.BeginMenu("插件"u8))
+                if (ImGui.BeginMenu("绘制"u8))
                 {
                     ImGui.MenuItem("为之后的窗口应用 Monospace 字体", string.Empty, ref this.isImGuiTestWindowsInMonospace);
                     ImGui.MenuItem("显示 ImGui Demo", string.Empty, ref this.isImGuiDrawDemoWindow);
@@ -1008,17 +953,9 @@ internal class DalamudInterface : IInternalDisposableService
                         Log.Information(info);
                     }
 
-                    if (ImGui.MenuItem("在菜单栏显示开发信息"u8, (byte*)null, this.configuration.ShowDevBarInfo))
+                    if (ImGui.MenuItem("显示调试信息"u8, (byte*)null, this.configuration.ShowDevBarInfo))
                     {
                         this.configuration.ShowDevBarInfo ^= true;
-                    }
-
-                    ImGui.Separator();
-
-                    if (ImGui.MenuItem("显示加载进度窗口"))
-                    {
-                        var dialog = new LoadingDialog();
-                        dialog.Show();
                     }
 
                     ImGui.EndMenu();
@@ -1146,7 +1083,7 @@ internal class DalamudInterface : IInternalDisposableService
                     ImGui.BeginMenu($"版本: {Versioning.GetScmVersion()}", false);
                     ImGui.BeginMenu(this.FrameCount.ToString("000000"), false);
                     ImGui.BeginMenu(ImGui.GetIO().Framerate.ToString("000"), false);
-                    ImGui.BeginMenu($"内存:{Util.FormatBytes(GC.GetTotalMemory(false))}", false);
+                    ImGui.BeginMenu($"内存: {Util.FormatBytes(GC.GetTotalMemory(false))}", false);
 
                     var videoMem = this.interfaceManager.GetD3dMemoryInfo();
                     ImGui.BeginMenu(

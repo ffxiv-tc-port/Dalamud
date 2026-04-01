@@ -83,11 +83,6 @@ internal class DalamudCommands : IServiceType
             HelpMessage = Loc.Localize("DalamudPluginStats", "Draw plugin statistics window"),
         });
 
-        commandManager.AddHandler("/xlbranch", new CommandInfo(this.OnToggleBranchSwitcher)
-        {
-            HelpMessage = Loc.Localize("DalamudBranchSwitcher", "Open the branch switcher"),
-        });
-
         commandManager.AddHandler("/xldata", new CommandInfo(this.OnDebugDrawDataMenu)
         {
             HelpMessage = Loc.Localize("DalamudDevDataMenuHelp", "Draw dev data menu DEBUG. Usage: /xldata [Data Dropdown Type]"),
@@ -276,11 +271,6 @@ internal class DalamudCommands : IServiceType
     private void OnTogglePluginStats(string command, string arguments)
     {
         Service<DalamudInterface>.Get().TogglePluginStatsWindow();
-    }
-
-    private void OnToggleBranchSwitcher(string command, string arguments)
-    {
-        Service<DalamudInterface>.Get().ToggleBranchSwitcher();
     }
 
     private void OnDebugDrawDataMenu(string command, string arguments)
