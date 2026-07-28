@@ -2,14 +2,11 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
-using Dalamud.Game.Player;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
 
-using CSBuddy = FFXIVClientStructs.FFXIV.Client.Game.UI.Buddy;
-using CSBuddyMember = FFXIVClientStructs.FFXIV.Client.Game.UI.Buddy.BuddyMember;
-using CSUIState = FFXIVClientStructs.FFXIV.Client.Game.UI.UIState;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
 
 namespace Dalamud.Game.ClientState.Buddy;
 
@@ -24,10 +21,10 @@ namespace Dalamud.Game.ClientState.Buddy;
 #pragma warning restore SA1015
 internal sealed partial class BuddyList : IServiceType, IBuddyList
 {
-    private const uint InvalidEntityId = 0xE0000000;
+    private const uint InvalidObjectID = 0xE0000000;
 
     [ServiceManager.ServiceDependency]
-    private readonly PlayerState playerState = Service<PlayerState>.Get();
+    private readonly ClientState clientState = Service<ClientState>.Get();
 
     [ServiceManager.ServiceConstructor]
     private BuddyList()
@@ -72,7 +69,7 @@ internal sealed partial class BuddyList : IServiceType, IBuddyList
         }
     }
 
-    private unsafe CSBuddy* BuddyListStruct => &CSUIState.Instance()->Buddy;
+    private unsafe FFXIVClientStructs.FFXIV.Client.Game.UI.Buddy* BuddyListStruct => &UIState.Instance()->Buddy;
 
     /// <inheritdoc/>
     public IBuddyMember? this[int index]
@@ -85,37 +82,37 @@ internal sealed partial class BuddyList : IServiceType, IBuddyList
     }
 
     /// <inheritdoc/>
-    public unsafe nint GetCompanionBuddyMemberAddress()
+    public unsafe IntPtr GetCompanionBuddyMemberAddress()
     {
-        return (nint)this.BuddyListStruct->CompanionInfo.Companion;
+        return (IntPtr)this.BuddyListStruct->CompanionInfo.Companion;
     }
 
     /// <inheritdoc/>
-    public unsafe nint GetPetBuddyMemberAddress()
+    public unsafe IntPtr GetPetBuddyMemberAddress()
     {
-        return (nint)this.BuddyListStruct->PetInfo.Pet;
+        return (IntPtr)this.BuddyListStruct->PetInfo.Pet;
     }
 
     /// <inheritdoc/>
-    public unsafe nint GetBattleBuddyMemberAddress(int index)
+    public unsafe IntPtr GetBattleBuddyMemberAddress(int index)
     {
         if (index < 0 || index >= 3)
-            return 0;
+            return IntPtr.Zero;
 
-        return (nint)Unsafe.AsPointer(ref this.BuddyListStruct->BattleBuddies[index]);
+        return (IntPtr)Unsafe.AsPointer(ref this.BuddyListStruct->BattleBuddies[index]);
     }
 
     /// <inheritdoc/>
-    public unsafe IBuddyMember? CreateBuddyMemberReference(nint address)
+    public IBuddyMember? CreateBuddyMemberReference(IntPtr address)
     {
-        if (address == 0)
+        if (this.clientState.LocalContentId == 0)
             return null;
 
-        if (this.playerState.ContentId == 0)
+        if (address == IntPtr.Zero)
             return null;
 
-        var buddy = new BuddyMember((CSBuddyMember*)address);
-        if (buddy.EntityId == InvalidEntityId)
+        var buddy = new BuddyMember(address);
+        if (buddy.ObjectId == InvalidObjectID)
             return null;
 
         return buddy;
@@ -133,39 +130,12 @@ internal sealed partial class BuddyList
     /// <inheritdoc/>
     public IEnumerator<IBuddyMember> GetEnumerator()
     {
-        return new Enumerator(this);
+        for (var i = 0; i < this.Length; i++)
+        {
+            yield return this[i];
+        }
     }
 
     /// <inheritdoc/>
     IEnumerator IEnumerable.GetEnumerator() => this.GetEnumerator();
-
-    private struct Enumerator(BuddyList buddyList) : IEnumerator<IBuddyMember>
-    {
-        private int index = -1;
-
-        public IBuddyMember Current { get; private set; }
-
-        object IEnumerator.Current => this.Current;
-
-        public bool MoveNext()
-        {
-            if (++this.index < buddyList.Length)
-            {
-                this.Current = buddyList[this.index];
-                return true;
-            }
-
-            this.Current = default;
-            return false;
-        }
-
-        public void Reset()
-        {
-            this.index = -1;
-        }
-
-        public void Dispose()
-        {
-        }
-    }
 }

@@ -1,20 +1,15 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 
 using Dalamud.Data;
-using Dalamud.Game.Player;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Memory;
-using Dalamud.Utility;
 
 using Lumina.Excel;
-
-using CSFateContext = FFXIVClientStructs.FFXIV.Client.Game.Fate.FateContext;
 
 namespace Dalamud.Game.ClientState.Fates;
 
 /// <summary>
-/// Interface representing a fate entry that can be seen in the current area.
+/// Interface representing an fate entry that can be seen in the current area.
 /// </summary>
 public interface IFate : IEquatable<IFate>
 {
@@ -116,96 +111,133 @@ public interface IFate : IEquatable<IFate>
     /// <summary>
     /// Gets the address of this Fate in memory.
     /// </summary>
-    nint Address { get; }
+    IntPtr Address { get; }
 }
 
 /// <summary>
-/// This struct represents a Fate.
+/// This class represents an FFXIV Fate.
 /// </summary>
-/// <param name="ptr">A pointer to the FateContext.</param>
-internal readonly unsafe struct Fate(CSFateContext* ptr) : IFate
+internal unsafe partial class Fate
 {
+    /// <summary>
+    /// Initializes a new instance of the <see cref="Fate"/> class.
+    /// </summary>
+    /// <param name="address">The address of this fate in memory.</param>
+    internal Fate(IntPtr address)
+    {
+        this.Address = address;
+    }
+
     /// <inheritdoc />
-    public nint Address => (nint)ptr;
+    public IntPtr Address { get; }
+
+    private FFXIVClientStructs.FFXIV.Client.Game.Fate.FateContext* Struct => (FFXIVClientStructs.FFXIV.Client.Game.Fate.FateContext*)this.Address;
+
+    public static bool operator ==(Fate fate1, Fate fate2)
+    {
+        if (fate1 is null || fate2 is null)
+            return Equals(fate1, fate2);
+
+        return fate1.Equals(fate2);
+    }
+
+    public static bool operator !=(Fate fate1, Fate fate2) => !(fate1 == fate2);
+
+    /// <summary>
+    /// Gets a value indicating whether this Fate is still valid in memory.
+    /// </summary>
+    /// <param name="fate">The fate to check.</param>
+    /// <returns>True or false.</returns>
+    public static bool IsValid(Fate fate)
+    {
+        var clientState = Service<ClientState>.GetNullable();
+
+        if (fate == null || clientState == null)
+            return false;
+
+        if (clientState.LocalContentId == 0)
+            return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether this actor is still valid in memory.
+    /// </summary>
+    /// <returns>True or false.</returns>
+    public bool IsValid() => IsValid(this);
 
     /// <inheritdoc/>
-    public ushort FateId => ptr->FateId;
+    bool IEquatable<IFate>.Equals(IFate other) => this.FateId == other?.FateId;
+
+    /// <inheritdoc/>
+    public override bool Equals(object obj) => ((IEquatable<IFate>)this).Equals(obj as IFate);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => this.FateId.GetHashCode();
+}
+
+/// <summary>
+/// This class represents an FFXIV Fate.
+/// </summary>
+internal unsafe partial class Fate : IFate
+{
+    /// <inheritdoc/>
+    public ushort FateId => this.Struct->FateId;
 
     /// <inheritdoc/>
     public RowRef<Lumina.Excel.Sheets.Fate> GameData => LuminaUtils.CreateRef<Lumina.Excel.Sheets.Fate>(this.FateId);
 
     /// <inheritdoc/>
-    public int StartTimeEpoch => ptr->StartTimeEpoch;
+    public int StartTimeEpoch => this.Struct->StartTimeEpoch;
 
     /// <inheritdoc/>
-    public short Duration => ptr->Duration;
+    public short Duration => this.Struct->Duration;
 
     /// <inheritdoc/>
     public long TimeRemaining => this.StartTimeEpoch + this.Duration - DateTimeOffset.Now.ToUnixTimeSeconds();
 
     /// <inheritdoc/>
-    public SeString Name => ptr->Name.AsDalamudSeString();
+    public SeString Name => MemoryHelper.ReadSeString(&this.Struct->Name);
 
     /// <inheritdoc/>
-    public SeString Description => ptr->Description.AsDalamudSeString();
+    public SeString Description => MemoryHelper.ReadSeString(&this.Struct->Description);
 
     /// <inheritdoc/>
-    public SeString Objective => ptr->Objective.AsDalamudSeString();
+    public SeString Objective => MemoryHelper.ReadSeString(&this.Struct->Objective);
 
     /// <inheritdoc/>
-    public FateState State => (FateState)ptr->State;
+    public FateState State => (FateState)this.Struct->State;
 
     /// <inheritdoc/>
-    public byte HandInCount => ptr->HandInCount;
+    public byte HandInCount => this.Struct->HandInCount;
 
     /// <inheritdoc/>
-    public byte Progress => ptr->Progress;
+    public byte Progress => this.Struct->Progress;
 
     /// <inheritdoc/>
-    public bool HasBonus => ptr->IsBonus;
+    public bool HasBonus => this.Struct->IsBonus;
 
     /// <inheritdoc/>
-    public uint IconId => ptr->IconId;
+    public uint IconId => this.Struct->IconId;
 
     /// <inheritdoc/>
-    public byte Level => ptr->Level;
+    public byte Level => this.Struct->Level;
 
     /// <inheritdoc/>
-    public byte MaxLevel => ptr->MaxLevel;
+    public byte MaxLevel => this.Struct->MaxLevel;
 
     /// <inheritdoc/>
-    public Vector3 Position => ptr->Location;
+    public Vector3 Position => this.Struct->Location;
 
     /// <inheritdoc/>
-    public float Radius => ptr->Radius;
+    public float Radius => this.Struct->Radius;
 
     /// <inheritdoc/>
-    public uint MapIconId => ptr->MapIconId;
+    public uint MapIconId => this.Struct->MapIconId;
 
     /// <summary>
     /// Gets the territory this <see cref="Fate"/> is located in.
     /// </summary>
-    public RowRef<Lumina.Excel.Sheets.TerritoryType> TerritoryType => LuminaUtils.CreateRef<Lumina.Excel.Sheets.TerritoryType>(ptr->MapMarkers[0].MapMarkerData.TerritoryTypeId);
-
-    public static bool operator ==(Fate x, Fate y) => x.Equals(y);
-
-    public static bool operator !=(Fate x, Fate y) => !(x == y);
-
-    /// <inheritdoc/>
-    public bool Equals(IFate? other)
-    {
-        return this.FateId == other.FateId;
-    }
-
-    /// <inheritdoc/>
-    public override bool Equals([NotNullWhen(true)] object? obj)
-    {
-        return obj is Fate fate && this.Equals(fate);
-    }
-
-    /// <inheritdoc/>
-    public override int GetHashCode()
-    {
-        return this.FateId.GetHashCode();
-    }
+    public RowRef<Lumina.Excel.Sheets.TerritoryType> TerritoryType => LuminaUtils.CreateRef<Lumina.Excel.Sheets.TerritoryType>(this.Struct->MapMarkers[0].MapMarkerData.TerritoryTypeId);
 }

@@ -25,7 +25,7 @@ internal class PresetModel
     /// Gets or sets a dictionary containing the windows in the preset, mapping their ID to the preset.
     /// </summary>
     [JsonProperty("w")]
-    public Dictionary<uint, PresetWindow> Windows { get; set; } = [];
+    public Dictionary<uint, PresetWindow> Windows { get; set; } = new();
 
     /// <summary>
     /// Class representing a window in a preset.
@@ -53,7 +53,6 @@ internal class PresetModel
         /// <summary>
         /// Gets a value indicating whether this preset is in the default state.
         /// </summary>
-        [JsonIgnore]
         public bool IsDefault =>
             !this.IsPinned &&
             !this.IsClickThrough &&

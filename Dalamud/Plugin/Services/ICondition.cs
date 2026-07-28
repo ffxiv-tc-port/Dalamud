@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 using Dalamud.Game.ClientState.Conditions;
 
@@ -7,7 +7,7 @@ namespace Dalamud.Plugin.Services;
 /// <summary>
 /// Provides access to conditions (generally player state). You can check whether a player is in combat, mounted, etc.
 /// </summary>
-public interface ICondition : IDalamudService
+public interface ICondition
 {
     /// <summary>
     /// A delegate type used with the <see cref="ConditionChange"/> event.

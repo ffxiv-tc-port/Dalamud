@@ -3,13 +3,14 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
+using Dalamud.Interface.Internal;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
 
 namespace Dalamud.Plugin.Services;
 
 /// <summary>Service that grants you to read instances of <see cref="IDalamudTextureWrap"/>.</summary>
-public interface ITextureReadbackProvider : IDalamudService
+public interface ITextureReadbackProvider
 {
     /// <summary>Gets the raw data of a texture wrap.</summary>
     /// <param name="wrap">The source texture wrap.</param>

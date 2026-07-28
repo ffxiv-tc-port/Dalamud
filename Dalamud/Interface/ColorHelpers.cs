@@ -56,10 +56,11 @@ public static class ColorHelpers
         var min = Math.Min(r, Math.Min(g, b));
 
         var h = max;
+        var s = max;
         var v = max;
 
         var d = max - min;
-        var s = max == 0 ? 0 : d / max;
+        s = max == 0 ? 0 : d / max;
 
         if (max == min)
         {

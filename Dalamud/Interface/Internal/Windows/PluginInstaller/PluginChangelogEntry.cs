@@ -1,7 +1,5 @@
-using CheapLoc;
-
+﻿using CheapLoc;
 using Dalamud.Plugin.Internal.Types;
-
 using Serilog;
 
 namespace Dalamud.Interface.Internal.Windows.PluginInstaller;

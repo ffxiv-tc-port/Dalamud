@@ -1,8 +1,7 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Reflection;
 
 using Dalamud.Utility;
-
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 
@@ -33,7 +32,7 @@ public abstract class ProfileModel
     /// <exception cref="ArgumentException">Thrown when the parsed string is not a valid profile.</exception>
     public static ProfileModel? Deserialize(string model)
     {
-        var json = Util.DecompressString(Convert.FromBase64String(model[3..]));
+        var json = Util.DecompressString(Convert.FromBase64String(model.Substring(3)));
 
         if (model.StartsWith(ProfileModelV1.SerializedPrefix))
             return JsonConvert.DeserializeObject<ProfileModelV1>(json);
@@ -48,23 +47,32 @@ public abstract class ProfileModel
     /// <exception cref="ArgumentOutOfRangeException">Thrown when an unsupported model is serialized.</exception>
     public string SerializeForShare()
     {
-        var prefix = this switch
+        string prefix;
+        switch (this)
         {
-            ProfileModelV1 => ProfileModelV1.SerializedPrefix,
-            _ => throw new ArgumentOutOfRangeException(),
-        };
+            case ProfileModelV1:
+                prefix = ProfileModelV1.SerializedPrefix;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
 
         // HACK: Just filter the ID for now, we should split the sharing + saving model
         var serialized = JsonConvert.SerializeObject(this, new JsonSerializerSettings()
-                                                         { ContractResolver = new IgnorePropertiesResolver(["WorkingPluginId", "StartupPolicy", "EnableForCharacters", "EnabledCharacters"]) });
+                                                         { ContractResolver = new IgnorePropertiesResolver(new[] { "WorkingPluginId" }) });
 
         return prefix + Convert.ToBase64String(Util.CompressString(serialized));
     }
-
+    
     // Short helper class to ignore some properties from serialization
-    private class IgnorePropertiesResolver(IEnumerable<string> propNamesToIgnore) : DefaultContractResolver
+    private class IgnorePropertiesResolver : DefaultContractResolver
     {
-        private readonly HashSet<string> ignoreProps = new(propNamesToIgnore);
+        private readonly HashSet<string> ignoreProps;
+
+        public IgnorePropertiesResolver(IEnumerable<string> propNamesToIgnore)
+        {
+            this.ignoreProps = new HashSet<string>(propNamesToIgnore);
+        }
 
         protected override JsonProperty CreateProperty(MemberInfo member, MemberSerialization memberSerialization)
         {
@@ -73,7 +81,7 @@ public abstract class ProfileModel
             {
                 property.ShouldSerialize = _ => false;
             }
-
+            
             return property;
         }
     }

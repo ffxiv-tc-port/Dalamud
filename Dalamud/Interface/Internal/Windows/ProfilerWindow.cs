@@ -19,7 +19,7 @@ public class ProfilerWindow : Window
 {
     private double min;
     private double max;
-    private List<List<Tuple<double, double>>> occupied = [];
+    private List<List<Tuple<double, double>>> occupied = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ProfilerWindow"/> class.
@@ -109,7 +109,7 @@ public class ProfilerWindow : Window
                 }
 
                 if (depth == this.occupied.Count)
-                    this.occupied.Add([]);
+                    this.occupied.Add(new());
                 this.occupied[depth].Add(Tuple.Create(timingHandle.StartTime, timingHandle.EndTime));
                 parentDepthDict[timingHandle.Id] = depth;
 
@@ -188,7 +188,7 @@ public class ProfilerWindow : Window
                 }
             }
 
-            var eventTextDepth = maxRectDept + 2;
+            uint eventTextDepth = maxRectDept + 2;
 
             var eventsXPos = new List<float>();
             const float eventsXPosFudge = 5f;

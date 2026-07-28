@@ -1,7 +1,5 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
-using Dalamud.Plugin.SelfTest;
-
 using Serilog;
 
 namespace Dalamud.Interface.Internal.Windows.SelfTest.Steps;

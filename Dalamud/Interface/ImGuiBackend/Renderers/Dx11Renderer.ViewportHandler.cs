@@ -5,7 +5,6 @@ using System.Runtime.InteropServices;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.ImGuiBackend.Helpers;
 using Dalamud.Utility;
-
 using TerraFX.Interop.DirectX;
 using TerraFX.Interop.Windows;
 

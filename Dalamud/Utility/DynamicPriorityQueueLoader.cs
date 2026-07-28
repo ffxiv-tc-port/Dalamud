@@ -15,7 +15,7 @@ internal class DynamicPriorityQueueLoader : IDisposable
 
     private readonly Channel<WorkItem> newItemChannel;
     private readonly Channel<object?> workTokenChannel;
-    private readonly List<WorkItem> workItemPending = [];
+    private readonly List<WorkItem> workItemPending = new();
 
     private bool disposing;
 

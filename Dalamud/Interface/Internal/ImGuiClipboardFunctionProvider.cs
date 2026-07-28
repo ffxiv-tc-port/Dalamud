@@ -3,12 +3,10 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 using CheapLoc;
-
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Gui.Toast;
 using Dalamud.Interface.Utility;
 using Dalamud.Logging.Internal;
-
 using TerraFX.Interop.Windows;
 
 using static TerraFX.Interop.Windows.Windows;
@@ -36,7 +34,7 @@ namespace Dalamud.Interface.Internal;
 [ServiceManager.EarlyLoadedService]
 internal sealed unsafe class ImGuiClipboardFunctionProvider : IInternalDisposableService
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<ImGuiClipboardFunctionProvider>();
+    private static readonly ModuleLog Log = new(nameof(ImGuiClipboardFunctionProvider));
     private readonly void* clipboardUserDataOriginal;
     private readonly void* setTextOriginal;
     private readonly void* getTextOriginal;

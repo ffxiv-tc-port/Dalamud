@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -8,7 +9,6 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using CheapLoc;
-
 using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Game;
@@ -32,13 +32,10 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Windowing.Persistence;
 using Dalamud.IoC.Internal;
 using Dalamud.Logging.Internal;
-using Dalamud.Memory;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
 using Dalamud.Utility.Timing;
-
 using JetBrains.Annotations;
-
 using TerraFX.Interop.DirectX;
 using TerraFX.Interop.Windows;
 
@@ -79,10 +76,10 @@ internal partial class InterfaceManager : IInternalDisposableService
     /// </summary>
     public const float DefaultFontSizePx = (DefaultFontSizePt * 4.0f) / 3.0f;
 
-    private static readonly ModuleLog Log = ModuleLog.Create<InterfaceManager>();
+    private static readonly ModuleLog Log = new("INTERFACE");
 
-    private readonly ConcurrentBag<IDeferredDisposable> deferredDisposeTextures = [];
-    private readonly ConcurrentBag<IDisposable> deferredDisposeDisposables = [];
+    private readonly ConcurrentBag<IDeferredDisposable> deferredDisposeTextures = new();
+    private readonly ConcurrentBag<IDisposable> deferredDisposeDisposables = new();
 
     [ServiceManager.ServiceDependency]
     private readonly DalamudConfiguration dalamudConfiguration = Service<DalamudConfiguration>.Get();
@@ -259,7 +256,7 @@ internal partial class InterfaceManager : IInternalDisposableService
                 var gwh = default(HWND);
                 fixed (char* pClass = "FFXIVGAME")
                 {
-                    while ((gwh = FindWindowExW(default, gwh, pClass, default)) != default)
+                    while ((gwh = FindWindowExW(default, gwh, (ushort*)pClass, default)) != default)
                     {
                         uint pid;
                         _ = GetWindowThreadProcessId(gwh, &pid);
@@ -327,9 +324,6 @@ internal partial class InterfaceManager : IInternalDisposableService
 
         this.IconFontHandle?.Dispose();
         this.IconFontHandle = null;
-
-        this.IconFontFixedWidthHandle?.Dispose();
-        this.IconFontFixedWidthHandle = null;
 
         Interlocked.Exchange(ref this.dalamudAtlas, null)?.Dispose();
         Interlocked.Exchange(ref this.backend, null)?.Dispose();
@@ -497,34 +491,6 @@ internal partial class InterfaceManager : IInternalDisposableService
     public void ClearStacks()
     {
         ImGuiHelpers.ClearStacksOnContext();
-    }
-
-    /// <summary>
-    /// Applies immersive dark mode to the game window based on the current system theme setting.
-    /// </summary>
-    internal void SetImmersiveModeFromSystemTheme()
-    {
-        bool useDark = this.IsSystemInDarkMode();
-        this.SetImmersiveMode(useDark);
-    }
-
-    /// <summary>
-    /// Checks whether the system use dark mode.
-    /// </summary>
-    /// <returns>Returns true if dark mode is preferred.</returns>
-    internal bool IsSystemInDarkMode()
-    {
-        try
-        {
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            var value = key?.GetValue("AppsUseLightTheme") as int?;
-            return value != 1;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     /// <summary>
@@ -702,10 +668,20 @@ internal partial class InterfaceManager : IInternalDisposableService
 
             StyleModel.TransferOldModels();
 
-            if (configuration.SavedStyles == null)
+            if (configuration.SavedStyles == null ||
+                configuration.SavedStyles.All(x => x.Name != StyleModelV1.DalamudStandard.Name))
             {
-                configuration.SavedStyles = [StyleModelV1.DalamudStandard, StyleModelV1.DalamudClassic];
+                configuration.SavedStyles = new List<StyleModel>
+                    { StyleModelV1.DalamudStandard, StyleModelV1.DalamudClassic };
                 configuration.ChosenStyle = StyleModelV1.DalamudStandard.Name;
+            }
+            else if (configuration.SavedStyles.Count == 1)
+            {
+                configuration.SavedStyles.Add(StyleModelV1.DalamudClassic);
+            }
+            else if (configuration.SavedStyles[1].Name != StyleModelV1.DalamudClassic.Name)
+            {
+                configuration.SavedStyles.Insert(1, StyleModelV1.DalamudClassic);
             }
 
             configuration.SavedStyles[0] = StyleModelV1.DalamudStandard;
@@ -761,18 +737,6 @@ internal partial class InterfaceManager : IInternalDisposableService
 
     private void WndProcHookManagerOnPreWndProc(WndProcEventArgs args)
     {
-        if (args.Message == WM.WM_SETTINGCHANGE)
-        {
-            if (this.dalamudConfiguration.WindowIsImmersive)
-            {
-                if (MemoryHelper.EqualsZeroTerminatedWideString("ImmersiveColorSet", args.LParam) ||
-                    MemoryHelper.EqualsZeroTerminatedWideString("VisualStyleChanged", args.LParam))
-                {
-                    this.SetImmersiveModeFromSystemTheme();
-                }
-            }
-        }
-
         var r = this.backend?.ProcessWndProcW(args.Hwnd, args.Message, args.WParam, args.LParam);
         if (r is not null)
             args.SuppressWithValue(r.Value);
@@ -887,7 +851,7 @@ internal partial class InterfaceManager : IInternalDisposableService
         {
             // Requires that game window to be there, which will be the case once game swap chain is initialized.
             if (Service<DalamudConfiguration>.Get().WindowIsImmersive)
-                this.SetImmersiveModeFromSystemTheme();
+                this.SetImmersiveMode(true);
         }
         catch (Exception ex)
         {
@@ -1204,7 +1168,6 @@ internal partial class InterfaceManager : IInternalDisposableService
 
         WindowSystem.HasAnyWindowSystemFocus = false;
         WindowSystem.FocusedWindowSystemNamespace = string.Empty;
-        WindowSystem.ShouldInhibitAtkCloseEvents = false;
 
         if (this.IsDispatchingEvents)
         {

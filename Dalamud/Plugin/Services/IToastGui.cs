@@ -1,4 +1,4 @@
-using Dalamud.Game.Gui.Toast;
+﻿using Dalamud.Game.Gui.Toast;
 using Dalamud.Game.Text.SeStringHandling;
 
 namespace Dalamud.Plugin.Services;
@@ -6,7 +6,7 @@ namespace Dalamud.Plugin.Services;
 /// <summary>
 /// This class facilitates interacting with and creating native toast windows.
 /// </summary>
-public interface IToastGui : IDalamudService
+public interface IToastGui
 {
     /// <summary>
     /// A delegate type used when a normal toast window appears.

@@ -1,5 +1,3 @@
-using Dalamud.Plugin.SelfTest;
-
 namespace Dalamud.Interface.Internal.Windows.SelfTest.Steps;
 
 /// <summary>

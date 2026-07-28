@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 
 namespace Dalamud.Utility;
 
@@ -24,9 +24,10 @@ public static class Hash
     /// <returns>The computed hash.</returns>
     internal static string GetSha256Hash(byte[] buffer)
     {
-        var hash = SHA256.HashData(buffer);
+        using var sha = SHA256.Create();
+        var hash = sha.ComputeHash(buffer);
         return ByteArrayToString(hash);
     }
 
-    private static string ByteArrayToString(byte[] ba) => Convert.ToHexString(ba);
+    private static string ByteArrayToString(byte[] ba) => BitConverter.ToString(ba).Replace("-", string.Empty);
 }

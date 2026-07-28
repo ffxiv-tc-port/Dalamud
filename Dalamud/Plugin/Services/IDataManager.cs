@@ -14,7 +14,7 @@ namespace Dalamud.Plugin.Services;
 /// <summary>
 /// This class provides data for Dalamud-internal features, but can also be used by plugins if needed.
 /// </summary>
-public interface IDataManager : IDalamudService
+public interface IDataManager
 {
     /// <summary>
     /// Gets the current game client language.

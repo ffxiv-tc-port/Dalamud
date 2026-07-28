@@ -3,8 +3,8 @@ using System.Runtime.CompilerServices;
 using Dalamud.Data;
 using Dalamud.Game;
 using Dalamud.Game.Text;
-
 using Lumina.Excel.Sheets;
+using Lumina.Text;
 using Lumina.Text.ReadOnly;
 
 namespace Dalamud.Utility;
@@ -125,15 +125,10 @@ public static class ItemUtil
 
         if (IsEventItem(itemId))
         {
-            // Only English, German, and French have a Name field.
-            // For other languages, the Name is an empty string, and the Singular field should be used instead.
-            language ??= dataManager.Language;
-            var useSingular = language is not (ClientLanguage.English or ClientLanguage.German or ClientLanguage.French);
-
             return dataManager
                 .GetExcelSheet<EventItem>(language)
                 .TryGetRow(itemId, out var eventItem)
-                    ? (useSingular ? eventItem.Singular : eventItem.Name)
+                    ? eventItem.Name
                     : default;
         }
 
@@ -149,21 +144,23 @@ public static class ItemUtil
         if (!includeIcon || kind is not (ItemKind.Hq or ItemKind.Collectible))
             return item.Name;
 
-        using var rssb = new RentedSeStringBuilder();
+        var builder = SeStringBuilder.SharedPool.Get();
 
-        rssb.Builder.Append(item.Name);
+        builder.Append(item.Name);
 
         switch (kind)
         {
             case ItemKind.Hq:
-                rssb.Builder.Append($" {(char)SeIconChar.HighQuality}");
+                builder.Append($" {(char)SeIconChar.HighQuality}");
                 break;
             case ItemKind.Collectible:
-                rssb.Builder.Append($" {(char)SeIconChar.Collectible}");
+                builder.Append($" {(char)SeIconChar.Collectible}");
                 break;
         }
 
-        return rssb.Builder.ToReadOnlySeString();
+        var itemName = builder.ToReadOnlySeString();
+        SeStringBuilder.SharedPool.Return(builder);
+        return itemName;
     }
 
     /// <summary>

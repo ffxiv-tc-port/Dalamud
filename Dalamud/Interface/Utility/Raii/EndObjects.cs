@@ -40,9 +40,6 @@ public static partial class ImRaii
     public static IEndObject PopupModal(ImU8String id)
         => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupModal(id));
 
-    public static IEndObject PopupModal(ImU8String id, ImGuiWindowFlags flags)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupModal(id, flags));
-
     public static IEndObject PopupModal(ImU8String id, ref bool open)
         => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupModal(id, ref open));
 
@@ -193,8 +190,8 @@ public static partial class ImRaii
         return new EndUnconditionally(Restore, true);
     }
 
-    private static EndUnconditionally DisabledEnd()
-        => new(() =>
+    private static IEndObject DisabledEnd()
+        => new EndUnconditionally(() =>
         {
             --disabledCount;
             ImGui.EndDisabled();
@@ -245,7 +242,7 @@ public static partial class ImRaii
 
     // Use end-function regardless of success.
     // Used by Child, Group and Tooltip.
-    public struct EndUnconditionally : IEndObject
+    private struct EndUnconditionally : IEndObject
     {
         private Action EndAction { get; }
 
@@ -271,7 +268,7 @@ public static partial class ImRaii
     }
 
     // Use end-function only on success.
-    public struct EndConditionally : IEndObject
+    private struct EndConditionally : IEndObject
     {
         public EndConditionally(Action endAction, bool success)
         {

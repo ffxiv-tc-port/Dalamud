@@ -49,8 +49,7 @@ public enum SettingsOpenKind
     /// <summary>
     /// Open to the "Auto Updates" page.
     /// </summary>
-    // REGION TODO: 国服 Dalamud 修改
-    // AutoUpdates,
+    AutoUpdates,
 
     /// <summary>
     /// Open to the "Server Info Bar" page.
@@ -58,20 +57,9 @@ public enum SettingsOpenKind
     ServerInfoBar,
 
     /// <summary>
-    /// Open to the "Badges" page.
-    /// </summary>
-    Badge,
-
-    /// <summary>
     /// Open to the "Experimental" page.
     /// </summary>
     Experimental,
-    
-    /// <summary>
-    /// Open to the "Plugin" page.
-    /// </summary>
-    // REGION TODO: 国服 Dalamud 修改
-    Plugin,
 
     /// <summary>
     /// Open to the "About" page.

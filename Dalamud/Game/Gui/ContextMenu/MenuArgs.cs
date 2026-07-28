@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 
+using Dalamud.Memory;
 using Dalamud.Plugin.Services;
 
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;

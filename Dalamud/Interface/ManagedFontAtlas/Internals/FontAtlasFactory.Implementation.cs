@@ -41,9 +41,9 @@ internal sealed partial class FontAtlasFactory
     /// <summary>
     /// If set, disables concurrent font build operation.
     /// </summary>
-    private static readonly Lock? NoConcurrentBuildOperationLock = null; // new();
+    private static readonly object? NoConcurrentBuildOperationLock = null; // new();
 
-    private static readonly ModuleLog Log = ModuleLog.Create<FontAtlasFactory>();
+    private static readonly ModuleLog Log = new(nameof(FontAtlasFactory));
 
     private static readonly Task<FontAtlasBuiltData> EmptyTask = Task.FromResult(default(FontAtlasBuiltData));
 
@@ -66,10 +66,10 @@ internal sealed partial class FontAtlasFactory
 
             try
             {
-                var substancesList = this.substances = [];
+                var substancesList = this.substances = new();
                 this.Garbage.Add(() => substancesList.Clear());
 
-                var wrapsCopy = this.wraps = [];
+                var wrapsCopy = this.wraps = new();
                 this.Garbage.Add(() => wrapsCopy.Clear());
 
                 var atlasPtr = ImGui.ImFontAtlas();
@@ -115,14 +115,16 @@ internal sealed partial class FontAtlasFactory
 
         public void AddExistingTexture(IDalamudTextureWrap wrap)
         {
-            ObjectDisposedException.ThrowIf(this.wraps == null, this);
+            if (this.wraps is null)
+                throw new ObjectDisposedException(nameof(FontAtlasBuiltData));
 
             this.wraps.Add(this.Garbage.Add(wrap));
         }
 
         public int AddNewTexture(IDalamudTextureWrap wrap, bool disposeOnError)
         {
-            ObjectDisposedException.ThrowIf(this.wraps == null, this);
+            if (this.wraps is null)
+                throw new ObjectDisposedException(nameof(FontAtlasBuiltData));
 
             var handle = wrap.Handle;
             var index = this.ImTextures.IndexOf(x => x.TexID == handle);
@@ -252,7 +254,7 @@ internal sealed partial class FontAtlasFactory
         private readonly GamePrebakedFontHandle.HandleManager gameFontHandleManager;
         private readonly IFontHandleManager[] fontHandleManagers;
 
-        private readonly Lock syncRoot = new();
+        private readonly object syncRoot = new();
 
         private Task<FontAtlasBuiltData?> buildTask = EmptyTask;
         private FontAtlasBuiltData? builtData;
@@ -290,13 +292,13 @@ internal sealed partial class FontAtlasFactory
                 this.factory.InterfaceManager.AfterBuildFonts += this.OnRebuildRecommend;
                 this.disposables.Add(() => this.factory.InterfaceManager.AfterBuildFonts -= this.OnRebuildRecommend);
 
-                this.fontHandleManagers =
-                [
+                this.fontHandleManagers = new IFontHandleManager[]
+                {
                     this.delegateFontHandleManager = this.disposables.Add(
                         new DelegateFontHandle.HandleManager(atlasName)),
                     this.gameFontHandleManager = this.disposables.Add(
                         new GamePrebakedFontHandle.HandleManager(atlasName, factory)),
-                ];
+                };
                 foreach (var fhm in this.fontHandleManagers)
                     fhm.RebuildRecommend += this.OnRebuildRecommend;
             }

@@ -1,17 +1,13 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 using CheapLoc;
-
 using Dalamud.Configuration.Internal;
-using Dalamud.Game.Player;
 using Dalamud.Logging.Internal;
 using Dalamud.Utility;
-
-using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 
 namespace Dalamud.Plugin.Internal.Profiles;
 
@@ -19,12 +15,12 @@ namespace Dalamud.Plugin.Internal.Profiles;
 /// Class responsible for managing plugin profiles.
 /// </summary>
 [ServiceManager.BlockingEarlyLoadedService($"Data provider for {nameof(PluginManager)}.")]
-internal partial class ProfileManager : IServiceType
+internal class ProfileManager : IServiceType
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<ProfileManager>();
+    private static readonly ModuleLog Log = new("PROFMAN");
     private readonly DalamudConfiguration config;
 
-    private readonly List<Profile> profiles = [];
+    private readonly List<Profile> profiles = new();
 
     private volatile bool isBusy = false;
 
@@ -82,19 +78,14 @@ internal partial class ProfileManager : IServiceType
         var want = false;
         var wasInAnyProfile = false;
 
-        var currentCharacterContentId = FindApplicableContentIdFromGameState() ?? 0;
-
         lock (this.profiles)
         {
             foreach (var profile in this.profiles)
             {
-                var profileWantsActive
-                    = profile.IsEnabled && profile.CheckWantsActiveFromGameState(currentCharacterContentId);
-
-                var pluginStateInProfile = profile.WantsPlugin(workingPluginId);
-                if (pluginStateInProfile.HasValue)
+                var state = profile.WantsPlugin(workingPluginId);
+                if (state.HasValue)
                 {
-                    want = want || (profileWantsActive && pluginStateInProfile.Value);
+                    want = want || (profile.IsEnabled && state.Value);
                     wasInAnyProfile = true;
                 }
             }
@@ -141,7 +132,7 @@ internal partial class ProfileManager : IServiceType
         {
             Guid = Guid.NewGuid(),
             Name = this.GenerateUniqueProfileName(Loc.Localize("PluginProfilesNewProfile", "New Collection")),
-            IsEnabled = true,
+            IsEnabled = false,
         };
 
         this.config.SavedProfiles!.Add(model);
@@ -160,7 +151,11 @@ internal partial class ProfileManager : IServiceType
     /// <returns>The newly cloned profile.</returns>
     public Profile CloneProfile(Profile toClone)
     {
-        return this.ImportProfile(toClone.Model.SerializeForShare()) ?? throw new Exception("New profile was null while cloning");
+        var newProfile = this.ImportProfile(toClone.Model.SerializeForShare());
+        if (newProfile == null)
+            throw new Exception("New profile was null while cloning");
+
+        return newProfile;
     }
 
     /// <summary>
@@ -216,23 +211,20 @@ internal partial class ProfileManager : IServiceType
     /// Go through all profiles and plugins, and enable/disable plugins they want active.
     /// This will block until all plugins have been loaded/reloaded.
     /// </summary>
-    /// <param name="reason">The reason for why we are applying states.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    public async Task ApplyAllWantStatesAsync(string reason)
+    public async Task ApplyAllWantStatesAsync()
     {
         if (this.isBusy)
             throw new Exception("Already busy, this must not run in parallel. Check before starting another apply!");
 
-        var currentCharacterContentId = FindApplicableContentIdFromGameState();
-
         this.isBusy = true;
-        Log.Information("Getting want states... (reason={Reason}, cid={ContentId})", reason, currentCharacterContentId);
+        Log.Information("Getting want states...");
 
         List<ProfilePluginEntry> wantActive;
         lock (this.profiles)
         {
             wantActive = this.profiles
-                             .Where(x => x.IsEnabled && x.CheckWantsActiveFromGameState(currentCharacterContentId ?? 0))
+                             .Where(x => x.IsEnabled)
                              .SelectMany(profile => profile.Plugins.Where(plugin => plugin.IsEnabled))
                              .Distinct().ToList();
         }
@@ -242,7 +234,7 @@ internal partial class ProfileManager : IServiceType
             Log.Information("\t=> Want {Name}({WorkingPluginId})", profilePluginEntry.InternalName, profilePluginEntry.WorkingPluginId);
         }
 
-        Log.Information("Applying want states... (reason={Reason})", reason);
+        Log.Information("Applying want states...");
 
         var tasks = new List<Task>();
 
@@ -281,7 +273,7 @@ internal partial class ProfileManager : IServiceType
             Log.Error(e, "Couldn't apply state for one or more plugins");
         }
 
-        Log.Information("Applied! (reason={Reason})", reason);
+        Log.Information("Applied!");
         this.isBusy = false;
     }
 
@@ -346,33 +338,12 @@ internal partial class ProfileManager : IServiceType
         }
     }
 
-    // Find either the content ID of the currently logged in character, or the content ID of the character that is selected on the lobby screen
-    private static unsafe ulong? FindApplicableContentIdFromGameState()
-    {
-        var cid = Service<PlayerState>.GetNullable()?.ContentId;
-
-        if (cid != null && cid != 0)
-            return cid;
-
-        var agentLobby = AgentLobby.Instance();
-        if (agentLobby == null)
-            return null;
-
-        if (agentLobby->HoveredCharacterContentId != 0)
-            return agentLobby->HoveredCharacterContentId;
-
-        return null;
-    }
-
-    [GeneratedRegex(@" \(.* Mix\)")]
-    private static partial Regex MixRegex();
-
     private string GenerateUniqueProfileName(string startingWith)
     {
         if (this.profiles.All(x => x.Name != startingWith))
             return startingWith;
 
-        startingWith = MixRegex().Replace(startingWith, string.Empty);
+        startingWith = Regex.Replace(startingWith, @" \(.* Mix\)", string.Empty);
 
         while (true)
         {
@@ -388,7 +359,7 @@ internal partial class ProfileManager : IServiceType
         this.config.DefaultProfile ??= new ProfileModelV1();
         this.profiles.Add(new Profile(this, this.config.DefaultProfile, true, true));
 
-        this.config.SavedProfiles ??= [];
+        this.config.SavedProfiles ??= new List<ProfileModel>();
         foreach (var profileModel in this.config.SavedProfiles)
         {
             this.profiles.Add(new Profile(this, profileModel, false, true));

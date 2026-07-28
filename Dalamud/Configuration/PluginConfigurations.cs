@@ -2,8 +2,6 @@ using System.IO;
 using System.Reflection;
 
 using Dalamud.Storage;
-using Dalamud.Utility;
-
 using Newtonsoft.Json;
 
 namespace Dalamud.Configuration;
@@ -11,7 +9,6 @@ namespace Dalamud.Configuration;
 /// <summary>
 /// Configuration to store settings for a dalamud plugin.
 /// </summary>
-[Api15ToDo("Make this a service. We need to be able to dispose it reliably to write configs asynchronously. Maybe also let people write files with vfs.")]
 public sealed class PluginConfigurations
 {
     private readonly DirectoryInfo configDirectory;
@@ -39,7 +36,7 @@ public sealed class PluginConfigurations
     public void Save(IPluginConfiguration config, string pluginName, Guid workingPluginId)
     {
         Service<ReliableFileStorage>.Get()
-            .WriteAllTextAsync(this.GetConfigFile(pluginName).FullName, SerializeConfig(config), workingPluginId).GetAwaiter().GetResult();
+                                    .WriteAllText(this.GetConfigFile(pluginName).FullName, SerializeConfig(config), workingPluginId);
     }
 
     /// <summary>
@@ -55,12 +52,12 @@ public sealed class PluginConfigurations
         IPluginConfiguration? config = null;
         try
         {
-            Service<ReliableFileStorage>.Get().ReadAllTextAsync(path.FullName, text =>
+            Service<ReliableFileStorage>.Get().ReadAllText(path.FullName, text =>
             {
                 config = DeserializeConfig(text);
                 if (config == null)
                     throw new Exception("Read config was null.");
-            }, workingPluginId).GetAwaiter().GetResult();
+            }, workingPluginId);
         }
         catch (FileNotFoundException)
         {

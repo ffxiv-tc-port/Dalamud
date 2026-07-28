@@ -1,11 +1,9 @@
 using System.Collections.Generic;
 using System.Numerics;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
 using BitFaster.Caching.Lru;
-
 using Dalamud.Bindings.ImGui;
 using Dalamud.Data;
 using Dalamud.Game;
@@ -13,10 +11,8 @@ using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Interface.ImGuiSeStringRenderer.Internal.TextProcessing;
 using Dalamud.Interface.Utility;
 using Dalamud.Utility;
-
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Client.UI;
-
 using Lumina.Excel.Sheets;
 using Lumina.Text;
 using Lumina.Text.Parse;
@@ -29,7 +25,7 @@ namespace Dalamud.Interface.ImGuiSeStringRenderer.Internal;
 
 /// <summary>Draws SeString.</summary>
 [ServiceManager.EarlyLoadedService]
-internal class SeStringRenderer : IServiceType
+internal unsafe class SeStringRenderer : IInternalDisposableService
 {
     private const int ImGuiContextCurrentWindowOffset = 0x3FF0;
     private const int ImGuiWindowDcOffset = 0x118;
@@ -51,18 +47,27 @@ internal class SeStringRenderer : IServiceType
 
     /// <summary>Parsed text fragments from a SeString.</summary>
     /// <remarks>Touched only from the main thread.</remarks>
-    private readonly List<TextFragment> fragmentsMainThread = [];
+    private readonly List<TextFragment> fragments = [];
 
     /// <summary>Color stacks to use while evaluating a SeString for rendering.</summary>
     /// <remarks>Touched only from the main thread.</remarks>
-    private readonly SeStringColorStackSet colorStackSetMainThread;
+    private readonly SeStringColorStackSet colorStackSet;
+
+    /// <summary>Splits a draw list so that different layers of a single glyph can be drawn out of order.</summary>
+    private ImDrawListSplitter* splitter = ImGui.ImDrawListSplitter();
 
     [ServiceManager.ServiceConstructor]
     private SeStringRenderer(DataManager dm, TargetSigScanner sigScanner)
     {
-        this.colorStackSetMainThread = new(dm.Excel.GetSheet<UIColor>());
+        this.colorStackSet = new(dm.Excel.GetSheet<UIColor>());
         this.gfd = dm.GetFile<GfdFile>("common/font/gfdata.gfd")!;
     }
+
+    /// <summary>Finalizes an instance of the <see cref="SeStringRenderer"/> class.</summary>
+    ~SeStringRenderer() => this.ReleaseUnmanagedResources();
+
+    /// <inheritdoc/>
+    void IInternalDisposableService.DisposeService() => this.ReleaseUnmanagedResources();
 
     /// <summary>Compiles and caches a SeString from a text macro representation.</summary>
     /// <param name="text">SeString text macro representation.
@@ -74,44 +79,6 @@ internal class SeStringRenderer : IServiceType
             static text => ReadOnlySeString.FromMacroString(
                 text.ReplaceLineEndings("<br>"),
                 new() { ExceptionMode = MacroStringParseExceptionMode.EmbedError }));
-
-    /// <summary>Creates a draw data that will draw the given SeString onto it.</summary>
-    /// <param name="sss">SeString to render.</param>
-    /// <param name="drawParams">Parameters for drawing.</param>
-    /// <returns>A new self-contained draw data.</returns>
-    public unsafe BufferBackedImDrawData CreateDrawData(
-        ReadOnlySeStringSpan sss,
-        scoped in SeStringDrawParams drawParams = default)
-    {
-        if (drawParams.TargetDrawList is not null)
-        {
-            throw new ArgumentException(
-                $"{nameof(SeStringDrawParams.TargetDrawList)} may not be specified.",
-                nameof(drawParams));
-        }
-
-        var dd = BufferBackedImDrawData.Create();
-
-        try
-        {
-            var size = this.Draw(sss, drawParams with { TargetDrawList = dd.ListPtr }).Size;
-
-            var offset = drawParams.ScreenOffset ?? Vector2.Zero;
-            foreach (var vtx in new Span<ImDrawVert>(dd.ListPtr.VtxBuffer.Data, dd.ListPtr.VtxBuffer.Size))
-                offset = Vector2.Min(offset, vtx.Pos);
-
-            dd.Data.DisplayPos = offset;
-            dd.Data.DisplaySize = size - offset;
-            dd.Data.Valid = 1;
-            dd.UpdateDrawDataStatistics();
-            return dd;
-        }
-        catch
-        {
-            dd.Dispose();
-            throw;
-        }
-    }
 
     /// <summary>Compiles and caches a SeString from a text macro representation, and then draws it.</summary>
     /// <param name="text">SeString text macro representation.
@@ -146,43 +113,28 @@ internal class SeStringRenderer : IServiceType
     /// <param name="imGuiId">ImGui ID, if link functionality is desired.</param>
     /// <param name="buttonFlags">Button flags to use on link interaction.</param>
     /// <returns>Interaction result of the rendered text.</returns>
-    public unsafe SeStringDrawResult Draw(
+    public SeStringDrawResult Draw(
         ReadOnlySeStringSpan sss,
         scoped in SeStringDrawParams drawParams = default,
         ImGuiId imGuiId = default,
         ImGuiButtonFlags buttonFlags = ImGuiButtonFlags.MouseButtonDefault)
     {
-        // Interactivity is supported only from the main thread.
-        if (!imGuiId.IsEmpty())
-            ThreadSafety.AssertMainThread();
+        // Drawing is only valid if done from the main thread anyway, especially with interactivity.
+        ThreadSafety.AssertMainThread();
 
         if (drawParams.TargetDrawList is not null && imGuiId)
             throw new ArgumentException("ImGuiId cannot be set if TargetDrawList is manually set.", nameof(imGuiId));
 
-        using var cleanup = new DisposeSafety.ScopedFinalizer();
-
-        ImFont* font = null;
-        if (drawParams.Font.HasValue)
-            font = drawParams.Font.Value;
-
-        if (ThreadSafety.IsMainThread && drawParams.TargetDrawList is null && font is null)
-            font = ImGui.GetFont();
-        if (font is null)
-            throw new ArgumentException("Specified font is empty.");
-
         // This also does argument validation for drawParams. Do it here.
-        // `using var` makes a struct read-only, but we do want to modify it.
-        using var stateStorage = new SeStringDrawState(
-            sss,
-            drawParams,
-            ThreadSafety.IsMainThread ? this.colorStackSetMainThread : new(this.colorStackSetMainThread.ColorTypes),
-            ThreadSafety.IsMainThread ? this.fragmentsMainThread : [],
-            font);
-        ref var state = ref Unsafe.AsRef(in stateStorage);
+        var state = new SeStringDrawState(sss, drawParams, this.colorStackSet, this.splitter);
+
+        // Reset and initialize the state.
+        this.fragments.Clear();
+        this.colorStackSet.Initialize(ref state);
 
         // Analyze the provided SeString and break it up to text fragments.
         this.CreateTextFragments(ref state);
-        var fragmentSpan = CollectionsMarshal.AsSpan(state.Fragments);
+        var fragmentSpan = CollectionsMarshal.AsSpan(this.fragments);
 
         // Calculate size.
         var size = Vector2.Zero;
@@ -195,17 +147,24 @@ internal class SeStringRenderer : IServiceType
 
         state.SplitDrawList();
 
-        var itemSize = size;
-        if (drawParams.TargetDrawList is null)
+        // Handle cases where ImGui.AlignTextToFramePadding has been called.
+        var context = ImGui.GetCurrentContext();
+        var currLineTextBaseOffset = 0f;
+        if (!context.IsNull)
         {
-            // Handle cases where ImGui.AlignTextToFramePadding has been called.
-            var currLineTextBaseOffset = ImGui.GetCurrentContext().CurrentWindow.DC.CurrLineTextBaseOffset;
-            if (currLineTextBaseOffset != 0f)
+            var currentWindow = context.CurrentWindow;
+            if (!currentWindow.IsNull)
             {
-                itemSize.Y += 2 * currLineTextBaseOffset;
-                foreach (ref var f in fragmentSpan)
-                    f.Offset += new Vector2(0, currLineTextBaseOffset);
+                currLineTextBaseOffset = currentWindow.DC.CurrLineTextBaseOffset;
             }
+        }
+
+        var itemSize = size;
+        if (currLineTextBaseOffset != 0f)
+        {
+            itemSize.Y += 2 * currLineTextBaseOffset;
+            foreach (ref var f in fragmentSpan)
+                f.Offset += new Vector2(0, currLineTextBaseOffset);
         }
 
         // Draw all text fragments.
@@ -321,6 +280,15 @@ internal class SeStringRenderer : IServiceType
         return displayRune.Value != 0;
     }
 
+    private void ReleaseUnmanagedResources()
+    {
+        if (this.splitter is not null)
+        {
+            this.splitter->Destroy();
+            this.splitter = null;
+        }
+    }
+
     /// <summary>Creates text fragment, taking line and word breaking into account.</summary>
     /// <param name="state">Draw state.</param>
     private void CreateTextFragments(ref SeStringDrawState state)
@@ -423,7 +391,7 @@ internal class SeStringRenderer : IServiceType
                 var overflows = Math.Max(w, xy.X + fragment.VisibleWidth) > state.WrapWidth;
 
                 // Test if the fragment does not fit into the current line and the current line is not empty.
-                if (xy.X != 0 && state.Fragments.Count > 0 && !state.Fragments[^1].BreakAfter && overflows)
+                if (xy.X != 0 && this.fragments.Count > 0 && !this.fragments[^1].BreakAfter && overflows)
                 {
                     // Introduce break if this is the first time testing the current break unit or the current fragment
                     // is an entity.
@@ -433,7 +401,7 @@ internal class SeStringRenderer : IServiceType
                         xy.X = 0;
                         xy.Y += state.LineHeight;
                         w = 0;
-                        CollectionsMarshal.AsSpan(state.Fragments)[^1].BreakAfter = true;
+                        CollectionsMarshal.AsSpan(this.fragments)[^1].BreakAfter = true;
                         fragment.Offset = xy;
 
                         // Now that the fragment is given its own line, test if it overflows again.
@@ -451,16 +419,16 @@ internal class SeStringRenderer : IServiceType
                         fragment = this.CreateFragment(state, prev, curr, true, xy, link, entity, remainingWidth);
                     }
                 }
-                else if (state.Fragments.Count > 0 && xy.X != 0)
+                else if (this.fragments.Count > 0 && xy.X != 0)
                 {
                     // New fragment fits into the current line, and it has a previous fragment in the same line.
                     // If the previous fragment ends with a soft hyphen, adjust its width so that the width of its
                     // trailing soft hyphens are not considered.
-                    if (state.Fragments[^1].EndsWithSoftHyphen)
-                        xy.X += state.Fragments[^1].AdvanceWidthWithoutSoftHyphen - state.Fragments[^1].AdvanceWidth;
+                    if (this.fragments[^1].EndsWithSoftHyphen)
+                        xy.X += this.fragments[^1].AdvanceWidthWithoutSoftHyphen - this.fragments[^1].AdvanceWidth;
 
                     // Adjust this fragment's offset from kerning distance.
-                    xy.X += state.CalculateScaledDistance(state.Fragments[^1].LastRune, fragment.FirstRune);
+                    xy.X += state.CalculateScaledDistance(this.fragments[^1].LastRune, fragment.FirstRune);
                     fragment.Offset = xy;
                 }
 
@@ -471,7 +439,7 @@ internal class SeStringRenderer : IServiceType
                 w = Math.Max(w, xy.X + fragment.VisibleWidth);
                 xy.X += fragment.AdvanceWidth;
                 prev = fragment.To;
-                state.Fragments.Add(fragment);
+                this.fragments.Add(fragment);
 
                 if (fragment.BreakAfter)
                 {
@@ -523,7 +491,7 @@ internal class SeStringRenderer : IServiceType
                     if (gfdTextureSrv != 0)
                     {
                         state.Draw(
-                            new(gfdTextureSrv),
+                            new ImTextureID(gfdTextureSrv),
                             offset + new Vector2(x, MathF.Round((state.LineHeight - size.Y) / 2)),
                             size,
                             useHq ? gfdEntry.HqUv0 : gfdEntry.Uv0,
@@ -560,7 +528,7 @@ internal class SeStringRenderer : IServiceType
 
         return;
 
-        static unsafe nint GetGfdTextureSrv()
+        static nint GetGfdTextureSrv()
         {
             var uim = UIModule.Instance();
             if (uim is null)
@@ -585,7 +553,7 @@ internal class SeStringRenderer : IServiceType
     /// <summary>Determines a bitmap icon to display for the given SeString payload.</summary>
     /// <param name="sss">Byte span that should include a SeString payload.</param>
     /// <returns>Icon to display, or <see cref="None"/> if it should not be displayed as an icon.</returns>
-    private unsafe BitmapFontIcon GetBitmapFontIconFor(ReadOnlySpan<byte> sss)
+    private BitmapFontIcon GetBitmapFontIconFor(ReadOnlySpan<byte> sss)
     {
         var e = new ReadOnlySeStringSpan(sss).GetEnumerator();
         if (!e.MoveNext() || e.Current.MacroCode is not MacroCode.Icon and not MacroCode.Icon2)
@@ -741,5 +709,39 @@ internal class SeStringRenderer : IServiceType
             endsWithSoftHyphen,
             firstDisplayRune ?? default,
             lastNonSoftHyphenRune);
+    }
+
+    /// <summary>Represents a text fragment in a SeString span.</summary>
+    /// <param name="From">Starting byte offset (inclusive) in a SeString.</param>
+    /// <param name="To">Ending byte offset (exclusive) in a SeString.</param>
+    /// <param name="Link">Byte offset of the link that decorates this text fragment, or <c>-1</c> if none.</param>
+    /// <param name="Offset">Offset in pixels w.r.t. <see cref="SeStringDrawParams.ScreenOffset"/>.</param>
+    /// <param name="Entity">Replacement entity, if any.</param>
+    /// <param name="VisibleWidth">Visible width of this text fragment. This is the width required to draw everything
+    /// without clipping.</param>
+    /// <param name="AdvanceWidth">Advance width of this text fragment. This is the width required to add to the cursor
+    /// to position the next fragment correctly.</param>
+    /// <param name="AdvanceWidthWithoutSoftHyphen">Same with <paramref name="AdvanceWidth"/>, but trimming all the
+    /// trailing soft hyphens.</param>
+    /// <param name="BreakAfter">Whether to insert a line break after this text fragment.</param>
+    /// <param name="EndsWithSoftHyphen">Whether this text fragment ends with one or more soft hyphens.</param>
+    /// <param name="FirstRune">First rune in this text fragment.</param>
+    /// <param name="LastRune">Last rune in this text fragment, for the purpose of calculating kerning distance with
+    /// the following text fragment in the same line, if any.</param>
+    private record struct TextFragment(
+        int From,
+        int To,
+        int Link,
+        Vector2 Offset,
+        SeStringReplacementEntity Entity,
+        float VisibleWidth,
+        float AdvanceWidth,
+        float AdvanceWidthWithoutSoftHyphen,
+        bool BreakAfter,
+        bool EndsWithSoftHyphen,
+        Rune FirstRune,
+        Rune LastRune)
+    {
+        public bool IsSoftHyphenVisible => this.EndsWithSoftHyphen && this.BreakAfter;
     }
 }

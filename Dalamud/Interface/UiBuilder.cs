@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Threading;
 using System.Threading.Tasks;
 
 using Dalamud.Bindings.ImGui;
@@ -13,9 +12,9 @@ using Dalamud.Interface.FontIdentifier;
 using Dalamud.Interface.Internal;
 using Dalamud.Interface.ManagedFontAtlas;
 using Dalamud.Interface.ManagedFontAtlas.Internals;
+using Dalamud.Plugin;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Utility;
-
 using Serilog;
 
 namespace Dalamud.Interface;
@@ -152,10 +151,11 @@ public interface IUiBuilder
     public ImFontPtr FontMono { get; }
 
     /// <summary>
-    /// Gets the default Dalamud icon font based on FontAwesome 5 Free solid with a fixed width and vertically centered glyphs. <br />
-    /// <strong>Accessing this static property outside of <see cref="Draw"/> is dangerous and not supported.</strong>
+    /// Gets the game's active Direct3D device.
     /// </summary>
-    ImFontPtr FontIconFixedWidth { get; }
+    // TODO: Remove it on API11/APIXI, and remove SharpDX/PInvoke/etc. dependency from Dalamud.
+    [Obsolete($"Use {nameof(DeviceHandle)} and wrap it using DirectX wrapper library of your choice.")]
+    SharpDX.Direct3D11.Device Device { get; }
 
     /// <summary>Gets the game's active Direct3D device.</summary>
     /// <value>Pointer to the instance of IUnknown that the game is using and should be containing an ID3D11Device,
@@ -225,12 +225,6 @@ public interface IUiBuilder
     /// intrusive animations, or disable them entirely.
     /// </summary>
     bool ShouldUseReducedMotion { get; }
-
-    /// <summary>
-    /// Gets a value indicating whether the user has enabled the "Enable sound effects for plugin windows" setting.<br />
-    /// This setting is effected by the in-game "System Sounds" option and volume.
-    /// </summary>
-    bool PluginUISoundEffectsEnabled { get; }
 
     /// <summary>
     /// Loads an ULD file that can load textures containing multiple icons in a single texture.
@@ -307,6 +301,8 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
     private IFontHandle? iconFontHandle;
     private IFontHandle? monoFontHandle;
     private IFontHandle? iconFontFixedWidthHandle;
+
+    private SharpDX.Direct3D11.Device? sdxDevice;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="UiBuilder"/> class and registers it.
@@ -408,12 +404,6 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
     public static ImFontPtr MonoFont => InterfaceManager.MonoFont;
 
     /// <summary>
-    /// Gets the default Dalamud icon font based on FontAwesome 5 Free solid with a fixed width and vertically centered glyphs. <br />
-    /// <strong>Accessing this static property outside of <see cref="Draw"/> is dangerous and not supported.</strong>
-    /// </summary>
-    public static ImFontPtr IconFontFixedWidth => InterfaceManager.IconFontFixedWidth;
-
-    /// <summary>
     /// Gets the default font specifications.
     /// </summary>
     public IFontSpec DefaultFontSpec => Service<FontAtlasFactory>.Get().DefaultFontSpec;
@@ -432,9 +422,6 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
 
     /// <inheritdoc/>
     public ImFontPtr FontMono => InterfaceManager.MonoFont;
-
-    /// <inheritdoc/>
-    public ImFontPtr FontIconFixedWidth => InterfaceManager.IconFontFixedWidth;
 
     /// <summary>
     /// Gets the handle to the default Dalamud font - supporting all game languages and icons.
@@ -505,6 +492,12 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
                 new FontHandleWrapper(
                     this.InterfaceManagerWithScene?.MonoFontHandle
                     ?? throw new InvalidOperationException("Scene is not yet ready.")));
+
+    /// <inheritdoc/>
+    // TODO: Remove it on API11/APIXI, and remove SharpDX/PInvoke/etc. dependency from Dalamud.
+    [Obsolete($"Use {nameof(DeviceHandle)} and wrap it using DirectX wrapper library of your choice.")]
+    public SharpDX.Direct3D11.Device Device =>
+        this.sdxDevice ??= new(this.InterfaceManagerWithScene!.Backend!.DeviceHandle);
 
     /// <inheritdoc/>
     public nint DeviceHandle => this.InterfaceManagerWithScene?.Backend?.DeviceHandle ?? 0;
@@ -582,9 +575,6 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
     /// </summary>
     public bool ShouldUseReducedMotion => Service<DalamudConfiguration>.Get().ReduceMotions ?? false;
 
-    /// <inheritdoc />
-    public bool PluginUISoundEffectsEnabled => Service<DalamudConfiguration>.Get().EnablePluginUISoundEffects;
-
     /// <summary>
     /// Gets or sets a value indicating whether statistics about UI draw time should be collected.
     /// </summary>
@@ -617,7 +607,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
     /// <summary>
     /// Gets or sets a history of the last draw times, used to calculate an average.
     /// </summary>
-    internal List<long> DrawTimeHistory { get; set; } = [];
+    internal List<long> DrawTimeHistory { get; set; } = new List<long>();
 
     private InterfaceManager? InterfaceManagerWithScene =>
         Service<InterfaceManager.InterfaceManagerWithScene>.GetNullable()?.Manager;
@@ -701,14 +691,13 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
         FontAtlasAutoRebuildMode autoRebuildMode,
         bool isGlobalScaled = true,
         string? debugName = null) =>
-        this.scopedFinalizer.Add(
-            Service<FontAtlasFactory>
-                .Get()
-                .CreateFontAtlas(
-                    this.namespaceName + ":" + (debugName ?? "custom"),
-                    autoRebuildMode,
-                    isGlobalScaled,
-                    this.plugin));
+        this.scopedFinalizer.Add(Service<FontAtlasFactory>
+                                 .Get()
+                                 .CreateFontAtlas(
+                                     this.namespaceName + ":" + (debugName ?? "custom"),
+                                     autoRebuildMode,
+                                     isGlobalScaled,
+                                     this.plugin));
 
     /// <summary>
     /// Unregister the UiBuilder. Do not call this in plugin code.
@@ -879,15 +868,6 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
             // Note: do not dispose w; we do not own it
         }
 
-        public ILockedImFont? TryLock(out string? errorMessage)
-        {
-            if (this.wrapped is { } w)
-                return w.TryLock(out errorMessage);
-
-            errorMessage = nameof(ObjectDisposedException);
-            return null;
-        }
-
         public ILockedImFont Lock() =>
             this.wrapped?.Lock() ?? throw new ObjectDisposedException(nameof(FontHandleWrapper));
 
@@ -896,13 +876,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
         public void Pop() => this.WrappedNotDisposed.Pop();
 
         public Task<IFontHandle> WaitAsync() =>
-            this.wrapped?.WaitAsync().ContinueWith(_ => (IFontHandle)this)
-            ?? Task.FromException<IFontHandle>(new ObjectDisposedException(nameof(FontHandleWrapper)));
-
-        public Task<IFontHandle> WaitAsync(CancellationToken cancellationToken) =>
-            this.wrapped?.WaitAsync(cancellationToken)
-                .ContinueWith(_ => (IFontHandle)this, cancellationToken)
-            ?? Task.FromException<IFontHandle>(new ObjectDisposedException(nameof(FontHandleWrapper)));
+            this.WrappedNotDisposed.WaitAsync().ContinueWith(_ => (IFontHandle)this);
 
         public override string ToString() =>
             $"{nameof(FontHandleWrapper)}({this.wrapped?.ToString() ?? "disposed"})";

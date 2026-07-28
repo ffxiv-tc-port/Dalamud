@@ -9,6 +9,7 @@ using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.Services;
 
+using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace Dalamud.Game.Addon.Events;
@@ -24,34 +25,40 @@ internal unsafe class AddonEventManager : IInternalDisposableService
     /// </summary>
     public static readonly Guid DalamudInternalKey = Guid.NewGuid();
 
-    private static readonly ModuleLog Log = ModuleLog.Create<AddonEventManager>();
+    private static readonly ModuleLog Log = new("AddonEventManager");
 
     [ServiceManager.ServiceDependency]
     private readonly AddonLifecycle addonLifecycle = Service<AddonLifecycle>.Get();
 
     private readonly AddonLifecycleEventListener finalizeEventListener;
 
-    private readonly Hook<AtkUnitManager.Delegates.UpdateCursor> onUpdateCursor;
+    private readonly AddonEventManagerAddressResolver address;
+    private readonly Hook<UpdateCursorDelegate> onUpdateCursor;
 
     private readonly ConcurrentDictionary<Guid, PluginEventController> pluginEventControllers;
 
-    private AtkCursor.CursorType? cursorOverride;
+    private AddonCursorType? cursorOverride;
 
     [ServiceManager.ServiceConstructor]
-    private AddonEventManager()
+    private AddonEventManager(TargetSigScanner sigScanner)
     {
+        this.address = new AddonEventManagerAddressResolver();
+        this.address.Setup(sigScanner);
+
         this.pluginEventControllers = new ConcurrentDictionary<Guid, PluginEventController>();
         this.pluginEventControllers.TryAdd(DalamudInternalKey, new PluginEventController());
 
         this.cursorOverride = null;
 
-        this.onUpdateCursor = Hook<AtkUnitManager.Delegates.UpdateCursor>.FromAddress(AtkUnitManager.Addresses.UpdateCursor.Value, this.UpdateCursorDetour);
+        this.onUpdateCursor = Hook<UpdateCursorDelegate>.FromAddress(this.address.UpdateCursor, this.UpdateCursorDetour);
 
         this.finalizeEventListener = new AddonLifecycleEventListener(AddonEvent.PreFinalize, string.Empty, this.OnAddonFinalize);
         this.addonLifecycle.RegisterListener(this.finalizeEventListener);
 
         this.onUpdateCursor.Enable();
     }
+
+    private delegate nint UpdateCursorDelegate(RaptureAtkModule* module);
 
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
@@ -110,7 +117,7 @@ internal unsafe class AddonEventManager : IInternalDisposableService
     /// Force the game cursor to be the specified cursor.
     /// </summary>
     /// <param name="cursor">Which cursor to use.</param>
-    internal void SetCursor(AddonCursorType cursor) => this.cursorOverride = (AtkCursor.CursorType)cursor;
+    internal void SetCursor(AddonCursorType cursor) => this.cursorOverride = cursor;
 
     /// <summary>
     /// Un-forces the game cursor.
@@ -161,7 +168,7 @@ internal unsafe class AddonEventManager : IInternalDisposableService
         }
     }
 
-    private void UpdateCursorDetour(AtkUnitManager* thisPtr)
+    private nint UpdateCursorDetour(RaptureAtkModule* module)
     {
         try
         {
@@ -169,14 +176,13 @@ internal unsafe class AddonEventManager : IInternalDisposableService
 
             if (this.cursorOverride is not null && atkStage is not null)
             {
-                ref var atkCursor = ref atkStage->AtkCursor;
-
-                if (atkCursor.Type != this.cursorOverride)
+                var cursor = (AddonCursorType)atkStage->AtkCursor.Type;
+                if (cursor != this.cursorOverride)
                 {
-                    atkCursor.SetCursorType((AtkCursor.CursorType)this.cursorOverride, 1);
+                    AtkStage.Instance()->AtkCursor.SetCursorType((AtkCursor.CursorType)this.cursorOverride, 1);
                 }
 
-                return;
+                return nint.Zero;
             }
         }
         catch (Exception e)
@@ -184,7 +190,7 @@ internal unsafe class AddonEventManager : IInternalDisposableService
             Log.Error(e, "Exception in UpdateCursorDetour.");
         }
 
-        this.onUpdateCursor!.Original(thisPtr);
+        return this.onUpdateCursor!.Original(module);
     }
 }
 

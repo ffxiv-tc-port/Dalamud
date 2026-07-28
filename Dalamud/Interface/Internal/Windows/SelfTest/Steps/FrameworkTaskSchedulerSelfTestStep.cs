@@ -1,8 +1,9 @@
 using System.Threading.Tasks;
 
 using Dalamud.Game;
-using Dalamud.Plugin.SelfTest;
 using Dalamud.Utility;
+
+using Microsoft.VisualBasic.Logging;
 
 using Log = Serilog.Log;
 

@@ -1,11 +1,8 @@
-using System.IO;
+﻿using System.IO;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 
 using Dalamud.Logging.Internal;
 using Dalamud.Utility;
-
 using SQLite;
 
 namespace Dalamud.Storage;
@@ -27,9 +24,9 @@ namespace Dalamud.Storage;
 [ServiceManager.ProvidedService]
 internal class ReliableFileStorage : IInternalDisposableService
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<ReliableFileStorage>();
+    private static readonly ModuleLog Log = new("VFS");
 
-    private readonly Lock syncRoot = new();
+    private readonly object syncRoot = new();
 
     private SQLiteConnection? db;
 
@@ -95,9 +92,8 @@ internal class ReliableFileStorage : IInternalDisposableService
     /// <param name="path">Path to write to.</param>
     /// <param name="contents">The contents of the file.</param>
     /// <param name="containerId">Container to write to.</param>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    public async Task WriteAllTextAsync(string path, string? contents, Guid containerId = default)
-        => await this.WriteAllTextAsync(path, contents, Encoding.UTF8, containerId);
+    public void WriteAllText(string path, string? contents, Guid containerId = default)
+        => this.WriteAllText(path, contents, Encoding.UTF8, containerId);
 
     /// <summary>
     /// Write all text to a file.
@@ -106,11 +102,10 @@ internal class ReliableFileStorage : IInternalDisposableService
     /// <param name="contents">The contents of the file.</param>
     /// <param name="encoding">The encoding to write with.</param>
     /// <param name="containerId">Container to write to.</param>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    public async Task WriteAllTextAsync(string path, string? contents, Encoding encoding, Guid containerId = default)
+    public void WriteAllText(string path, string? contents, Encoding encoding, Guid containerId = default)
     {
         var bytes = encoding.GetBytes(contents ?? string.Empty);
-        await this.WriteAllBytesAsync(path, bytes, containerId);
+        this.WriteAllBytes(path, bytes, containerId);
     }
 
     /// <summary>
@@ -119,8 +114,7 @@ internal class ReliableFileStorage : IInternalDisposableService
     /// <param name="path">Path to write to.</param>
     /// <param name="bytes">The contents of the file.</param>
     /// <param name="containerId">Container to write to.</param>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    public Task WriteAllBytesAsync(string path, byte[] bytes, Guid containerId = default)
+    public void WriteAllBytes(string path, byte[] bytes, Guid containerId = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
 
@@ -129,7 +123,7 @@ internal class ReliableFileStorage : IInternalDisposableService
             if (this.db == null)
             {
                 FilesystemUtil.WriteAllBytesSafe(path, bytes);
-                return Task.CompletedTask;
+                return;
             }
 
             this.db.RunInTransaction(() =>
@@ -155,8 +149,6 @@ internal class ReliableFileStorage : IInternalDisposableService
                 FilesystemUtil.WriteAllBytesSafe(path, bytes);
             });
         }
-
-        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -169,8 +161,8 @@ internal class ReliableFileStorage : IInternalDisposableService
     /// <param name="containerId">The container to read from.</param>
     /// <returns>All text stored in this file.</returns>
     /// <exception cref="FileNotFoundException">Thrown if the file does not exist on the filesystem or in the backup.</exception>
-    public Task<string> ReadAllTextAsync(string path, bool forceBackup = false, Guid containerId = default)
-        => this.ReadAllTextAsync(path, Encoding.UTF8, forceBackup, containerId);
+    public string ReadAllText(string path, bool forceBackup = false, Guid containerId = default)
+        => this.ReadAllText(path, Encoding.UTF8, forceBackup, containerId);
 
     /// <summary>
     /// Read all text from a file.
@@ -183,9 +175,9 @@ internal class ReliableFileStorage : IInternalDisposableService
     /// <param name="containerId">The container to read from.</param>
     /// <returns>All text stored in this file.</returns>
     /// <exception cref="FileNotFoundException">Thrown if the file does not exist on the filesystem or in the backup.</exception>
-    public async Task<string> ReadAllTextAsync(string path, Encoding encoding, bool forceBackup = false, Guid containerId = default)
+    public string ReadAllText(string path, Encoding encoding, bool forceBackup = false, Guid containerId = default)
     {
-        var bytes = await this.ReadAllBytesAsync(path, forceBackup, containerId);
+        var bytes = this.ReadAllBytes(path, forceBackup, containerId);
         return encoding.GetString(bytes);
     }
 
@@ -199,9 +191,8 @@ internal class ReliableFileStorage : IInternalDisposableService
     /// <param name="containerId">The container to read from.</param>
     /// <exception cref="FileNotFoundException">Thrown if the file does not exist on the filesystem or in the backup.</exception>
     /// <exception cref="FileReadException">Thrown here if the file and the backup fail their read.</exception>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    public async Task ReadAllTextAsync(string path, Action<string> reader, Guid containerId = default)
-        => await this.ReadAllTextAsync(path, Encoding.UTF8, reader, containerId);
+    public void ReadAllText(string path, Action<string> reader, Guid containerId = default)
+        => this.ReadAllText(path, Encoding.UTF8, reader, containerId);
 
     /// <summary>
     /// Read all text from a file, and automatically try again with the backup if the file does not exist or
@@ -214,8 +205,7 @@ internal class ReliableFileStorage : IInternalDisposableService
     /// <param name="containerId">The container to read from.</param>
     /// <exception cref="FileNotFoundException">Thrown if the file does not exist on the filesystem or in the backup.</exception>
     /// <exception cref="FileReadException">Thrown here if the file and the backup fail their read.</exception>
-    /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    public async Task ReadAllTextAsync(string path, Encoding encoding, Action<string> reader, Guid containerId = default)
+    public void ReadAllText(string path, Encoding encoding, Action<string> reader, Guid containerId = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
 
@@ -226,7 +216,7 @@ internal class ReliableFileStorage : IInternalDisposableService
         // 1.) Try without using the backup
         try
         {
-            var text = await this.ReadAllTextAsync(path, encoding, false, containerId);
+            var text = this.ReadAllText(path, encoding, false, containerId);
             reader(text);
             return;
         }
@@ -243,7 +233,7 @@ internal class ReliableFileStorage : IInternalDisposableService
         // 2.) Try using the backup
         try
         {
-            var text = await this.ReadAllTextAsync(path, encoding, true, containerId);
+            var text = this.ReadAllText(path, encoding, true, containerId);
             reader(text);
         }
         catch (Exception ex)
@@ -263,7 +253,7 @@ internal class ReliableFileStorage : IInternalDisposableService
     /// <param name="containerId">The container to read from.</param>
     /// <returns>All bytes stored in this file.</returns>
     /// <exception cref="FileNotFoundException">Thrown if the file does not exist on the filesystem or in the backup.</exception>
-    public async Task<byte[]> ReadAllBytesAsync(string path, bool forceBackup = false, Guid containerId = default)
+    public byte[] ReadAllBytes(string path, bool forceBackup = false, Guid containerId = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
 
@@ -274,14 +264,16 @@ internal class ReliableFileStorage : IInternalDisposableService
                 throw new FileNotFoundException("Backup database was not available");
 
             var normalizedPath = NormalizePath(path);
-            var file = this.db.Table<DbFile>().FirstOrDefault(f => f.Path == normalizedPath && f.ContainerId == containerId)
-                ?? throw new FileNotFoundException();
+            var file = this.db.Table<DbFile>().FirstOrDefault(f => f.Path == normalizedPath && f.ContainerId == containerId);
+            if (file == null)
+                throw new FileNotFoundException();
+
             return file.Data;
         }
 
         // If the file doesn't exist, immediately check the backup db
         if (!File.Exists(path))
-            return await this.ReadAllBytesAsync(path, true, containerId);
+            return this.ReadAllBytes(path, true, containerId);
 
         try
         {
@@ -290,7 +282,7 @@ internal class ReliableFileStorage : IInternalDisposableService
         catch (Exception e)
         {
             Log.Error(e, "Failed to read file from disk, falling back to database");
-            return await this.ReadAllBytesAsync(path, true, containerId);
+            return this.ReadAllBytes(path, true, containerId);
         }
     }
 

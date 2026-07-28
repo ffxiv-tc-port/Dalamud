@@ -1,5 +1,9 @@
+using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 
 using CheapLoc;
 
@@ -12,7 +16,10 @@ using Dalamud.Interface;
 using Dalamud.Interface.Internal;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Internal;
+using Dalamud.Support;
 using Dalamud.Utility;
+
+using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
 namespace Dalamud.Game;
 
@@ -22,12 +29,16 @@ namespace Dalamud.Game;
 [ServiceManager.EarlyLoadedService]
 internal partial class ChatHandlers : IServiceType
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<ChatHandlers>();
+    private static readonly ModuleLog Log = new("ChatHandlers");
+
+    [ServiceManager.ServiceDependency]
+    private readonly Dalamud dalamud = Service<Dalamud>.Get();
 
     [ServiceManager.ServiceDependency]
     private readonly DalamudConfiguration configuration = Service<DalamudConfiguration>.Get();
 
     private bool hasSeenLoadingMsg;
+    private CancellationTokenSource deferredAutoUpdateCts = new();
 
     [ServiceManager.ServiceConstructor]
     private ChatHandlers(ChatGui chatGui)
@@ -76,16 +87,12 @@ internal partial class ChatHandlers : IServiceType
         }
 
         // For injections while logged in
-        if (clientState.IsLoggedIn && clientState.TerritoryType == 0 && !this.hasSeenLoadingMsg)
+        if (clientState.LocalPlayer != null && clientState.TerritoryType == 0 && !this.hasSeenLoadingMsg)
             this.PrintWelcomeMessage();
-
 #if !DEBUG && false
             if (!this.hasSeenLoadingMsg)
                 return;
 #endif
-
-        var messageCopy = message;
-        var senderCopy = sender;
 
         var linkMatch = CompiledUrlRegex().Match(message.TextValue);
         if (linkMatch.Value.Length > 0)
@@ -103,7 +110,7 @@ internal partial class ChatHandlers : IServiceType
 
         if (this.configuration.PrintDalamudWelcomeMsg)
         {
-            chatGui.Print(string.Format(Loc.Localize("DalamudWelcome", "Dalamud {0} loaded."), Versioning.GetScmVersion())
+            chatGui.Print(string.Format(Loc.Localize("DalamudWelcome", "Dalamud {0} loaded."), Util.GetScmVersion())
                           + string.Format(Loc.Localize("PluginsWelcome", " {0} plugin(s) loaded."), pluginManager.InstalledPlugins.Count(x => x.IsLoaded)));
         }
 
@@ -115,7 +122,7 @@ internal partial class ChatHandlers : IServiceType
             }
         }
 
-        if (string.IsNullOrEmpty(this.configuration.LastVersion) || !Versioning.GetAssemblyVersion().StartsWith(this.configuration.LastVersion))
+        if (string.IsNullOrEmpty(this.configuration.LastVersion) || !Util.AssemblyVersion.StartsWith(this.configuration.LastVersion))
         {
             var linkPayload = chatGui.AddChatLinkHandler(
                 (_, _) => dalamudInterface.OpenPluginInstallerTo(PluginInstallerOpenKind.Changelogs));
@@ -123,11 +130,11 @@ internal partial class ChatHandlers : IServiceType
             var updateMessage = new SeStringBuilder()
                 .AddText(Loc.Localize("DalamudUpdated", "Dalamud has been updated successfully!"))
                 .AddUiForeground(500)
-                .AddText("  [ ")
+                .AddText("  [")
                 .Add(linkPayload)
-                .AddText(Loc.Localize("DalamudClickToViewChangelogs", "Click here to view the changelog."))
+                .AddText(Loc.Localize("DalamudClickToViewChangelogs", " Click here to view the changelog."))
                 .Add(RawPayload.LinkTerminator)
-                .AddText(" ]")
+                .AddText("]")
                 .AddUiForegroundOff();
 
             chatGui.Print(new XivChatEntry
@@ -136,7 +143,7 @@ internal partial class ChatHandlers : IServiceType
                 Type = XivChatType.Notice,
             });
 
-            this.configuration.LastVersion = Versioning.GetAssemblyVersion();
+            this.configuration.LastVersion = Util.AssemblyVersion;
             this.configuration.QueueSave();
         }
 

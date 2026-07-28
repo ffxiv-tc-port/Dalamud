@@ -4070,13 +4070,6 @@ public enum UiConfigOption
     GposePortraitRotateType,
 
     /// <summary>
-    /// UiConfig option with the internal name GroupPosePortraitUnlockAspectLimit.
-    /// This option is a UInt.
-    /// </summary>
-    [GameConfigOption("GroupPosePortraitUnlockAspectLimit", ConfigType.UInt)]
-    GroupPosePortraitUnlockAspectLimit,
-
-    /// <summary>
     /// UiConfig option with the internal name LsListSortPriority.
     /// This option is a UInt.
     /// </summary>

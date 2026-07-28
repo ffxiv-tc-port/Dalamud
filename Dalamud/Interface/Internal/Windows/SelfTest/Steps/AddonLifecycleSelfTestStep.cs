@@ -1,9 +1,8 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
-using Dalamud.Plugin.SelfTest;
 
 namespace Dalamud.Interface.Internal.Windows.SelfTest.Steps;
 
@@ -23,15 +22,15 @@ internal class AddonLifecycleSelfTestStep : ISelfTestStep
     /// </summary>
     public AddonLifecycleSelfTestStep()
     {
-        this.listeners =
-        [
+        this.listeners = new List<AddonLifecycleEventListener>
+        {
             new(AddonEvent.PostSetup, "Character", this.PostSetup),
             new(AddonEvent.PostUpdate, "Character", this.PostUpdate),
             new(AddonEvent.PostDraw, "Character", this.PostDraw),
             new(AddonEvent.PostRefresh, "Character", this.PostRefresh),
             new(AddonEvent.PostRequestedUpdate, "Character", this.PostRequestedUpdate),
             new(AddonEvent.PreFinalize, "Character", this.PreFinalize),
-        ];
+        };
     }
 
     private enum TestStep

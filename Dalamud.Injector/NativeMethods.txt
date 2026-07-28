@@ -1,8 +1,0 @@
-CreateRemoteThread
-WaitForSingleObject
-GetExitCodeThread
-DuplicateHandle
-
-MessageBox
-GetModuleHandle
-GetProcAddress

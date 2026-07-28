@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using Dalamud.Bindings.ImGui;
-using Dalamud.Interface.ImGuiSeStringRenderer;
 using Dalamud.Interface.Internal.Windows.Data.Widgets;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
@@ -33,7 +32,7 @@ namespace Dalamud.Plugin.Services;
 /// <see cref="TexWidget"/>.
 /// </para>
 /// </remarks>
-public interface ITextureProvider : IDalamudService
+public interface ITextureProvider
 {
     /// <summary>Creates an empty texture.</summary>
     /// <param name="specs">Texture specifications.</param>
@@ -187,17 +186,6 @@ public interface ITextureProvider : IDalamudService
         string? debugName = null,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Creates a texture by drawing a SeString onto it.</summary>
-    /// <param name="text">SeString to render.</param>
-    /// <param name="drawParams">Parameters for drawing.</param>
-    /// <param name="debugName">Name for debug display purposes.</param>
-    /// <returns>The new texture.</returns>
-    /// <remarks>Can be only be used from the main thread.</remarks>
-    public IDalamudTextureWrap CreateTextureFromSeString(
-        ReadOnlySpan<byte> text,
-        scoped in SeStringDrawParams drawParams = default,
-        string? debugName = null);
-
     /// <summary>Gets the supported bitmap decoders.</summary>
     /// <returns>The supported bitmap decoders.</returns>
     /// <remarks>
@@ -322,7 +310,7 @@ public interface ITextureProvider : IDalamudService
     /// <param name="leaveWrapOpen">Whether to leave <paramref name="wrap"/> non-disposed when the returned
     /// <see cref="Task{TResult}"/> completes.</param>
     /// <returns>Address of the new <see cref="FFXIVClientStructs.FFXIV.Client.Graphics.Kernel.Texture"/>.</returns>
-    /// <example>See <c>PrintTextureInfo</c> in <see cref="Interface.Internal.UiDebug.Browsing.ImageNodeTree"/> for an example
+    /// <example>See <c>PrintTextureInfo</c> in <see cref="Interface.Internal.UiDebug.PrintSimpleNode"/> for an example
     /// of replacing the texture of an image node.</example>
     /// <remarks>
     /// <para>If the returned kernel texture is to be destroyed, call the fourth function in its vtable, by calling

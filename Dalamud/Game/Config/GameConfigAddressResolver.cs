@@ -1,6 +1,4 @@
-using Dalamud.Plugin.Services;
-
-namespace Dalamud.Game.Config;
+﻿namespace Dalamud.Game.Config;
 
 /// <summary>
 /// Game config system address resolver.

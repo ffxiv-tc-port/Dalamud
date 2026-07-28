@@ -5,6 +5,7 @@ using Dalamud.Game.Addon.Events.EventDataTypes;
 using Dalamud.Game.Gui;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
 
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
@@ -15,7 +16,7 @@ namespace Dalamud.Game.Addon.Events;
 /// </summary>
 internal unsafe class PluginEventController : IDisposable
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<AddonEventManager>();
+    private static readonly ModuleLog Log = new("AddonEventManager");
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PluginEventController"/> class.
@@ -27,7 +28,7 @@ internal unsafe class PluginEventController : IDisposable
 
     private AddonEventListener EventListener { get; init; }
 
-    private List<AddonEventEntry> Events { get; } = [];
+    private List<AddonEventEntry> Events { get; } = new();
 
     /// <summary>
     /// Adds a tracked event.

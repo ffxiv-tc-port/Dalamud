@@ -1,12 +1,10 @@
 using System.Collections;
 using System.Collections.Generic;
 
-using Dalamud.Game.Player;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
 
-using CSFateContext = FFXIVClientStructs.FFXIV.Client.Game.Fate.FateContext;
 using CSFateManager = FFXIVClientStructs.FFXIV.Client.Game.Fate.FateManager;
 
 namespace Dalamud.Game.ClientState.Fates;
@@ -27,7 +25,7 @@ internal sealed partial class FateTable : IServiceType, IFateTable
     }
 
     /// <inheritdoc/>
-    public unsafe nint Address => (nint)CSFateManager.Instance();
+    public unsafe IntPtr Address => (nint)CSFateManager.Instance();
 
     /// <inheritdoc/>
     public unsafe int Length
@@ -62,37 +60,42 @@ internal sealed partial class FateTable : IServiceType, IFateTable
     /// <inheritdoc/>
     public bool IsValid(IFate fate)
     {
-        if (fate == null)
+        var clientState = Service<ClientState>.GetNullable();
+
+        if (fate == null || clientState == null)
             return false;
 
-        var playerState = Service<PlayerState>.Get();
-        return playerState.IsLoaded == true;
+        if (clientState.LocalContentId == 0)
+            return false;
+
+        return true;
     }
 
     /// <inheritdoc/>
-    public unsafe nint GetFateAddress(int index)
+    public unsafe IntPtr GetFateAddress(int index)
     {
         if (index >= this.Length)
-            return 0;
+            return IntPtr.Zero;
 
         var fateManager = CSFateManager.Instance();
         if (fateManager == null)
-            return 0;
+            return IntPtr.Zero;
 
-        return (nint)fateManager->Fates[index].Value;
+        return (IntPtr)fateManager->Fates[index].Value;
     }
 
     /// <inheritdoc/>
-    public unsafe IFate? CreateFateReference(IntPtr address)
+    public IFate? CreateFateReference(IntPtr offset)
     {
-        if (address == 0)
-            return null;
-
         var clientState = Service<ClientState>.Get();
+
         if (clientState.LocalContentId == 0)
             return null;
 
-        return new Fate((CSFateContext*)address);
+        if (offset == IntPtr.Zero)
+            return null;
+
+        return new Fate(offset);
     }
 }
 
@@ -107,39 +110,12 @@ internal sealed partial class FateTable
     /// <inheritdoc/>
     public IEnumerator<IFate> GetEnumerator()
     {
-        return new Enumerator(this);
+        for (var i = 0; i < this.Length; i++)
+        {
+            yield return this[i];
+        }
     }
 
     /// <inheritdoc/>
     IEnumerator IEnumerable.GetEnumerator() => this.GetEnumerator();
-
-    private struct Enumerator(FateTable fateTable) : IEnumerator<IFate>
-    {
-        private int index = -1;
-
-        public IFate Current { get; private set; }
-
-        object IEnumerator.Current => this.Current;
-
-        public bool MoveNext()
-        {
-            if (++this.index < fateTable.Length)
-            {
-                this.Current = fateTable[this.index];
-                return true;
-            }
-
-            this.Current = default;
-            return false;
-        }
-
-        public void Reset()
-        {
-            this.index = -1;
-        }
-
-        public void Dispose()
-        {
-        }
-    }
 }

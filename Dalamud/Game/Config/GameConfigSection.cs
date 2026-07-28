@@ -1,12 +1,10 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 
 using Dalamud.Memory;
 using Dalamud.Utility;
-
 using FFXIVClientStructs.FFXIV.Common.Configuration;
-
 using Serilog;
 
 namespace Dalamud.Game.Config;
@@ -514,7 +512,7 @@ public class GameConfigSection
         }
 
         var prop = entry->Properties.String;
-        properties = new StringConfigProperties(prop.DefaultValue == null ? null : prop.DefaultValue->AsDalamudSeString());
+        properties = new StringConfigProperties(prop.DefaultValue == null ? null : MemoryHelper.ReadSeString(prop.DefaultValue));
         return true;
     }
 

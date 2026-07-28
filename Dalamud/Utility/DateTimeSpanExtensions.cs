@@ -100,7 +100,7 @@ public static class DateTimeSpanExtensions
 
     private sealed class ParsedRelativeFormatStrings
     {
-        private readonly List<(float MinSeconds, string FormatString)> formatStrings = [];
+        private readonly List<(float MinSeconds, string FormatString)> formatStrings = new();
 
         public ParsedRelativeFormatStrings(string value)
         {

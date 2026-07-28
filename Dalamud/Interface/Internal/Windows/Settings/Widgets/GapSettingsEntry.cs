@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
@@ -6,7 +6,7 @@ using Dalamud.Interface.Utility;
 namespace Dalamud.Interface.Internal.Windows.Settings.Widgets;
 
 [SuppressMessage("StyleCop.CSharp.DocumentationRules", "SA1600:Elements should be documented", Justification = "Internals")]
-internal sealed class GapSettingsEntry : SettingsEntry
+public sealed class GapSettingsEntry : SettingsEntry
 {
     private readonly float size;
     private readonly bool hr;

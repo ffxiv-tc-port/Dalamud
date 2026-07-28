@@ -13,8 +13,8 @@ using Reloaded.Memory.Buffers;
 using Reloaded.Memory.Sources;
 using Reloaded.Memory.Utilities;
 using Serilog;
-using Windows.Win32.Foundation;
 
+using static Dalamud.Injector.NativeFunctions;
 using static Iced.Intel.AssemblerRegisters;
 
 namespace Dalamud.Injector
@@ -88,7 +88,7 @@ namespace Dalamud.Injector
             if (lpParameter == 0)
                 throw new Exception("Unable to allocate LoadLibraryW parameter");
 
-            var err = this.CallRemoteFunction(this.loadLibraryShellPtr, lpParameter);
+            this.CallRemoteFunction(this.loadLibraryShellPtr, lpParameter, out var err);
             this.extMemory.Read<IntPtr>(this.loadLibraryRetPtr, out address);
             if (address == IntPtr.Zero)
                 throw new Exception($"LoadLibraryW(\"{modulePath}\") failure: {new Win32Exception((int)err).Message} ({err})");
@@ -108,7 +108,7 @@ namespace Dalamud.Injector
             if (lpParameter == 0)
                 throw new Exception("Unable to allocate GetProcAddress parameter ptr");
 
-            var err = this.CallRemoteFunction(this.getProcAddressShellPtr, lpParameter);
+            this.CallRemoteFunction(this.getProcAddressShellPtr, lpParameter, out var err);
             this.extMemory.Read<nuint>(this.getProcAddressRetPtr, out address);
             if (address == 0)
                 throw new Exception($"GetProcAddress(0x{module:X}, \"{functionName}\") failure: {new Win32Exception((int)err).Message} ({err})");
@@ -119,30 +119,27 @@ namespace Dalamud.Injector
         /// </summary>
         /// <param name="methodAddress">Method address.</param>
         /// <param name="parameterAddress">Parameter address.</param>
-        /// <returns>Thread exit code.</returns>
-        public unsafe uint CallRemoteFunction(nuint methodAddress, nuint parameterAddress)
+        /// <param name="exitCode">Thread exit code.</param>
+        public void CallRemoteFunction(nuint methodAddress, nuint parameterAddress, out uint exitCode)
         {
             // Create and initialize a thread at our address and parameter address.
-            var threadHandle = Windows.Win32.PInvoke.CreateRemoteThread(
-                new HANDLE(this.targetProcess.Handle.ToPointer()),
-                null,
+            var threadHandle = CreateRemoteThread(
+                this.targetProcess.Handle,
+                IntPtr.Zero,
                 UIntPtr.Zero,
-                (delegate* unmanaged[Stdcall]<void*, uint>)methodAddress,
-                parameterAddress.ToPointer(),
-                0, // Run immediately
-                null);
+                methodAddress,
+                parameterAddress,
+                CreateThreadFlags.RunImmediately,
+                out _);
 
             if (threadHandle == IntPtr.Zero)
                 throw new Exception($"CreateRemoteThread failure: {Marshal.GetLastWin32Error()}");
 
-            _ = Windows.Win32.PInvoke.WaitForSingleObject(threadHandle, uint.MaxValue);
+            _ = WaitForSingleObject(threadHandle, uint.MaxValue);
 
-            uint exitCode = 0;
-            if (!Windows.Win32.PInvoke.GetExitCodeThread(threadHandle, &exitCode))
-                throw new Exception($"GetExitCodeThread failure: {Marshal.GetLastWin32Error()}");
+            GetExitCodeThread(threadHandle, out exitCode);
 
-            Windows.Win32.PInvoke.CloseHandle(threadHandle);
-            return exitCode;
+            CloseHandle(threadHandle);
         }
 
         private void SetupLoadLibrary(ProcessModule kernel32Module, ExportFunction[] kernel32Exports)

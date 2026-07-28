@@ -3,7 +3,6 @@ using System.Numerics;
 
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Gui.FlyText;
-using Dalamud.Interface.Utility.Raii;
 
 namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
 
@@ -23,7 +22,7 @@ internal class FlyTextWidget : IDataWindowWidget
     private Vector4 flyColor = new(1, 0, 0, 1);
 
     /// <inheritdoc/>
-    public string[]? CommandShortcuts { get; init; } = ["flytext"];
+    public string[]? CommandShortcuts { get; init; } = { "flytext" };
 
     /// <inheritdoc/>
     public string DisplayName { get; init; } = "Fly Text";
@@ -40,18 +39,18 @@ internal class FlyTextWidget : IDataWindowWidget
     /// <inheritdoc/>
     public void Draw()
     {
-        using (var combo = ImRaii.Combo("Kind"u8, $"{this.flyKind} ({(int)this.flyKind})"))
+        if (ImGui.BeginCombo("Kind"u8, $"{this.flyKind} ({(int)this.flyKind})"))
         {
-            if (combo.Success)
+            var values = Enum.GetValues<FlyTextKind>().Distinct();
+            foreach (var value in values)
             {
-                foreach (var value in Enum.GetValues<FlyTextKind>().Distinct())
+                if (ImGui.Selectable($"{value} ({(int)value})"))
                 {
-                    if (ImGui.Selectable($"{value} ({(int)value})"))
-                    {
-                        this.flyKind = value;
-                    }
+                    this.flyKind = value;
                 }
             }
+
+            ImGui.EndCombo();
         }
 
         ImGui.InputText("Text1"u8, ref this.flyText1, 200);

@@ -1,6 +1,4 @@
-using Dalamud.Plugin.Services;
-
-namespace Dalamud.Game.Network.Internal;
+﻿namespace Dalamud.Game.Network.Internal;
 
 /// <summary>
 /// Internal address resolver for the network handlers.

@@ -2,13 +2,15 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 
-using Dalamud.Game.Gui;
 using Dalamud.Game.Inventory.InventoryEventArgTypes;
+using Dalamud.Hooking;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Internal;
 using Dalamud.Plugin.Services;
+
+using FFXIVClientStructs.FFXIV.Client.UI;
 
 namespace Dalamud.Game.Inventory;
 
@@ -18,21 +20,20 @@ namespace Dalamud.Game.Inventory;
 [ServiceManager.EarlyLoadedService]
 internal class GameInventory : IInternalDisposableService
 {
-    private readonly List<GameInventoryPluginScoped> subscribersPendingChange = [];
-    private readonly List<GameInventoryPluginScoped> subscribers = [];
+    private readonly List<GameInventoryPluginScoped> subscribersPendingChange = new();
+    private readonly List<GameInventoryPluginScoped> subscribers = new();
 
-    private readonly List<InventoryItemAddedArgs> addedEvents = [];
-    private readonly List<InventoryItemRemovedArgs> removedEvents = [];
-    private readonly List<InventoryItemChangedArgs> changedEvents = [];
-    private readonly List<InventoryItemMovedArgs> movedEvents = [];
-    private readonly List<InventoryItemSplitArgs> splitEvents = [];
-    private readonly List<InventoryItemMergedArgs> mergedEvents = [];
+    private readonly List<InventoryItemAddedArgs> addedEvents = new();
+    private readonly List<InventoryItemRemovedArgs> removedEvents = new();
+    private readonly List<InventoryItemChangedArgs> changedEvents = new();
+    private readonly List<InventoryItemMovedArgs> movedEvents = new();
+    private readonly List<InventoryItemSplitArgs> splitEvents = new();
+    private readonly List<InventoryItemMergedArgs> mergedEvents = new();
 
     [ServiceManager.ServiceDependency]
     private readonly Framework framework = Service<Framework>.Get();
 
-    [ServiceManager.ServiceDependency]
-    private readonly GameGui gameGui = Service<GameGui>.Get();
+    private readonly Hook<RaptureAtkModuleUpdateDelegate> raptureAtkModuleUpdateHook;
 
     private readonly GameInventoryType[] inventoryTypes;
     private readonly GameInventoryItem[]?[] inventoryItems;
@@ -46,8 +47,17 @@ internal class GameInventory : IInternalDisposableService
         this.inventoryTypes = Enum.GetValues<GameInventoryType>();
         this.inventoryItems = new GameInventoryItem[this.inventoryTypes.Length][];
 
-        this.gameGui.AgentUpdate += this.OnAgentUpdate;
+        unsafe
+        {
+            this.raptureAtkModuleUpdateHook = Hook<RaptureAtkModuleUpdateDelegate>.FromFunctionPointerVariable(
+                new(&RaptureAtkModule.StaticVirtualTablePointer->Update),
+                this.RaptureAtkModuleUpdateDetour);
+        }
+
+        this.raptureAtkModuleUpdateHook.Enable();
     }
+
+    private unsafe delegate void RaptureAtkModuleUpdateDelegate(RaptureAtkModule* ram, float f1);
 
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
@@ -58,7 +68,7 @@ internal class GameInventory : IInternalDisposableService
             this.subscribersPendingChange.Clear();
             this.subscribersChanged = false;
             this.framework.Update -= this.OnFrameworkUpdate;
-            this.gameGui.AgentUpdate -= this.OnAgentUpdate;
+            this.raptureAtkModuleUpdateHook.Dispose();
         }
     }
 
@@ -151,7 +161,7 @@ internal class GameInventory : IInternalDisposableService
             bool isNew;
             lock (this.subscribersPendingChange)
             {
-                isNew = this.subscribersPendingChange.Count != 0 && this.subscribers.Count == 0;
+                isNew = this.subscribersPendingChange.Any() && !this.subscribers.Any();
                 this.subscribers.Clear();
                 this.subscribers.AddRange(this.subscribersPendingChange);
                 this.subscribersChanged = false;
@@ -305,14 +315,14 @@ internal class GameInventory : IInternalDisposableService
     private GameInventoryItem[] CreateItemsArray(int length)
     {
         var items = new GameInventoryItem[length];
-        foreach (ref var item in items.AsSpan())
-            item = new();
+        items.Initialize();
         return items;
     }
 
-    private void OnAgentUpdate(AgentUpdateFlag agentUpdateFlag)
+    private unsafe void RaptureAtkModuleUpdateDetour(RaptureAtkModule* ram, float f1)
     {
-        this.inventoriesMightBeChanged |= true;
+        this.inventoriesMightBeChanged |= ram->AgentUpdateFlag != 0;
+        this.raptureAtkModuleUpdateHook.Original(ram, f1);
     }
 
     /// <summary>
@@ -348,7 +358,7 @@ internal class GameInventory : IInternalDisposableService
 #pragma warning restore SA1015
 internal class GameInventoryPluginScoped : IInternalDisposableService, IGameInventory
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<GameInventoryPluginScoped>();
+    private static readonly ModuleLog Log = new(nameof(GameInventoryPluginScoped));
 
     [ServiceManager.ServiceDependency]
     private readonly GameInventory gameInventoryService = Service<GameInventory>.Get();

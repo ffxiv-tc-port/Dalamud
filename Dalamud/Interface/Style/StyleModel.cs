@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 
@@ -6,9 +6,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Interface.Colors;
 using Dalamud.Utility;
-
 using Newtonsoft.Json;
-
 using Serilog;
 
 namespace Dalamud.Interface.Style;
@@ -70,7 +68,7 @@ public abstract class StyleModel
     /// <exception cref="ArgumentException">Thrown in case the version of the model is not known.</exception>
     public static StyleModel? Deserialize(string model)
     {
-        var json = Util.DecompressString(Convert.FromBase64String(model[3..]));
+        var json = Util.DecompressString(Convert.FromBase64String(model.Substring(3)));
 
         if (model.StartsWith(StyleModelV1.SerializedPrefix))
             return JsonConvert.DeserializeObject<StyleModelV1>(json);
@@ -88,7 +86,8 @@ public abstract class StyleModel
         if (configuration.SavedStylesOld == null)
             return;
 
-        configuration.SavedStyles = [.. configuration.SavedStylesOld];
+        configuration.SavedStyles = new List<StyleModel>();
+        configuration.SavedStyles.AddRange(configuration.SavedStylesOld);
 
         Log.Information("Transferred {NumStyles} styles", configuration.SavedStyles.Count);
 
@@ -103,16 +102,19 @@ public abstract class StyleModel
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the version of the style model is unknown.</exception>
     public string Serialize()
     {
-        var prefix = this switch
+        string prefix;
+        switch (this)
         {
-            StyleModelV1 => StyleModelV1.SerializedPrefix,
-            _ => throw new ArgumentOutOfRangeException(),
-        };
+            case StyleModelV1:
+                prefix = StyleModelV1.SerializedPrefix;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
+
         return prefix + Convert.ToBase64String(Util.CompressString(JsonConvert.SerializeObject(this)));
     }
 
-    public abstract StyleModel Clone();
-    
     /// <summary>
     /// Apply this style model to ImGui.
     /// </summary>

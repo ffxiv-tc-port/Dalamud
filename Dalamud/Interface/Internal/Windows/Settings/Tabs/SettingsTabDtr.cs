@@ -4,7 +4,6 @@ using System.Linq;
 using System.Numerics;
 
 using CheapLoc;
-
 using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Game.Gui.Dtr;
@@ -15,18 +14,16 @@ using Dalamud.Interface.Utility;
 namespace Dalamud.Interface.Internal.Windows.Settings.Tabs;
 
 [SuppressMessage("StyleCop.CSharp.DocumentationRules", "SA1600:Elements should be documented", Justification = "Internals")]
-internal sealed class SettingsTabDtr : SettingsTab
+public class SettingsTabDtr : SettingsTab
 {
     private List<string>? dtrOrder;
     private List<string>? dtrIgnore;
     private int dtrSpacing;
     private bool dtrSwapDirection;
 
+    public override SettingsEntry[] Entries { get; } = Array.Empty<SettingsEntry>();
+
     public override string Title => Loc.Localize("DalamudSettingsServerInfoBar", "Server Info Bar");
-
-    public override SettingsOpenKind Kind => SettingsOpenKind.ServerInfoBar;
-
-    public override SettingsEntry[] Entries { get; } = [];
 
     public override void Draw()
     {
@@ -128,8 +125,8 @@ internal sealed class SettingsTabDtr : SettingsTab
             ImGui.GetIO().MousePos = moveMouseTo[moveMouseToIndex];
         }
 
-        configuration.DtrOrder = [.. order, .. orderLeft];
-        configuration.DtrIgnore = [.. ignore, .. ignoreLeft];
+        configuration.DtrOrder = order.Concat(orderLeft).ToList();
+        configuration.DtrIgnore = ignore.Concat(ignoreLeft).ToList();
 
         if (isOrderChange)
             dtrBar.ApplySort();

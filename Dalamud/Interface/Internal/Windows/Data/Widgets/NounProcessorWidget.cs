@@ -8,7 +8,6 @@ using Dalamud.Game.ClientState;
 using Dalamud.Game.Text.Noun;
 using Dalamud.Game.Text.Noun.Enums;
 using Dalamud.Interface.Utility.Raii;
-
 using Lumina.Data;
 using Lumina.Excel;
 using Lumina.Excel.Sheets;
@@ -55,13 +54,13 @@ internal class NounProcessorWidget : IDataWindowWidget
     private ClientLanguage[] languages = [];
     private string[] languageNames = [];
 
-    private int selectedSheetNameIndex;
-    private int selectedLanguageIndex;
+    private int selectedSheetNameIndex = 0;
+    private int selectedLanguageIndex = 0;
     private int rowId = 1;
     private int amount = 1;
 
     /// <inheritdoc/>
-    public string[]? CommandShortcuts { get; init; } = ["noun"];
+    public string[]? CommandShortcuts { get; init; } = { "noun" };
 
     /// <inheritdoc/>
     public string DisplayName { get; init; } = "Noun Processor";
@@ -84,6 +83,7 @@ internal class NounProcessorWidget : IDataWindowWidget
     {
         var nounProcessor = Service<NounProcessor>.Get();
         var dataManager = Service<DataManager>.Get();
+        var clientState = Service<ClientState>.Get();
 
         var sheetType = NounSheets.ElementAt(this.selectedSheetNameIndex);
         var language = this.languages[this.selectedLanguageIndex];

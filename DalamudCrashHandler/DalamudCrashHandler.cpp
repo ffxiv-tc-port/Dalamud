@@ -19,7 +19,6 @@
 #include <comdef.h>
 #include <CommCtrl.h>
 #include <DbgHelp.h>
-#include <intrin.h>
 #include <minidumpapiset.h>
 #include <PathCch.h>
 #include <Psapi.h>
@@ -28,9 +27,6 @@
 #include <ShObjIdl.h>
 #include <shlobj_core.h>
 #include <winhttp.h>
-
-#include <dxgi.h>
-#pragma comment(lib, "dxgi.lib")
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(linker, "/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
@@ -297,43 +293,35 @@ std::wstring to_address_string(const DWORD64 address, const bool try_ptrderef = 
 
 void print_exception_info(HANDLE hThread, const EXCEPTION_POINTERS& ex, const CONTEXT& ctx, std::wostringstream& log) {
     std::vector<EXCEPTION_RECORD> exRecs;
-    if (ex.ExceptionRecord)
-    {
+    if (ex.ExceptionRecord) {
         size_t rec_index = 0;
         size_t read;
-
+        exRecs.emplace_back();
         for (auto pRemoteExRec = ex.ExceptionRecord;
-             pRemoteExRec && rec_index < 64;
-             rec_index++)
-        {
-            exRecs.emplace_back();
-
-            if (!ReadProcessMemory(g_hProcess, pRemoteExRec, &exRecs.back(), sizeof exRecs.back(), &read)
-                || read < offsetof(EXCEPTION_RECORD, ExceptionInformation)
-                || read < static_cast<size_t>(reinterpret_cast<const char*>(&exRecs.back().ExceptionInformation[exRecs.
-                    back().NumberParameters]) - reinterpret_cast<const char*>(&exRecs.back())))
-            {
-                exRecs.pop_back();
-                break;
-            }
+             pRemoteExRec
+             && rec_index < 64
+             && ReadProcessMemory(g_hProcess, pRemoteExRec, &exRecs.back(), sizeof exRecs.back(), &read)
+             && read >= offsetof(EXCEPTION_RECORD, ExceptionInformation)
+             && read >= static_cast<size_t>(reinterpret_cast<const char*>(&exRecs.back().ExceptionInformation[exRecs.back().NumberParameters]) - reinterpret_cast<const char*>(&exRecs.back()));
+             rec_index++) {
 
             log << std::format(L"\n异常信息 #{}\n", rec_index);
             log << std::format(L"地址: {:X}\n", exRecs.back().ExceptionCode);
             log << std::format(L"标志: {:X}\n", exRecs.back().ExceptionFlags);
             log << std::format(L"地址: {:X}\n", reinterpret_cast<size_t>(exRecs.back().ExceptionAddress));
-            if (exRecs.back().NumberParameters)
-            {
-                log << L"Parameters: ";
-                for (DWORD i = 0; i < exRecs.back().NumberParameters; ++i)
-                {
-                    if (i != 0)
-                        log << L", ";
-                    log << std::format(L"{:X}", exRecs.back().ExceptionInformation[i]);
-                }
+            if (!exRecs.back().NumberParameters)
+                continue;
+            log << L"参数: ";
+            for (DWORD i = 0; i < exRecs.back().NumberParameters; ++i) {
+                if (i != 0)
+                    log << L", ";
+                log << std::format(L"{:X}", exRecs.back().ExceptionInformation[i]);
             }
 
             pRemoteExRec = exRecs.back().ExceptionRecord;
+            exRecs.emplace_back();
         }
+        exRecs.pop_back();
     }
 
     log << L"\n调用栈\n{";
@@ -474,39 +462,12 @@ void open_folder_and_select_items(HWND hwndOpener, const std::wstring& path) {
         ILFree(piid);
 }
 
-std::vector<IDXGIAdapter1*> enum_dxgi_adapters()
-{
-    std::vector<IDXGIAdapter1*> vAdapters;
-
-    IDXGIFactory1* pFactory = NULL;
-    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory)))
-    {
-        return vAdapters;
-    }
-
-    IDXGIAdapter1* pAdapter;
-    for (UINT i = 0;
-        pFactory->EnumAdapters1(i, &pAdapter) != DXGI_ERROR_NOT_FOUND;
-        ++i)
-    {
-        vAdapters.push_back(pAdapter);
-    }
-
-    if (pFactory)
-    {
-        pFactory->Release();
-    }
-
-    return vAdapters;
-}
-
 void export_tspack(HWND hWndParent, const std::filesystem::path& logDir, const std::string& crashLog, const std::string& troubleshootingPackData) {
     static const char* SourceLogFiles[] = {
         "output.log", // XIVLauncher for Windows
         "launcher.log", // XIVLauncher.Core for [mostly] Linux
         "patcher.log",
         "dalamud.log",
-        "dalamud.troubleshooting.json",
         "dalamud.injector.log",
         "dalamud.boot.log",
         "aria.log",
@@ -717,61 +678,7 @@ void restart_game_using_injector(int nRadioButton, const std::vector<std::wstrin
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
     } else {
-        MessageBoxW(nullptr, std::format(L"重新启动失败: 0x{:x}", GetLastError()).c_str(), L"Dalamud Boot", MB_ICONERROR | MB_OK);
-    }
-}
-
-void get_cpu_info(wchar_t *vendor, wchar_t *brand)
-{
-    // Gotten and reformatted to not include all data as listed at https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex?view=msvc-170#example
-
-    // int cpuInfo[4] = {-1};
-    std::array<int, 4> cpui;
-    int nIds_;
-    int nExIds_;
-    std::vector<std::array<int, 4>> data_;
-    std::vector<std::array<int, 4>> extdata_;
-    size_t convertedChars = 0;
-
-    // Calling __cpuid with 0x0 as the function_id argument
-    // gets the number of the highest valid function ID.
-    __cpuid(cpui.data(), 0);
-    nIds_ = cpui[0];
-
-    for (int i = 0; i <= nIds_; ++i)
-    {
-        __cpuidex(cpui.data(), i, 0);
-        data_.push_back(cpui);
-    }
-
-    // Capture vendor string
-    char vendorA[0x20];
-    memset(vendorA, 0, sizeof(vendorA));
-    *reinterpret_cast<int *>(vendorA) = data_[0][1];
-    *reinterpret_cast<int *>(vendorA + 4) = data_[0][3];
-    *reinterpret_cast<int *>(vendorA + 8) = data_[0][2];
-    mbstowcs_s(&convertedChars, vendor, 0x20, vendorA, _TRUNCATE);
-
-    // Calling __cpuid with 0x80000000 as the function_id argument
-    // gets the number of the highest valid extended ID.
-    __cpuid(cpui.data(), 0x80000000);
-    nExIds_ = cpui[0];
-
-    for (int i = 0x80000000; i <= nExIds_; ++i)
-    {
-        __cpuidex(cpui.data(), i, 0);
-        extdata_.push_back(cpui);
-    }
-
-    // Interpret CPU brand string if reported
-    if (nExIds_ >= 0x80000004)
-    {
-        char brandA[0x40];
-        memset(brandA, 0, sizeof(brandA));
-        memcpy(brandA, extdata_[2].data(), sizeof(cpui));
-        memcpy(brandA + 16, extdata_[3].data(), sizeof(cpui));
-        memcpy(brandA + 32, extdata_[4].data(), sizeof(cpui));
-        mbstowcs_s(&convertedChars, brand, 0x40, brandA, _TRUNCATE);
+        MessageBoxW(nullptr, std::format(L"Failed to restart: 0x{:x}", GetLastError()).c_str(), L"Dalamud Boot", MB_ICONERROR | MB_OK);
     }
 }
 
@@ -894,7 +801,7 @@ int main() {
 
         if (exinfo.ExceptionRecord.ExceptionCode == 0x12345678) {
             std::cout << "Restart requested" << std::endl;
-            TerminateProcess(g_hProcess, 0x12345678);
+            TerminateProcess(g_hProcess, 0);
             restart_game_using_injector(IdRadioRestartNormal, *launcherArgs);
             break;
         }
@@ -947,7 +854,8 @@ int main() {
         https://github.com/sumatrapdfreader/sumatrapdf/blob/master/src/utils/DbgHelpDyn.cpp
         */
 
-        if (g_bSymbolsAvailable) {
+        if (g_bSymbolsAvailable)
+        {
             SymRefreshModuleList(g_hProcess);
         }
         else if (!assetDir.empty())
@@ -962,11 +870,12 @@ int main() {
         else
         {
             g_bSymbolsAvailable = SymInitializeW(g_hProcess, nullptr, true);
-            std::cout << "初始化符号 (无PDB)" << std::endl;
+            std::cout << "初始化符号（无PDB）" << std::endl;
         }
 
-        if (!g_bSymbolsAvailable) {
-            std::wcerr << std::format(L"SymInitialize 错误: 0x{:x}", GetLastError()) << std::endl;
+        if (!g_bSymbolsAvailable)
+        {
+            std::wcerr << std::format(L"SymInitialize错误：0x{:x}", GetLastError()) << std::endl;
         }
 
         if (pProgressDialog)
@@ -1057,25 +966,12 @@ int main() {
             while (false);
         }
 
-        const bool is_external_event = exinfo.ExceptionRecord.ExceptionCode == CUSTOM_EXCEPTION_EXTERNAL_EVENT;
-
         std::wostringstream log;
-        wchar_t vendor[0x20];
-        wchar_t brand[0x40];
-        get_cpu_info(vendor, brand);
-
-        if (!is_external_event)
-        {
-            log << std::format(L"未处理的本地异常发生于 {}", to_address_string(exinfo.ContextRecord.Rip, false)) << std::endl;
-            log << std::format(L"错误代码: {:X}", exinfo.ExceptionRecord.ExceptionCode) << std::endl;
-        }
-        else
-        {
-            log << L"C# 运行时 (CLR) 发生错误" << std::endl;
-        }
+        log << std::format(L"未处理的本地异常发生于 {}", to_address_string(exinfo.ContextRecord.Rip, false)) << std::endl;
+        log << std::format(L"错误代码：{:X}", exinfo.ExceptionRecord.ExceptionCode) << std::endl;
 
         if (shutup)
-            log << L"======= 崩溃处理程序已被全局静默 =======" << std::endl;
+            log << L"======= 崩溃处理程序已被全局静默（已关闭？）=======" << std::endl;
 
         if (dumpPath.empty())
             log << L"已跳过转储" << std::endl;
@@ -1084,42 +980,16 @@ int main() {
         else
             log << std::format(L"转储错误: {}", dumpError) << std::endl;
         log << std::format(L"系统时间: {0:%F} {0:%T} {0:%Ez}", std::chrono::system_clock::now()) << std::endl;
-        log << std::format(L"处理器厂商: {}", vendor) << std::endl;
-        log << std::format(L"处理器品牌: {}", brand) << std::endl;
-
-        for (IDXGIAdapter1* adapter : enum_dxgi_adapters()) {
-            DXGI_ADAPTER_DESC1 adapterDescription{};
-            adapter->GetDesc1(&adapterDescription);
-            log << std::format(L"显卡描述: {}", adapterDescription.Description) << std::endl;
-        }
-
         log << L"\n" << stackTrace << std::endl;
 
         if (pProgressDialog)
             pProgressDialog->SetLine(3, L"正在刷新模块列表", FALSE, NULL);
 
-        std::wstring window_log_str;
-
-        // Cut the log here for external events, the rest is unreadable and doesn't matter since we can't get
-        // symbols for mixed-mode stacks yet.
-        if (is_external_event)
-            window_log_str = log.str();
-
         SymRefreshModuleList(GetCurrentProcess());
         print_exception_info(exinfo.hThreadHandle, exinfo.ExceptionPointers, exinfo.ContextRecord, log);
-
-        if (!is_external_event)
-            window_log_str = log.str();
-
+        const auto window_log_str = log.str();
         print_exception_info_extended(exinfo.ExceptionPointers, exinfo.ContextRecord, log);
-        if (const auto temp = ws_to_u8(log.str()); !temp.empty()) {
-            std::ofstream(logPath, std::ios::binary).write(temp.data(), temp.size());
-        } else {
-            // for some reason couldn't be converted to UTF-8; write in UTF-16
-            const auto temp2 = log.str();
-            const auto temp3 = std::span(reinterpret_cast<const char*>(temp2.data()), temp2.size() * sizeof(temp2[0]));
-            std::ofstream(logPath, std::ios::binary).write(temp3.data(), temp3.size());
-        }
+        std::wofstream(logPath) << log.str();
 
         TASKDIALOGCONFIG config = { 0 };
 
@@ -1141,19 +1011,18 @@ int main() {
         config.dwFlags = TDF_ENABLE_HYPERLINKS | TDF_CAN_BE_MINIMIZED | TDF_ALLOW_DIALOG_CANCELLATION | TDF_USE_COMMAND_LINKS | TDF_NO_DEFAULT_RADIO_BUTTON;
         config.pszMainIcon = MAKEINTRESOURCE(IDI_ICON1);
         config.pszMainInstruction = L"游戏崩溃";
-        std::wstring content =
+        config.pszContent = L""
             L"相关原因可能为: 插件故障、模组损坏、其他第三方工具、游戏本身问题等\n"
             L"\n"
             L"请暂时禁用你不需要的插件, 并使用 XIVLauncher 检测游戏文件完整性\n"
             L"\n"
-            L"如果你想在我们的 <a href=\"discord\">Discord</a> 中寻求帮助，请保存 <a href=\"exporttspack\">报错信息文件 (点击此处)</a> 并发送给我们\n"
-            L"\n"
-            L"堆栈跟踪:\n";
-        content += window_log_str;
-        config.pszContent = content.c_str();
+            L"如果你想在我们的 <a href=\"discord\">Discord</a> 中寻求帮助，请保存 <a href=\"exporttspack\">报错信息文件 (点击此处)</a> 并发送给我们\n";
         config.pButtons = buttons;
         config.cButtons = ARRAYSIZE(buttons);
         config.nDefaultButton = IdButtonRestart;
+        config.pszExpandedControlText = L"隐藏堆栈跟踪";
+        config.pszCollapsedControlText = L"显示堆栈跟踪";
+        config.pszExpandedInformation = window_log_str.c_str();
         config.pszWindowTitle = L"故障处理器";
         config.pRadioButtons = radios;
         config.cRadioButtons = ARRAYSIZE(radios);

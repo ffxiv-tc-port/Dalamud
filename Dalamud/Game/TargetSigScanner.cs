@@ -1,9 +1,8 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
-using Dalamud.Plugin.Services;
 
 namespace Dalamud.Game;
 

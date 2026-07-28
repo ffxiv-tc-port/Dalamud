@@ -299,12 +299,11 @@ internal sealed partial class Win32InputHandler
 
     private static void ViewportFlagsToWin32Styles(ImGuiViewportFlags flags, out int style, out int exStyle)
     {
-        style = (flags & ImGuiViewportFlags.NoDecoration) != 0 ? unchecked((int)WS.WS_POPUP) : WS.WS_OVERLAPPEDWINDOW;
-        exStyle = (flags & ImGuiViewportFlags.NoTaskBarIcon) != 0 ? WS.WS_EX_TOOLWINDOW : WS.WS_EX_APPWINDOW;
+        style = (int)(flags.HasFlag(ImGuiViewportFlags.NoDecoration) ? WS.WS_POPUP : WS.WS_OVERLAPPEDWINDOW);
+        exStyle =
+            (int)(flags.HasFlag(ImGuiViewportFlags.NoTaskBarIcon) ? WS.WS_EX_TOOLWINDOW : (uint)WS.WS_EX_APPWINDOW);
         exStyle |= WS.WS_EX_NOREDIRECTIONBITMAP;
-        if ((flags & ImGuiViewportFlags.TopMost) != 0)
+        if (flags.HasFlag(ImGuiViewportFlags.TopMost))
             exStyle |= WS.WS_EX_TOPMOST;
-        if ((flags & ImGuiViewportFlags.NoInputs) != 0)
-            exStyle |= WS.WS_EX_TRANSPARENT | WS.WS_EX_LAYERED;
     }
 }

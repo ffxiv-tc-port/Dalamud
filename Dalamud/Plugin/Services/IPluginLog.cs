@@ -1,4 +1,4 @@
-using Serilog;
+﻿using Serilog;
 using Serilog.Events;
 
 #pragma warning disable CS1573 // See https://github.com/dotnet/roslyn/issues/40325
@@ -8,7 +8,7 @@ namespace Dalamud.Plugin.Services;
 /// <summary>
 /// An opinionated service to handle logging for plugins.
 /// </summary>
-public interface IPluginLog : IDalamudService
+public interface IPluginLog
 {
     /// <summary>
     /// Gets a Serilog ILogger instance for this plugin. This is the entrypoint for plugins that wish to use more

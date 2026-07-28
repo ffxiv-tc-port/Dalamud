@@ -1,11 +1,9 @@
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 
 using Dalamud.Hooking;
 using Dalamud.Logging.Internal;
-
+using Dalamud.Memory;
 using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
-
 using Lumina.Text.ReadOnly;
 
 namespace Dalamud.Data;
@@ -15,7 +13,7 @@ namespace Dalamud.Data;
 /// </summary>
 internal sealed unsafe class RsvResolver : IDisposable
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<RsvResolver>();
+    private static readonly ModuleLog Log = new("RsvProvider");
 
     private readonly Hook<LayoutWorld.Delegates.AddRsvString> addRsvStringHook;
 
@@ -44,8 +42,8 @@ internal sealed unsafe class RsvResolver : IDisposable
 
     private bool AddRsvStringDetour(LayoutWorld* @this, byte* rsvString, byte* resolvedString, nuint resolvedStringSize)
     {
-        var rsv = new ReadOnlySeString(MemoryMarshal.CreateReadOnlySpanFromNullTerminated(rsvString));
-        var resolved = new ReadOnlySeString(new ReadOnlySpan<byte>(resolvedString, (int)resolvedStringSize));
+        var rsv = new ReadOnlySeString(MemoryHelper.ReadRawNullTerminated((nint)rsvString));
+        var resolved = new ReadOnlySeString(new ReadOnlySpan<byte>(resolvedString, (int)resolvedStringSize).ToArray());
         Log.Debug($"Resolving RSV \"{rsv}\" to \"{resolved}\".");
         this.Lookup[rsv] = resolved;
         return this.addRsvStringHook.Original(@this, rsvString, resolvedString, resolvedStringSize);

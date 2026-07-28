@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Threading;
 
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
@@ -19,8 +18,6 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
-using InteropGenerator.Runtime;
-
 using ValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
 
 namespace Dalamud.Game.Gui.ContextMenu;
@@ -31,10 +28,10 @@ namespace Dalamud.Game.Gui.ContextMenu;
 [ServiceManager.EarlyLoadedService]
 internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextMenu
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<ContextMenu>();
+    private static readonly ModuleLog Log = new("ContextMenu");
 
     private readonly Hook<AtkModuleVf22OpenAddonByAgentDelegate> atkModuleVf22OpenAddonByAgentHook;
-    private readonly Hook<AddonContextMenu.Delegates.OnMenuSelected> addonContextMenuOnMenuSelectedHook;
+    private readonly Hook<AddonContextMenuOnMenuSelectedDelegate> addonContextMenuOnMenuSelectedHook;
 
     private uint? addonContextSubNameId;
 
@@ -43,20 +40,24 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
     {
         var raptureAtkModuleVtable = (nint*)RaptureAtkModule.StaticVirtualTablePointer;
         this.atkModuleVf22OpenAddonByAgentHook = Hook<AtkModuleVf22OpenAddonByAgentDelegate>.FromAddress(raptureAtkModuleVtable[22], this.AtkModuleVf22OpenAddonByAgentDetour);
-        this.addonContextMenuOnMenuSelectedHook = Hook<AddonContextMenu.Delegates.OnMenuSelected>.FromAddress((nint)AddonContextMenu.StaticVirtualTablePointer->OnMenuSelected, this.AddonContextMenuOnMenuSelectedDetour);
+        this.addonContextMenuOnMenuSelectedHook = Hook<AddonContextMenuOnMenuSelectedDelegate>.FromAddress((nint)AddonContextMenu.StaticVirtualTablePointer->OnMenuSelected, this.AddonContextMenuOnMenuSelectedDetour);
 
         this.atkModuleVf22OpenAddonByAgentHook.Enable();
         this.addonContextMenuOnMenuSelectedHook.Enable();
     }
 
-    private delegate ushort AtkModuleVf22OpenAddonByAgentDelegate(AtkModule* module, CStringPointer addonName, int valueCount, AtkValue* values, AgentInterface* agent, nint a7, bool a8);
+    private delegate ushort AtkModuleVf22OpenAddonByAgentDelegate(AtkModule* module, byte* addonName, int valueCount, AtkValue* values, AgentInterface* agent, nint a7, bool a8);
+
+    private delegate bool AddonContextMenuOnMenuSelectedDelegate(AddonContextMenu* addon, int selectedIdx, byte a3);
+
+    private delegate ushort RaptureAtkModuleOpenAddonDelegate(RaptureAtkModule* a1, uint addonNameId, uint valueCount, AtkValue* values, AgentInterface* parentAgent, ulong unk, ushort parentAddonId, int unk2);
 
     /// <inheritdoc/>
     public event IContextMenu.OnMenuOpenedDelegate? OnMenuOpened;
 
     private Dictionary<ContextMenuType, List<IMenuItem>> MenuItems { get; } = [];
 
-    private Lock MenuItemsLock { get; } = new();
+    private object MenuItemsLock { get; } = new();
 
     private AgentInterface* SelectedAgent { get; set; }
 
@@ -184,7 +185,7 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
         values[0].ChangeType(ValueType.UInt);
         values[0].UInt = 0;
         values[1].ChangeType(ValueType.String);
-        values[1].SetManagedString(name.EncodeWithNullTerminator());
+        values[1].SetManagedString(name.Encode().NullTerminate());
         values[2].ChangeType(ValueType.Int);
         values[2].Int = x;
         values[3].ChangeType(ValueType.Int);
@@ -264,7 +265,7 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
                 submenuMask |= 1u << i;
 
             nameData[i].ChangeType(ValueType.String);
-            nameData[i].SetManagedString(this.GetPrefixedName(item).EncodeWithNullTerminator());
+            nameData[i].SetManagedString(this.GetPrefixedName(item).Encode().NullTerminate());
         }
 
         for (var i = 0; i < prefixMenuSize; ++i)
@@ -294,9 +295,8 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
         // 2: UInt = Return Mask (?)
         // 3: UInt = Submenu Mask
         // 4: UInt = OpenAtCursorPosition ? 2 : 1
-        // 5: UInt = ?
-        // 6: UInt = ?
-        // 7: UInt = ?
+        // 5: UInt = 0
+        // 6: UInt = 0
 
         foreach (var item in items)
         {
@@ -312,7 +312,7 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             }
         }
 
-        this.SetupGenericMenu(8, 0, 2, 3, items, ref valueCount, ref values);
+        this.SetupGenericMenu(7, 0, 2, 3, items, ref valueCount, ref values);
     }
 
     private void SetupContextSubMenu(IReadOnlyList<IMenuItem> items, ref int valueCount, ref AtkValue* values)
@@ -329,17 +329,16 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
         this.SetupGenericMenu(8, 0, 6, 5, items, ref valueCount, ref values);
     }
 
-    private ushort AtkModuleVf22OpenAddonByAgentDetour(AtkModule* module, CStringPointer addonName, int valueCount, AtkValue* values, AgentInterface* agent, nint a7, bool a8)
+    private ushort AtkModuleVf22OpenAddonByAgentDetour(AtkModule* module, byte* addonName, int valueCount, AtkValue* values, AgentInterface* agent, nint a7, bool a8)
     {
         var oldValues = values;
-        var addonNameSpan = addonName.AsSpan();
 
-        if (addonNameSpan.SequenceEqual("ContextMenu"u8))
+        if (MemoryHelper.EqualsZeroTerminatedString("ContextMenu", (nint)addonName))
         {
             this.MenuCallbackIds.Clear();
             this.SelectedAgent = agent;
             var unitManager = RaptureAtkUnitManager.Instance();
-            this.SelectedParentAddon = unitManager->GetAddonById(unitManager->GetAddonByName(addonName)->BlockedParentId);
+            this.SelectedParentAddon = unitManager->GetAddonById(unitManager->GetAddonByName(addonName)->ContextMenuParentId);
             this.SelectedEventInterfaces.Clear();
             if (this.SelectedAgent == AgentInventoryContext.Instance())
             {
@@ -390,7 +389,7 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
                 this.SelectedItems = null;
             }
         }
-        else if (addonNameSpan.SequenceEqual("AddonContextSub"u8))
+        else if (MemoryHelper.EqualsZeroTerminatedString("AddonContextSub", (nint)addonName))
         {
             this.MenuCallbackIds.Clear();
             if (this.SubmenuItems != null)
@@ -401,7 +400,7 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
                 Log.Verbose($"Opening {this.SelectedMenuType} submenu with {this.SubmenuItems.Count} custom items.");
             }
         }
-        else if (addonNameSpan.SequenceEqual("AddonContextMenuTitle"u8))
+        else if (MemoryHelper.EqualsZeroTerminatedString("AddonContextMenuTitle", (nint)addonName))
         {
             this.MenuCallbackIds.Clear();
         }

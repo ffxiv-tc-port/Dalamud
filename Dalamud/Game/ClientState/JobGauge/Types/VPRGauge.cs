@@ -1,5 +1,7 @@
 using FFXIVClientStructs.FFXIV.Client.Game.Gauge;
 
+using Reloaded.Memory;
+
 using DreadCombo = Dalamud.Game.ClientState.JobGauge.Enums.DreadCombo;
 using SerpentCombo = Dalamud.Game.ClientState.JobGauge.Enums.SerpentCombo;
 
@@ -22,25 +24,25 @@ public unsafe class VPRGauge : JobGaugeBase<ViperGauge>
     /// <summary>
     /// Gets how many uses of uncoiled fury the player has.
     /// </summary>
-    public byte RattlingCoilStacks => this.Struct->RattlingCoilStacks;
+    public byte RattlingCoilStacks => Struct->RattlingCoilStacks;
 
     /// <summary>
     /// Gets Serpent Offering stacks and gauge.
     /// </summary>
-    public byte SerpentOffering => this.Struct->SerpentOffering;
+    public byte SerpentOffering => Struct->SerpentOffering;
     
     /// <summary>
     /// Gets value indicating the use of 1st, 2nd, 3rd, 4th generation and Ouroboros.
     /// </summary>
-    public byte AnguineTribute => this.Struct->AnguineTribute;
+    public byte AnguineTribute => Struct->AnguineTribute;
 
     /// <summary>
     /// Gets the last Weaponskill used in DreadWinder/Pit of Dread combo.
     /// </summary>
-    public DreadCombo DreadCombo => (DreadCombo)this.Struct->DreadCombo;
+    public DreadCombo DreadCombo => (DreadCombo)Struct->DreadCombo;
 
     /// <summary>
     /// Gets current ability for Serpent's Tail.
     /// </summary>
-    public SerpentCombo SerpentCombo => (SerpentCombo)this.Struct->SerpentCombo;
+    public SerpentCombo SerpentCombo => (SerpentCombo)Struct->SerpentCombo;
 }

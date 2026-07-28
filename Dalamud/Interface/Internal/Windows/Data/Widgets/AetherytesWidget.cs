@@ -1,6 +1,5 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Aetherytes;
-using Dalamud.Interface.Utility.Raii;
 
 namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
 
@@ -9,13 +8,11 @@ namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
 /// </summary>
 internal class AetherytesWidget : IDataWindowWidget
 {
-    private const ImGuiTableFlags TableFlags = ImGuiTableFlags.ScrollY | ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders;
-
     /// <inheritdoc/>
     public bool Ready { get; set; }
 
     /// <inheritdoc/>
-    public string[]? CommandShortcuts { get; init; } = ["aetherytes"];
+    public string[]? CommandShortcuts { get; init; } = { "aetherytes" };
 
     /// <inheritdoc/>
     public string DisplayName { get; init; } = "Aetherytes";
@@ -29,8 +26,7 @@ internal class AetherytesWidget : IDataWindowWidget
     /// <inheritdoc/>
     public void Draw()
     {
-        using var table = ImRaii.Table("##aetheryteTable"u8, 11, TableFlags);
-        if (!table.Success)
+        if (!ImGui.BeginTable("##aetheryteTable"u8, 11, ImGuiTableFlags.ScrollY | ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders))
             return;
 
         ImGui.TableSetupScrollFreeze(0, 1);
@@ -88,5 +84,7 @@ internal class AetherytesWidget : IDataWindowWidget
             ImGui.TableNextColumn(); // Apartment
             ImGui.Text($"{info.IsApartment}");
         }
+
+        ImGui.EndTable();
     }
 }

@@ -1,16 +1,14 @@
-using Dalamud.Utility.Internal;
-
-namespace Dalamud.Interface.Internal.Windows.Settings;
+﻿namespace Dalamud.Interface.Internal.Windows.Settings;
 
 /// <summary>
 /// Basic, drawable settings entry.
 /// </summary>
-internal abstract class SettingsEntry
+public abstract class SettingsEntry
 {
     /// <summary>
     /// Gets or sets the public, searchable name of this settings entry.
     /// </summary>
-    public LazyLoc Name { get; protected set; }
+    public string? Name { get; protected set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether this entry is valid.

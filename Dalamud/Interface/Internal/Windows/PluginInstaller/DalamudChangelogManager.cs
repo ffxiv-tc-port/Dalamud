@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http.Json;
@@ -6,7 +7,6 @@ using System.Threading.Tasks;
 using Dalamud.Networking.Http;
 using Dalamud.Plugin.Internal;
 using Dalamud.Utility;
-
 using Serilog;
 
 namespace Dalamud.Interface.Internal.Windows.PluginInstaller;

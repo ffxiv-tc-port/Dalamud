@@ -8,20 +8,9 @@
         <NukeScriptDirectory>..</NukeScriptDirectory>
         <NukeTelemetryVersion>1</NukeTelemetryVersion>
         <EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
-        <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
     </PropertyGroup>
     <ItemGroup>
-        <PackageReference Include="Nuke.Common" Version="10.1.0" />
-        <PackageReference Include="System.Runtime.Serialization.Formatters" Version="10.0.0" />
-        <PackageReference Remove="Microsoft.CodeAnalysis.BannedApiAnalyzers" />
-    </ItemGroup>
-    <ItemGroup>
-      <Compile Remove="logs\**" />
-    </ItemGroup>
-    <ItemGroup>
-      <EmbeddedResource Remove="logs\**" />
-    </ItemGroup>
-    <ItemGroup>
-      <None Remove="logs\**" />
+        <PackageReference Include="Nuke.Common" Version="6.2.1" />
+        <PackageReference Include="System.Runtime.Serialization.Formatters" Version="9.0.0" />
     </ItemGroup>
 </Project>

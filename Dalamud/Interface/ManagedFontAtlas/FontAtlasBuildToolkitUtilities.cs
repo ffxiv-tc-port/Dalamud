@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Unicode;
 
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility;
 
 namespace Dalamud.Interface.ManagedFontAtlas;
 

@@ -3,7 +3,6 @@ using System.Linq;
 using System.Threading.Tasks;
 
 using CheapLoc;
-
 using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Console;
@@ -33,7 +32,7 @@ namespace Dalamud.Plugin.Internal.AutoUpdate;
 [ServiceManager.EarlyLoadedService]
 internal class AutoUpdateManager : IServiceType
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<AutoUpdateManager>();
+    private static readonly ModuleLog Log = new("AUTOUPDATE");
 
     /// <summary>
     /// Time we should wait after login to update.
@@ -245,7 +244,7 @@ internal class AutoUpdateManager : IServiceType
             this.updateNotification == null)
         {
             Log.Verbose("Starting periodic update check");
-            this.pluginManager.ReloadAllReposAsync()
+            this.pluginManager.ReloadPluginMastersAsync()
                 .ContinueWith(
                     t =>
                     {
@@ -377,7 +376,7 @@ internal class AutoUpdateManager : IServiceType
         }
     }
 
-    private void NotifyUpdatesAreAvailable(List<AvailablePluginUpdate> updatablePlugins)
+    private void NotifyUpdatesAreAvailable(ICollection<AvailablePluginUpdate> updatablePlugins)
     {
         if (updatablePlugins.Count == 0)
             return;
@@ -492,10 +491,13 @@ internal class AutoUpdateManager : IServiceType
 
     private bool CanUpdateOrNag()
     {
-        var clientState = Service<ClientState>.Get();
+        var condition = Service<Condition>.Get();
         return this.IsPluginManagerReady() &&
             !this.dalamudInterface.IsPluginInstallerOpen &&
-            clientState.IsClientIdle();
+            condition.OnlyAny(ConditionFlag.NormalConditions,
+                              ConditionFlag.Jumping,
+                              ConditionFlag.Mounted,
+                              ConditionFlag.UsingFashionAccessory);
     }
 
     private bool IsPluginManagerReady()

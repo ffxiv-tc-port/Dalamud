@@ -1,3 +1,7 @@
+using System.Linq;
+
+using InteropGenerator.Runtime;
+
 using Lumina.Text.Parse;
 
 using Lumina.Text.ReadOnly;
@@ -45,9 +49,11 @@ public static class SeStringExtensions
     /// <returns><c>this</c> for method chaining.</returns>
     public static DSeStringBuilder AppendMacroString(this DSeStringBuilder ssb, ReadOnlySpan<byte> macroString)
     {
-        using var rssb = new RentedSeStringBuilder();
-        rssb.Builder.AppendMacroString(macroString, new() { ExceptionMode = MacroStringParseExceptionMode.EmbedError });
-        return ssb.Append(DSeString.Parse(rssb.Builder.ToReadOnlySeString().Data.Span));
+        var lssb = LSeStringBuilder.SharedPool.Get();
+        lssb.AppendMacroString(macroString, new() { ExceptionMode = MacroStringParseExceptionMode.EmbedError });
+        ssb.Append(DSeString.Parse(lssb.ToReadOnlySeString().Data.Span));
+        LSeStringBuilder.SharedPool.Return(lssb);
+        return ssb;
     }
 
     /// <summary>Compiles and appends a macro string.</summary>
@@ -56,9 +62,11 @@ public static class SeStringExtensions
     /// <returns><c>this</c> for method chaining.</returns>
     public static DSeStringBuilder AppendMacroString(this DSeStringBuilder ssb, ReadOnlySpan<char> macroString)
     {
-        using var rssb = new RentedSeStringBuilder();
-        rssb.Builder.AppendMacroString(macroString, new() { ExceptionMode = MacroStringParseExceptionMode.EmbedError });
-        return ssb.Append(DSeString.Parse(rssb.Builder.ToReadOnlySeString().Data.Span));
+        var lssb = LSeStringBuilder.SharedPool.Get();
+        lssb.AppendMacroString(macroString, new() { ExceptionMode = MacroStringParseExceptionMode.EmbedError });
+        ssb.Append(DSeString.Parse(lssb.ToReadOnlySeString().Data.Span));
+        LSeStringBuilder.SharedPool.Return(lssb);
+        return ssb;
     }
 
     /// <summary>
@@ -155,7 +163,7 @@ public static class SeStringExtensions
         if (ross.IsEmpty)
             return ross;
 
-        using var rssb = new RentedSeStringBuilder();
+        var sb = LSeStringBuilder.SharedPool.Get();
 
         foreach (var payload in ross)
         {
@@ -164,25 +172,25 @@ public static class SeStringExtensions
 
             if (payload.Type != ReadOnlySePayloadType.Text)
             {
-                rssb.Builder.Append(payload);
+                sb.Append(payload);
                 continue;
             }
 
             var index = payload.Body.Span.IndexOf(toFind);
             if (index == -1)
             {
-                rssb.Builder.Append(payload);
+                sb.Append(payload);
                 continue;
             }
 
             var lastIndex = 0;
             while (index != -1)
             {
-                rssb.Builder.Append(payload.Body.Span[lastIndex..index]);
+                sb.Append(payload.Body.Span[lastIndex..index]);
 
                 if (!replacement.IsEmpty)
                 {
-                    rssb.Builder.Append(replacement);
+                    sb.Append(replacement);
                 }
 
                 lastIndex = index + toFind.Length;
@@ -192,10 +200,12 @@ public static class SeStringExtensions
                     index += lastIndex;
             }
 
-            rssb.Builder.Append(payload.Body.Span[lastIndex..]);
+            sb.Append(payload.Body.Span[lastIndex..]);
         }
 
-        return rssb.Builder.ToReadOnlySeString();
+        var output = sb.ToReadOnlySeString();
+        LSeStringBuilder.SharedPool.Return(sb);
+        return output;
     }
 
     /// <summary>

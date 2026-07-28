@@ -7,7 +7,6 @@ using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.Internal;
 using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Utility;
-
 using Lumina.Data.Files;
 using Lumina.Data.Parsing.Uld;
 
@@ -18,7 +17,7 @@ public class UldWrapper : IDisposable
 {
     private readonly DataManager data;
     private readonly TextureManager textureManager;
-    private readonly Dictionary<string, (uint Id, int Width, int Height, bool HD, byte[] RgbaData)> textures = [];
+    private readonly Dictionary<string, (uint Id, int Width, int Height, bool HD, byte[] RgbaData)> textures = new();
 
     /// <summary> Initializes a new instance of the <see cref="UldWrapper"/> class, wrapping an ULD file. </summary>
     /// <param name="uiBuilder">The UiBuilder used to load textures.</param>

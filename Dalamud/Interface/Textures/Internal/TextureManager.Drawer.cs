@@ -5,7 +5,6 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Storage.Assets;
 using Dalamud.Utility;
-
 using TerraFX.Interop.DirectX;
 using TerraFX.Interop.Windows;
 

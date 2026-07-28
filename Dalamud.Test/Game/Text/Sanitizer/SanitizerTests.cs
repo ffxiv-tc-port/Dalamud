@@ -10,6 +10,8 @@ namespace Dalamud.Test.Game.Text.Sanitizer
 {
     public class SanitizerTests
     {
+        private global::Dalamud.Game.Text.Sanitizer.Sanitizer sanitizer;
+
         [Theory]
         [InlineData(ClientLanguage.English, "Pixie Cotton Hood of Healing", "Pixie Cotton Hood of Healing")]
         [InlineData(ClientLanguage.Japanese, "アラガントームストーン:真理", "アラガントームストーン:真理")]
@@ -21,7 +23,7 @@ namespace Dalamud.Test.Game.Text.Sanitizer
         {
             var sanitizedStrings = new List<string> { unsanitizedString };
 
-            var sanitizer = new global::Dalamud.Game.Text.Sanitizer.Sanitizer(clientLanguage);
+            sanitizer = new global::Dalamud.Game.Text.Sanitizer.Sanitizer(clientLanguage);
             Assert.Equal(sanitizedString, sanitizer.Sanitize(unsanitizedString));
             Assert.Equal(sanitizedString, sanitizer.Sanitize(sanitizedStrings).First());
 

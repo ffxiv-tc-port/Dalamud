@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 using Dalamud.Game.Inventory;
 using Dalamud.Game.Inventory.InventoryEventArgTypes;
@@ -8,7 +8,7 @@ namespace Dalamud.Plugin.Services;
 /// <summary>
 /// This class provides events for the in-game inventory.
 /// </summary>
-public interface IGameInventory : IDalamudService
+public interface IGameInventory
 {
     /// <summary>
     /// Delegate function to be called when inventories have been changed.

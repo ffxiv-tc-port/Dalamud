@@ -8,7 +8,6 @@ using Dalamud.Interface.Textures.Internal;
 using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Internal;
-using Dalamud.Interface.Utility.Raii;
 
 namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
 
@@ -34,7 +33,7 @@ public class IconBrowserWidget : IDataWindowWidget
     private Vector2 lastWindowSize = Vector2.Zero;
 
     /// <inheritdoc/>
-    public string[]? CommandShortcuts { get; init; } = ["icon", "icons"];
+    public string[]? CommandShortcuts { get; init; } = { "icon", "icons" };
 
     /// <inheritdoc/>
     public string DisplayName { get; init; } = "Icon Browser";
@@ -63,7 +62,6 @@ public class IconBrowserWidget : IDataWindowWidget
                     //     continue;
                     if (!texm.TryGetIconPath(new((uint)iconId), out var path))
                         continue;
-
                     result.Add((iconId, path));
                 }
 
@@ -84,16 +82,16 @@ public class IconBrowserWidget : IDataWindowWidget
         {
             this.RecalculateIndexRange();
 
-            using (var child = ImRaii.Child("ScrollableSection"u8, ImGui.GetContentRegionAvail(), false, ImGuiWindowFlags.NoMove))
+            if (ImGui.BeginChild("ScrollableSection"u8, ImGui.GetContentRegionAvail(), false, ImGuiWindowFlags.NoMove))
             {
-                if (child.Success)
-                {
-                    var itemsPerRow = (int)MathF.Floor(ImGui.GetContentRegionMax().X / (this.iconSize.X + ImGui.GetStyle().ItemSpacing.X));
-                    var itemHeight = this.iconSize.Y + ImGui.GetStyle().ItemSpacing.Y;
+                var itemsPerRow = (int)MathF.Floor(
+                    ImGui.GetContentRegionMax().X / (this.iconSize.X + ImGui.GetStyle().ItemSpacing.X));
+                var itemHeight = this.iconSize.Y + ImGui.GetStyle().ItemSpacing.Y;
 
-                    ImGuiClip.ClippedDraw(this.valueRange!, this.DrawIcon, itemsPerRow, itemHeight);
-                }
+                ImGuiClip.ClippedDraw(this.valueRange!, this.DrawIcon, itemsPerRow, itemHeight);
             }
+
+            ImGui.EndChild();
 
             this.ProcessMouseDragging();
         }
@@ -120,16 +118,16 @@ public class IconBrowserWidget : IDataWindowWidget
     {
         ImGui.Columns(2);
 
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
-        if (ImGui.InputInt("##StartRange"u8, ref this.startRange))
+        ImGui.PushItemWidth(ImGui.GetContentRegionAvail().X);
+        if (ImGui.InputInt("##StartRange"u8, ref this.startRange, 0, 0))
         {
             this.startRange = Math.Clamp(this.startRange, 0, MaxIconId);
             this.valueRange = null;
         }
 
         ImGui.NextColumn();
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
-        if (ImGui.InputInt("##StopRange"u8, ref this.stopRange))
+        ImGui.PushItemWidth(ImGui.GetContentRegionAvail().X);
+        if (ImGui.InputInt("##StopRange"u8, ref this.stopRange, 0, 0))
         {
             this.stopRange = Math.Clamp(this.stopRange, 0, MaxIconId);
             this.valueRange = null;
@@ -153,10 +151,6 @@ public class IconBrowserWidget : IDataWindowWidget
         var texm = Service<TextureManager>.Get();
         var cursor = ImGui.GetCursorScreenPos();
 
-        var white = ImGui.GetColorU32(ImGuiColors.DalamudWhite);
-        var red = ImGui.GetColorU32(ImGuiColors.DalamudRed);
-        var drawList = ImGui.GetWindowDrawList();
-
         if (texm.Shared.GetFromGameIcon(iconId).TryGetWrap(out var texture, out var exc))
         {
             ImGui.Image(texture.Handle, this.iconSize);
@@ -164,17 +158,21 @@ public class IconBrowserWidget : IDataWindowWidget
             // If we have the option to show a tooltip image, draw the image, but make sure it's not too big.
             if (ImGui.IsItemHovered() && this.showTooltipImage)
             {
-                using var tooltip = ImRaii.Tooltip();
+                ImGui.BeginTooltip();
 
                 var scale = GetImageScaleFactor(texture);
 
                 var textSize = ImGui.CalcTextSize(iconId.ToString());
-                ImGui.SetCursorPosX((texture.Size.X * scale / 2.0f - (textSize.X / 2.0f)) + (ImGui.GetStyle().FramePadding.X * 2.0f));
+                ImGui.SetCursorPosX(
+                    texture.Size.X * scale / 2.0f - textSize.X / 2.0f + ImGui.GetStyle().FramePadding.X * 2.0f);
                 ImGui.Text(iconId.ToString());
 
                 ImGui.Image(texture.Handle, texture.Size * scale);
+                ImGui.EndTooltip();
             }
-            else if (ImGui.IsItemHovered()) // else, just draw the iconId.
+
+            // else, just draw the iconId.
+            else if (ImGui.IsItemHovered())
             {
                 ImGui.SetTooltip(iconId.ToString());
             }
@@ -187,7 +185,10 @@ public class IconBrowserWidget : IDataWindowWidget
                     Task.FromResult(texture.CreateWrapSharingLowLevelResource()));
             }
 
-            drawList.AddRect(cursor, cursor + this.iconSize, white);
+            ImGui.GetWindowDrawList().AddRect(
+                cursor,
+                cursor + this.iconSize,
+                ImGui.GetColorU32(ImGuiColors.DalamudWhite));
         }
         else if (exc is not null)
         {
@@ -196,13 +197,19 @@ public class IconBrowserWidget : IDataWindowWidget
             {
                 var iconText = FontAwesomeIcon.Ban.ToIconString();
                 var textSize = ImGui.CalcTextSize(iconText);
-                drawList.AddText(cursor + ((this.iconSize - textSize) / 2), red, iconText);
+                ImGui.GetWindowDrawList().AddText(
+                    cursor + ((this.iconSize - textSize) / 2),
+                    ImGui.GetColorU32(ImGuiColors.DalamudRed),
+                    iconText);
             }
 
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip($"{iconId}\n{exc}");
 
-            drawList.AddRect(cursor, cursor + this.iconSize, red);
+            ImGui.GetWindowDrawList().AddRect(
+                cursor,
+                cursor + this.iconSize,
+                ImGui.GetColorU32(ImGuiColors.DalamudRed));
         }
         else
         {
@@ -211,12 +218,18 @@ public class IconBrowserWidget : IDataWindowWidget
 
             ImGui.Dummy(this.iconSize);
             var textSize = ImGui.CalcTextSize(text);
-            drawList.AddText(cursor + ((this.iconSize - textSize) / 2), color, text);
+            ImGui.GetWindowDrawList().AddText(
+                    cursor + ((this.iconSize - textSize) / 2),
+                    color,
+                    text);
 
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip(iconId.ToString());
 
-            drawList.AddRect(cursor, cursor + this.iconSize, color);
+            ImGui.GetWindowDrawList().AddRect(
+                cursor,
+                cursor + this.iconSize,
+                color);
         }
     }
 
@@ -256,7 +269,7 @@ public class IconBrowserWidget : IDataWindowWidget
         if (this.valueRange is not null)
             return;
 
-        this.valueRange = [];
+        this.valueRange = new();
         foreach (var (id, _) in this.iconIdsTask!.Result)
         {
             if (this.startRange <= id && id < this.stopRange)

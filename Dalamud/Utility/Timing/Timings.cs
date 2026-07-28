@@ -19,12 +19,12 @@ public static class Timings
     /// <summary>
     /// All concluded timings.
     /// </summary>
-    internal static readonly SortedList<TimingHandle, TimingHandle> AllTimings = [];
+    internal static readonly SortedList<TimingHandle, TimingHandle> AllTimings = new();
 
     /// <summary>
     /// List of all timing events.
     /// </summary>
-    internal static readonly List<TimingEvent> Events = [];
+    internal static readonly List<TimingEvent> Events = new();
 
     private static readonly AsyncLocal<Tuple<int?, List<TimingHandle>>> TaskTimingHandleStorage = new();
 
@@ -36,7 +36,7 @@ public static class Timings
         get
         {
             if (TaskTimingHandleStorage.Value == null || TaskTimingHandleStorage.Value.Item1 != Task.CurrentId)
-                TaskTimingHandleStorage.Value = Tuple.Create<int?, List<TimingHandle>>(Task.CurrentId, []);
+                TaskTimingHandleStorage.Value = Tuple.Create<int?, List<TimingHandle>>(Task.CurrentId, new());
             return TaskTimingHandleStorage.Value!.Item2!;
         }
         set => TaskTimingHandleStorage.Value = Tuple.Create(Task.CurrentId, value);
@@ -53,7 +53,7 @@ public static class Timings
         var outerTimingHandle = TaskTimingHandles;
         return () =>
         {
-            var res = default(T);
+            T res = default(T);
             var prev = TaskTimingHandles;
             TaskTimingHandles = outerTimingHandle;
             try

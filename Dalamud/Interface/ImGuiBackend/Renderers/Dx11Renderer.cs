@@ -15,7 +15,6 @@ using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Interface.Textures.TextureWraps.Internal;
 using Dalamud.Interface.Utility;
 using Dalamud.Utility;
-
 using TerraFX.Interop.DirectX;
 using TerraFX.Interop.Windows;
 
@@ -31,7 +30,7 @@ namespace Dalamud.Interface.ImGuiBackend.Renderers;
     Justification = "Multiple fixed/using scopes")]
 internal unsafe partial class Dx11Renderer : IImGuiRenderer
 {
-    private readonly List<IDalamudTextureWrap> fontTextures = [];
+    private readonly List<IDalamudTextureWrap> fontTextures = new();
     private readonly D3D_FEATURE_LEVEL featureLevel;
     private readonly ViewportHandler viewportHandler;
     private readonly nint renderNamePtr;
@@ -381,8 +380,8 @@ internal unsafe partial class Dx11Renderer : IImGuiRenderer
                     default:
                     {
                         // User callback, registered via ImDrawList::AddCallback()
-                        var cb = (delegate* unmanaged<ImDrawListPtr, ImDrawCmdPtr, void>)cmd.UserCallback;
-                        cb(cmdList, (ImDrawCmdPtr)Unsafe.AsPointer(ref cmd));
+                        var cb = (delegate*<ImDrawListPtr, ref ImDrawCmd, void>)cmd.UserCallback;
+                        cb(cmdList, ref cmd);
                         break;
                     }
                 }
@@ -399,9 +398,10 @@ internal unsafe partial class Dx11Renderer : IImGuiRenderer
     /// </summary>
     private void CreateFontsTexture()
     {
-        ObjectDisposedException.ThrowIf(this.device.IsEmpty(), this);
+        if (this.device.IsEmpty())
+            throw new ObjectDisposedException(nameof(Dx11Renderer));
 
-        if (this.fontTextures.Count != 0)
+        if (this.fontTextures.Any())
             return;
 
         var io = ImGui.GetIO();
@@ -479,7 +479,8 @@ internal unsafe partial class Dx11Renderer : IImGuiRenderer
     /// </summary>
     private void EnsureDeviceObjects()
     {
-        ObjectDisposedException.ThrowIf(this.device.IsEmpty(), this);
+        if (this.device.IsEmpty())
+            throw new ObjectDisposedException(nameof(Dx11Renderer));
 
         var assembly = Assembly.GetExecutingAssembly();
 

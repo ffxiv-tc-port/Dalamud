@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -20,7 +20,7 @@ namespace Dalamud.Networking.Http;
 /// </summary>
 public class HappyEyeballsCallback : IDisposable
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<HappyEyeballsCallback>();
+    private static readonly ModuleLog Log = new("HTTP");
 
     /*
      * ToDo: Eventually add in some kind of state management to cache DNS and IP Family.

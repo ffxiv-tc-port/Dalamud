@@ -32,7 +32,7 @@ namespace Dalamud.Game.Gui;
 [ServiceManager.EarlyLoadedService]
 internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<GameGui>();
+    private static readonly ModuleLog Log = new("GameGui");
 
     private readonly GameGuiAddressResolver address;
 
@@ -43,7 +43,6 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
     private readonly Hook<HandleImmDelegate> handleImmHook;
     private readonly Hook<RaptureAtkModule.Delegates.SetUiVisibility> setUiVisibilityHook;
     private readonly Hook<Utf8String.Delegates.Ctor_FromSequence> utf8StringFromSequenceHook;
-    private readonly Hook<RaptureAtkModule.Delegates.Update> raptureAtkModuleUpdateHook;
 
     [ServiceManager.ServiceConstructor]
     private GameGui(TargetSigScanner sigScanner)
@@ -66,10 +65,6 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
         this.utf8StringFromSequenceHook = Hook<Utf8String.Delegates.Ctor_FromSequence>.FromAddress(Utf8String.Addresses.Ctor_FromSequence.Value, this.Utf8StringFromSequenceDetour);
 
-        this.raptureAtkModuleUpdateHook = Hook<RaptureAtkModule.Delegates.Update>.FromFunctionPointerVariable(
-            new(&RaptureAtkModule.StaticVirtualTablePointer->Update),
-            this.RaptureAtkModuleUpdateDetour);
-
         this.handleItemHoverHook.Enable();
         this.handleItemOutHook.Enable();
         this.handleImmHook.Enable();
@@ -77,7 +72,6 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
         this.handleActionHoverHook.Enable();
         this.handleActionOutHook.Enable();
         this.utf8StringFromSequenceHook.Enable();
-        this.raptureAtkModuleUpdateHook.Enable();
     }
 
     // Hooked delegates
@@ -93,9 +87,6 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
     /// <inheritdoc/>
     public event EventHandler<HoveredAction>? HoveredActionChanged;
-
-    /// <inheritdoc/>
-    public event Action<AgentUpdateFlag> AgentUpdate;
 
     /// <inheritdoc/>
     public bool GameUiHidden { get; private set; }
@@ -247,7 +238,6 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
         this.handleActionHoverHook.Dispose();
         this.handleActionOutHook.Dispose();
         this.utf8StringFromSequenceHook.Dispose();
-        this.raptureAtkModuleUpdateHook.Dispose();
     }
 
     /// <summary>
@@ -290,6 +280,8 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
         this.HoveredItem = itemId;
         this.HoveredItemChanged?.InvokeSafely(this, itemId);
+
+        Log.Verbose($"HoveredItem changed: {itemId}");
     }
 
     private AtkValue* HandleItemOutDetour(AgentItemDetail* thisPtr, AtkValue* returnValue, AtkValue* values, uint valueCount, ulong eventKind)
@@ -300,18 +292,22 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
         {
             this.HoveredItem = 0;
             this.HoveredItemChanged?.InvokeSafely(this, 0ul);
+
+            Log.Verbose("HoveredItem changed: 0");
         }
 
         return ret;
     }
 
-    private void HandleActionHoverDetour(AgentActionDetail* hoverState, FFXIVClientStructs.FFXIV.Client.UI.Agent.ActionKind actionKind, uint actionId, int a4, bool a5, int a6, int a7)
+    private void HandleActionHoverDetour(AgentActionDetail* hoverState, FFXIVClientStructs.FFXIV.Client.UI.Agent.ActionKind actionKind, uint actionId, int a4, bool a5)
     {
-        this.handleActionHoverHook.Original(hoverState, actionKind, actionId, a4, a5, a6, a7);
+        this.handleActionHoverHook.Original(hoverState, actionKind, actionId, a4, a5);
         this.HoveredAction.ActionKind = (HoverActionKind)actionKind;
         this.HoveredAction.BaseActionID = actionId;
         this.HoveredAction.ActionID = hoverState->ActionId;
         this.HoveredActionChanged?.InvokeSafely(this, this.HoveredAction);
+
+        Log.Verbose($"HoverActionId: {actionKind}/{actionId} this:{(nint)hoverState:X}");
     }
 
     private AtkValue* HandleActionOutDetour(AgentActionDetail* agentActionDetail, AtkValue* a2, AtkValue* a3, uint a4, ulong a5)
@@ -328,6 +324,8 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
                 this.HoveredAction.BaseActionID = 0;
                 this.HoveredAction.ActionID = 0;
                 this.HoveredActionChanged?.InvokeSafely(this, this.HoveredAction);
+
+                Log.Verbose("HoverActionId: 0");
             }
         }
 
@@ -364,21 +362,6 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
         return thisPtr; // this function shouldn't need to return but the original asm moves this into rax before returning so be safe?
     }
-
-    private void RaptureAtkModuleUpdateDetour(RaptureAtkModule* thisPtr, float delta)
-    {
-        // The game clears the AgentUpdateFlag in the original function, but it also updates agents in it too.
-        // We'll make a copy of the flags, so that we can fire events after the agents have been updated.
-
-        var agentUpdateFlag = thisPtr->AgentUpdateFlag;
-
-        this.raptureAtkModuleUpdateHook.Original(thisPtr, delta);
-
-        if (agentUpdateFlag != RaptureAtkModule.AgentUpdateFlags.None)
-        {
-            this.AgentUpdate.InvokeSafely((AgentUpdateFlag)agentUpdateFlag);
-        }
-    }
 }
 
 /// <summary>
@@ -402,7 +385,6 @@ internal class GameGuiPluginScoped : IInternalDisposableService, IGameGui
         this.gameGuiService.UiHideToggled += this.UiHideToggledForward;
         this.gameGuiService.HoveredItemChanged += this.HoveredItemForward;
         this.gameGuiService.HoveredActionChanged += this.HoveredActionForward;
-        this.gameGuiService.AgentUpdate += this.AgentUpdateForward;
     }
 
     /// <inheritdoc/>
@@ -413,9 +395,6 @@ internal class GameGuiPluginScoped : IInternalDisposableService, IGameGui
 
     /// <inheritdoc/>
     public event EventHandler<HoveredAction>? HoveredActionChanged;
-
-    /// <inheritdoc/>
-    public event Action<AgentUpdateFlag> AgentUpdate;
 
     /// <inheritdoc/>
     public bool GameUiHidden => this.gameGuiService.GameUiHidden;
@@ -436,7 +415,6 @@ internal class GameGuiPluginScoped : IInternalDisposableService, IGameGui
         this.gameGuiService.UiHideToggled -= this.UiHideToggledForward;
         this.gameGuiService.HoveredItemChanged -= this.HoveredItemForward;
         this.gameGuiService.HoveredActionChanged -= this.HoveredActionForward;
-        this.gameGuiService.AgentUpdate -= this.AgentUpdateForward;
 
         this.UiHideToggled = null;
         this.HoveredItemChanged = null;
@@ -488,6 +466,4 @@ internal class GameGuiPluginScoped : IInternalDisposableService, IGameGui
     private void HoveredItemForward(object sender, ulong itemId) => this.HoveredItemChanged?.Invoke(sender, itemId);
 
     private void HoveredActionForward(object sender, HoveredAction hoverAction) => this.HoveredActionChanged?.Invoke(sender, hoverAction);
-
-    private void AgentUpdateForward(AgentUpdateFlag agentUpdateFlag) => this.AgentUpdate.InvokeSafely(agentUpdateFlag);
 }

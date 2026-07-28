@@ -3,7 +3,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 
 using Lumina.Extensions;
-
 using Newtonsoft.Json;
 
 namespace Dalamud.Game.Text.SeStringHandling.Payloads
@@ -98,7 +97,7 @@ namespace Dalamud.Game.Text.SeStringHandling.Payloads
             reader.ReadByte();
 
             // if the next byte is 0xF3 then this listing is limited to home world
-            var nextByte = reader.ReadByte();
+            byte nextByte = reader.ReadByte();
             switch (nextByte)
             {
                 case (byte)PartyFinderLinkType.LimitedToHomeWorld:
@@ -122,11 +121,11 @@ namespace Dalamud.Game.Text.SeStringHandling.Payloads
             // if the link type is notification, just use premade payload data since it's always the same.
             // i have no idea why it is formatted like this, but it is how it is.
             // note it is identical to the link terminator payload except the embedded info type is 0x08
-            if (this.LinkType == PartyFinderLinkType.PartyFinderNotification) return [0x02, 0x27, 0x07, 0x08, 0x01, 0x01, 0x01, 0xFF, 0x01, 0x03,];
+            if (this.LinkType == PartyFinderLinkType.PartyFinderNotification) return new byte[] { 0x02, 0x27, 0x07, 0x08, 0x01, 0x01, 0x01, 0xFF, 0x01, 0x03, };
 
             // back to our regularly scheduled programming...
             var listingIDBytes = MakeInteger(this.ListingId);
-            var isFlagSpecified = this.LinkType != PartyFinderLinkType.NotSpecified;
+            bool isFlagSpecified = this.LinkType != PartyFinderLinkType.NotSpecified;
 
             var chunkLen = listingIDBytes.Length + 4;
             // 1 more byte for the type flag if it is specified

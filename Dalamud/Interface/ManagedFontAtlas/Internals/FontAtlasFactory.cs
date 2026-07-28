@@ -18,9 +18,7 @@ using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Storage.Assets;
 using Dalamud.Utility;
-
 using Lumina.Data.Files;
-
 using TerraFX.Interop.DirectX;
 
 namespace Dalamud.Interface.ManagedFontAtlas.Internals;

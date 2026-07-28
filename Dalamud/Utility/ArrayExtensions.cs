@@ -115,7 +115,8 @@ internal static class ArrayExtensions
         if (count < 0 || startIndex > list.Count - count)
             throw new ArgumentOutOfRangeException(nameof(count), count, null);
 
-        ArgumentNullException.ThrowIfNull(match);
+        if (match == null)
+            throw new ArgumentNullException(nameof(match));
 
         var endIndex = startIndex + count;
         for (var i = startIndex; i < endIndex; i++)
@@ -137,7 +138,8 @@ internal static class ArrayExtensions
     /// <inheritdoc cref="List{T}.FindLastIndex(int,int,System.Predicate{T})"/>
     public static int FindLastIndex<T>(this IReadOnlyList<T> list, int startIndex, int count, Predicate<T> match)
     {
-        ArgumentNullException.ThrowIfNull(match);
+        if (match == null)
+            throw new ArgumentNullException(nameof(match));
 
         if (list.Count == 0)
         {

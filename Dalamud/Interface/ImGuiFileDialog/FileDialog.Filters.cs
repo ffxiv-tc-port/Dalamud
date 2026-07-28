@@ -8,11 +8,10 @@ namespace Dalamud.Interface.ImGuiFileDialog;
 /// </summary>
 public partial class FileDialog
 {
-    private List<FilterStruct> filters = [];
-    private FilterStruct selectedFilter;
+    private static Regex filterRegex = new(@"[^,{}]+(\{([^{}]*?)\})?", RegexOptions.Compiled);
 
-    [GeneratedRegex(@"[^,{}]+(\{([^{}]*?)\})?", RegexOptions.Compiled)]
-    private static partial Regex FilterRegex();
+    private List<FilterStruct> filters = new();
+    private FilterStruct selectedFilter;
 
     private void ParseFilters(string filters)
     {
@@ -23,13 +22,13 @@ public partial class FileDialog
         if (filters.Length == 0) return;
 
         var currentFilterFound = false;
-        var matches = FilterRegex().Matches(filters);
+        var matches = filterRegex.Matches(filters);
         foreach (Match m in matches)
         {
             var match = m.Value;
             var filter = default(FilterStruct);
 
-            if (match.Contains('{'))
+            if (match.Contains("{"))
             {
                 var exts = m.Groups[2].Value;
                 filter = new FilterStruct
@@ -43,7 +42,7 @@ public partial class FileDialog
                 filter = new FilterStruct
                 {
                     Filter = match,
-                    CollectionFilters = [],
+                    CollectionFilters = new(),
                 };
             }
 
@@ -90,7 +89,7 @@ public partial class FileDialog
             foreach (var file in this.files)
             {
                 var show = true;
-                if (!string.IsNullOrEmpty(this.searchBuffer) && !file.FileName.Contains(this.searchBuffer, StringComparison.InvariantCultureIgnoreCase))
+                if (!string.IsNullOrEmpty(this.searchBuffer) && !file.FileName.ToLowerInvariant().Contains(this.searchBuffer.ToLowerInvariant()))
                 {
                     show = false;
                 }

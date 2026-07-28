@@ -53,7 +53,8 @@ internal class PluginLoader : IDisposable
     /// <returns>A loader.</returns>
     public static PluginLoader CreateFromAssemblyFile(string assemblyFile, Action<LoaderConfig> configure)
     {
-        ArgumentNullException.ThrowIfNull(configure);
+        if (configure == null)
+            throw new ArgumentNullException(nameof(configure));
 
         var config = new LoaderConfig(assemblyFile);
         configure(config);
@@ -158,6 +159,7 @@ internal class PluginLoader : IDisposable
 
     private void EnsureNotDisposed()
     {
-        ObjectDisposedException.ThrowIf(this.disposed, this);
+        if (this.disposed)
+            throw new ObjectDisposedException(nameof(PluginLoader));
     }
 }

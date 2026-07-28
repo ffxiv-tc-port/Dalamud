@@ -11,21 +11,21 @@ internal class PlatformInformation
     /// <summary>
     /// Gets a list of native OS specific library extensions.
     /// </summary>
-    public static string[] NativeLibraryExtensions => [".dll"];
+    public static string[] NativeLibraryExtensions => new[] { ".dll" };
 
     /// <summary>
     /// Gets a list of native OS specific library prefixes.
     /// </summary>
-    public static string[] NativeLibraryPrefixes => [string.Empty];
+    public static string[] NativeLibraryPrefixes => new[] { string.Empty };
 
     /// <summary>
     /// Gets a list of native OS specific managed assembly extensions.
     /// </summary>
-    public static string[] ManagedAssemblyExtensions =>
-    [
+    public static string[] ManagedAssemblyExtensions => new[]
+    {
         ".dll",
         ".ni.dll",
         ".exe",
         ".ni.exe",
-    ];
+    };
 }

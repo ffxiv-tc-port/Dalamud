@@ -6,7 +6,6 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
-
 using Dalamud.Configuration.Internal;
 using Dalamud.Logging.Internal;
 using Dalamud.Networking.Http;
@@ -21,35 +20,27 @@ namespace Dalamud.Plugin.Internal.Types;
 /// </summary>
 internal class PluginRepository
 {
+    /// <summary>
+    ///     官方主仓库地址
+    /// </summary>
+    
+    public const string MainRepoUrlDailyRoutines = "https://raw.githubusercontent.com/yanmucorp/PluginDistD17/refs/heads/main/pluginmaster.json";
     public const string MainRepoUrlGoatCorp = "https://kamori.goats.dev/Plugin/PluginMaster";
-    public const string MainRepoUrlSoil     = "https://raw.githubusercontent.com/yanmucorp/PluginDistD17/refs/heads/main/pluginmaster.json";
+    
+    public static string MainRepoUrl => Service<DalamudConfiguration>.Get().MainRepoUrl;
 
-    // 非法主库地址
-    private static readonly List<string> InvalidMainRepos =
+    public const string MainRepoDRUrl = "https://raw.githubusercontent.com/yanmucorp/PluginDistD17/refs/heads/main/pluginmaster.json";
+
+    private static readonly List<string> InvalidRepos =
     [
         "https://aonyx.ffxiv.wang/Plugin/PluginMaster",
+        "https://gh.atmoomen.top/https://raw.githubusercontent.com/Dalamud-DailyRoutines/PluginDistD17/main/pluginmaster.json"
     ];
-    
-    // 预置第三方库
-    public static readonly HashSet<string> PresetRepos = new(StringComparer.OrdinalIgnoreCase)
-    {
-        // AtmoOmen
-        "https://gh.atmoomen.top/DalamudPlugins/main/pluginmaster.json",
-        // Nyy
-        "https://gp.xuolu.com/love.json",
-        // Siren
-        "https://raw.githubusercontent.com/extrant/DalamudPlugins/main/pluginmaster.json",
-        // MeowZWR
-        "https://plogon.meowrs.com/cn",
-        // 大刺猬
-        "https://raw.githubusercontent.com/RedAsteroid/DalamudPlugins/main/pluginmaster.json",
-        // 逆光喵
-        "https://raw.githubusercontent.com/NiGuangOwO/DalamudPlugins/main/pluginmaster.json"
-    };
     
     private const int HttpRequestTimeoutSeconds = 20;
 
-    private static readonly ModuleLog Log = ModuleLog.Create<PluginRepository>();
+    private static readonly ModuleLog Log = new("PLUGINR");
+
     private readonly HttpClient httpClient;
 
     /// <summary>
@@ -79,13 +70,13 @@ internal class PluginRepository
                 },
                 UserAgent =
                 {
-                    new ProductInfoHeaderValue("Dalamud", Versioning.GetAssemblyVersion()),
-                },
-            },
+                    new ProductInfoHeaderValue("Dalamud", Util.AssemblyVersion)
+                }
+            }
         };
 
+        this.httpClient.DefaultRequestHeaders.Add("X-Machine-Token", DeviceUtils.GetDeviceId());
         PluginMasterUrl = pluginMasterUrl;
-        IsThirdParty    = pluginMasterUrl != Service<DalamudConfiguration>.Get().MainRepoUrl;
         IsEnabled       = isEnabled;
     }
 
@@ -97,7 +88,7 @@ internal class PluginRepository
     /// <summary>
     ///     是否为第三方仓库
     /// </summary>
-    public bool IsThirdParty { get; }
+    public bool IsThirdParty => true;
 
     /// <summary>
     ///     仓库是否启用
@@ -123,32 +114,37 @@ internal class PluginRepository
     {
         // 摊手.jpg
         var dalamudConfig = Service<DalamudConfiguration>.Get();
-        if (InvalidMainRepos.Any(x => dalamudConfig.MainRepoUrl.Contains(x, StringComparison.OrdinalIgnoreCase)))
+        if (InvalidRepos.Any(x => dalamudConfig.MainRepoUrl.Contains(x, StringComparison.OrdinalIgnoreCase)))
         {
-            dalamudConfig.MainRepoUrl = MainRepoUrlSoil;
+            dalamudConfig.MainRepoUrl = MainRepoUrlDailyRoutines;
             dalamudConfig.QueueSave();
         }
 
-        return new(happyHttpClient, dalamudConfig.MainRepoUrl, true);
+        return new(happyHttpClient, MainRepoUrl, true);
     }
 
     /// <summary>
     ///     异步重新加载插件列表
     /// </summary>
-    /// <returns>The new state.</returns>
-    public async Task ReloadAsync()
+    /// <returns>更新后的状态</returns>
+    public async Task ReloadPluginMasterAsync()
     {
         this.State        = PluginRepositoryState.InProgress;
         this.PluginMaster = new List<RemotePluginManifest>().AsReadOnly();
 
         try
         {
+            Log.Information($"开始获取仓库数据：{this.PluginMasterUrl}");
+
             using var response = await this.GetPluginMaster(this.PluginMasterUrl);
 
             response.EnsureSuccessStatusCode();
 
-            var data = await response.Content.ReadAsStringAsync();
-            var pluginMaster = JsonConvert.DeserializeObject<List<RemotePluginManifest>>(data) ?? throw new Exception("插件列表反序列化失败，结果为空");
+            var data         = await response.Content.ReadAsStringAsync();
+            var pluginMaster = JsonConvert.DeserializeObject<List<RemotePluginManifest>>(data);
+
+            if (pluginMaster == null) { throw new Exception("插件列表反序列化失败，结果为空"); }
+
             pluginMaster.Sort((pm1, pm2) => string.Compare(pm1.Name, pm2.Name, StringComparison.Ordinal));
 
             // Set the source for each remote manifest. Allows for checking if is 3rd party.
@@ -162,6 +158,7 @@ internal class PluginRepository
                 foreach (var manifest in this.PluginMaster) { manifest.IsHide = false; }
             }
 
+            Log.Information($"仓库数据获取成功：{this.PluginMasterUrl}");
             this.State = PluginRepositoryState.Success;
         }
         catch (Exception ex)
@@ -188,13 +185,6 @@ internal class PluginRepository
         // ReSharper disable once ConditionIsAlwaysTrueOrFalse
         if (manifest.AssemblyVersion == null)
         {
-            Log.Error("仓库 {RepoLink} 中的插件 {PluginName} 缺少有效的版本", PluginMasterUrl, manifest.InternalName);
-            return false;
-        }
-
-        // ReSharper disable once ConditionIsAlwaysTrueOrFalse
-        if (manifest.AssemblyVersion == null)
-        {
             Log.Error("仓库 {RepoLink} 中的插件 {PluginName} 缺少有效的程序集版本", PluginMasterUrl,
                       manifest.InternalName);
             return false;
@@ -203,18 +193,16 @@ internal class PluginRepository
         if (manifest.TestingAssemblyVersion != null                    &&
             manifest.TestingAssemblyVersion > manifest.AssemblyVersion &&
             manifest.TestingDalamudApiLevel == null)
-        {
             Log.Warning(
                 "仓库 {RepoLink} 中的插件 {PluginName} 有测试版本可用，但未指定测试API版本，需要提供 'TestingDalamudApiLevel' 属性",
                 PluginMasterUrl, manifest.InternalName);
-        }
 
         return true;
     }
 
     private async Task<HttpResponseMessage> GetPluginMaster(string url, int timeout = HttpRequestTimeoutSeconds)
     {
-        _ = Service<HappyHttpClient>.Get().SharedHttpClient;
+        var client = Service<HappyHttpClient>.Get().SharedHttpClient;
 
         var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -222,6 +210,6 @@ internal class PluginRepository
 
         using var requestCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeout));
 
-        return await httpClient.SendAsync(request, requestCts.Token);
+        return await client.SendAsync(request, requestCts.Token);
     }
 }

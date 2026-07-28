@@ -1,7 +1,7 @@
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.ClientState;
 using Dalamud.Game.ClientState.JobGauge;
 using Dalamud.Game.ClientState.JobGauge.Types;
-using Dalamud.Game.ClientState.Objects;
 using Dalamud.Utility;
 
 namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
@@ -12,7 +12,7 @@ namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
 internal class GaugeWidget : IDataWindowWidget
 {
     /// <inheritdoc/>
-    public string[]? CommandShortcuts { get; init; } = ["gauge", "jobgauge", "job"];
+    public string[]? CommandShortcuts { get; init; } = { "gauge", "jobgauge", "job" };
 
     /// <inheritdoc/>
     public string DisplayName { get; init; } = "Job Gauge";
@@ -29,17 +29,18 @@ internal class GaugeWidget : IDataWindowWidget
     /// <inheritdoc/>
     public void Draw()
     {
-        var objectTable = Service<ObjectTable>.Get();
+        var clientState = Service<ClientState>.Get();
         var jobGauges = Service<JobGauges>.Get();
 
-        var player = objectTable.LocalPlayer;
+        var player = clientState.LocalPlayer;
         if (player == null)
         {
             ImGui.Text("Player is not present"u8);
             return;
         }
 
-        JobGaugeBase? gauge = player.ClassJob.RowId switch
+        var jobID = player.ClassJob.RowId;
+        JobGaugeBase? gauge = jobID switch
         {
             19 => jobGauges.Get<PLDGauge>(),
             20 => jobGauges.Get<MNKGauge>(),

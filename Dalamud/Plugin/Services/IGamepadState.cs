@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.GamePad;
@@ -10,7 +10,7 @@ namespace Dalamud.Plugin.Services;
 ///
 /// Will block game's gamepad input if <see cref="ImGuiConfigFlags.NavEnableGamepad"/> is set.
 /// </summary>
-public interface IGamepadState : IDalamudService
+public interface IGamepadState
 {
     /// <summary>
     /// Gets the pointer to the current instance of the GamepadInput struct.

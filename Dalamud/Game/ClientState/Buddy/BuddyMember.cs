@@ -1,35 +1,25 @@
-using System.Diagnostics.CodeAnalysis;
-
 using Dalamud.Data;
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.Game.ClientState.Objects.Types;
 
 using Lumina.Excel;
 
-using CSBuddyMember = FFXIVClientStructs.FFXIV.Client.Game.UI.Buddy.BuddyMember;
-
 namespace Dalamud.Game.ClientState.Buddy;
 
 /// <summary>
 /// Interface representing represents a buddy such as the chocobo companion, summoned pets, squadron groups and trust parties.
 /// </summary>
-public interface IBuddyMember : IEquatable<IBuddyMember>
+public interface IBuddyMember
 {
     /// <summary>
     /// Gets the address of the buddy in memory.
     /// </summary>
-    nint Address { get; }
+    IntPtr Address { get; }
 
     /// <summary>
     /// Gets the object ID of this buddy.
     /// </summary>
-    [Obsolete("Renamed to EntityId")]
     uint ObjectId { get; }
-
-    /// <summary>
-    /// Gets the entity ID of this buddy.
-    /// </summary>
-    uint EntityId { get; }
 
     /// <summary>
     /// Gets the actor associated with this buddy.
@@ -71,34 +61,39 @@ public interface IBuddyMember : IEquatable<IBuddyMember>
 }
 
 /// <summary>
-/// This struct represents a buddy such as the chocobo companion, summoned pets, squadron groups and trust parties.
+/// This class represents a buddy such as the chocobo companion, summoned pets, squadron groups and trust parties.
 /// </summary>
-/// <param name="ptr">A pointer to the BuddyMember.</param>
-internal readonly unsafe struct BuddyMember(CSBuddyMember* ptr) : IBuddyMember
+internal unsafe class BuddyMember : IBuddyMember
 {
     [ServiceManager.ServiceDependency]
     private readonly ObjectTable objectTable = Service<ObjectTable>.Get();
 
-    /// <inheritdoc />
-    public nint Address => (nint)ptr;
+    /// <summary>
+    /// Initializes a new instance of the <see cref="BuddyMember"/> class.
+    /// </summary>
+    /// <param name="address">Buddy address.</param>
+    internal BuddyMember(IntPtr address)
+    {
+        this.Address = address;
+    }
 
     /// <inheritdoc />
-    public uint ObjectId => this.EntityId;
+    public IntPtr Address { get; }
 
     /// <inheritdoc />
-    public uint EntityId => ptr->EntityId;
+    public uint ObjectId => this.Struct->EntityId;
 
     /// <inheritdoc />
-    public IGameObject? GameObject => this.objectTable.SearchById(this.EntityId);
+    public IGameObject? GameObject => this.objectTable.SearchById(this.ObjectId);
 
     /// <inheritdoc />
-    public uint CurrentHP => ptr->CurrentHealth;
+    public uint CurrentHP => this.Struct->CurrentHealth;
 
     /// <inheritdoc />
-    public uint MaxHP => ptr->MaxHealth;
+    public uint MaxHP => this.Struct->MaxHealth;
 
     /// <inheritdoc />
-    public uint DataID => ptr->DataId;
+    public uint DataID => this.Struct->DataId;
 
     /// <inheritdoc />
     public RowRef<Lumina.Excel.Sheets.Mount> MountData => LuminaUtils.CreateRef<Lumina.Excel.Sheets.Mount>(this.DataID);
@@ -109,25 +104,5 @@ internal readonly unsafe struct BuddyMember(CSBuddyMember* ptr) : IBuddyMember
     /// <inheritdoc />
     public RowRef<Lumina.Excel.Sheets.DawnGrowMember> TrustData => LuminaUtils.CreateRef<Lumina.Excel.Sheets.DawnGrowMember>(this.DataID);
 
-    public static bool operator ==(BuddyMember x, BuddyMember y) => x.Equals(y);
-
-    public static bool operator !=(BuddyMember x, BuddyMember y) => !(x == y);
-
-    /// <inheritdoc/>
-    public bool Equals(IBuddyMember? other)
-    {
-        return this.EntityId == other.EntityId;
-    }
-
-    /// <inheritdoc/>
-    public override bool Equals([NotNullWhen(true)] object? obj)
-    {
-        return obj is BuddyMember fate && this.Equals(fate);
-    }
-
-    /// <inheritdoc/>
-    public override int GetHashCode()
-    {
-        return this.EntityId.GetHashCode();
-    }
+    private FFXIVClientStructs.FFXIV.Client.Game.UI.Buddy.BuddyMember* Struct => (FFXIVClientStructs.FFXIV.Client.Game.UI.Buddy.BuddyMember*)this.Address;
 }

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Numerics;
 
 using Dalamud.Bindings.ImGui;
+using Dalamud.Utility;
 
 namespace Dalamud.Interface.Utility.Raii;
 
@@ -28,7 +29,7 @@ public static partial class ImRaii
 
     public sealed class Color : IDisposable
     {
-        internal static readonly List<(ImGuiCol, uint)> Stack = [];
+        internal static readonly List<(ImGuiCol, uint)> Stack = new();
         private                  int                    count;
 
         public Color Push(ImGuiCol idx, uint color, bool condition = true)

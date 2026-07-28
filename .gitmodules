@@ -25,6 +25,3 @@
 [submodule "lib/Lumina"]
 	path = lib/Lumina
 	url = https://github.com/Dalamud-DailyRoutines/Lumina.git
-[submodule "lib/Lumina.Excel"]
-	path = lib/Lumina.Excel
-	url = https://github.com/Dalamud-DailyRoutines/Lumina.Excel.git

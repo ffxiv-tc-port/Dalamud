@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
@@ -7,7 +7,6 @@ using Dalamud.Configuration.Internal;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
-using Dalamud.Utility.Internal;
 
 namespace Dalamud.Interface.Internal.Windows.Settings.Widgets;
 
@@ -24,8 +23,8 @@ internal sealed class EnumSettingsEntry<T> : SettingsEntry
     private T valueBacking;
 
     public EnumSettingsEntry(
-        LazyLoc name,
-        LazyLoc description,
+        string name,
+        string description,
         LoadSettingDelegate load,
         SaveSettingDelegate save,
         Action<T>? change = null,
@@ -41,29 +40,6 @@ internal sealed class EnumSettingsEntry<T> : SettingsEntry
         this.Description = description;
         this.CheckWarning = warning;
         this.CheckValidity = validity;
-        this.CheckVisibility = visibility;
-
-        this.fallbackValue = fallbackValue;
-    }
-    
-    public EnumSettingsEntry(
-        string             name,
-        string             description,
-        LoadSettingDelegate load,
-        SaveSettingDelegate save,
-        Action<T>?          change        = null,
-        Func<T, string?>?   warning       = null,
-        Func<T, string?>?   validity      = null,
-        Func<bool>?         visibility    = null,
-        T                   fallbackValue = default)
-    {
-        this.load            = load;
-        this.save            = save;
-        this.change          = change;
-        this.Name            = new(name, name);
-        this.Description     = new(description, description);
-        this.CheckWarning    = warning;
-        this.CheckValidity   = validity;
         this.CheckVisibility = visibility;
 
         this.fallbackValue = fallbackValue;
@@ -85,7 +61,7 @@ internal sealed class EnumSettingsEntry<T> : SettingsEntry
         }
     }
 
-    public LazyLoc Description { get; }
+    public string Description { get; }
 
     public Action<EnumSettingsEntry<T>>? CustomDraw { get; init; }
 
@@ -103,10 +79,7 @@ internal sealed class EnumSettingsEntry<T> : SettingsEntry
 
     public override void Draw()
     {
-        var name = this.Name.ToString();
-        var description = this.Description.ToString();
-
-        Debug.Assert(!string.IsNullOrWhiteSpace(name), "Name is empty");
+        Debug.Assert(this.Name != null, "this.Name != null");
 
         if (this.CustomDraw is not null)
         {
@@ -114,7 +87,7 @@ internal sealed class EnumSettingsEntry<T> : SettingsEntry
         }
         else
         {
-            ImGui.TextWrapped(name);
+            ImGui.TextWrapped(this.Name);
 
             var idx = this.valueBacking;
             var values = Enum.GetValues<T>();
@@ -144,14 +117,13 @@ internal sealed class EnumSettingsEntry<T> : SettingsEntry
         using (ImRaii.PushColor(ImGuiCol.Text, ImGuiColors.DalamudGrey))
         {
             var desc = this.FriendlyEnumDescriptionGetter(this.valueBacking);
-
             if (!string.IsNullOrWhiteSpace(desc))
             {
                 ImGui.TextWrapped(desc);
                 ImGuiHelpers.ScaledDummy(2);
             }
 
-            ImGui.TextWrapped(description);
+            ImGui.TextWrapped(this.Description);
         }
 
         if (this.CheckValidity != null)

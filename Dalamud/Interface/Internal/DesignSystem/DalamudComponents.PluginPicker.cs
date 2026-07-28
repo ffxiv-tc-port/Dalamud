@@ -1,8 +1,7 @@
-using System.Linq;
+﻿using System.Linq;
 using System.Numerics;
 
 using CheapLoc;
-
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;

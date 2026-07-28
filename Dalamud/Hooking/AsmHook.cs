@@ -169,6 +169,9 @@ public sealed class AsmHook : IDisposable, IDalamudHook
     /// </summary>
     private void CheckDisposed()
     {
-        ObjectDisposedException.ThrowIf(this.IsDisposed, this);
+        if (this.IsDisposed)
+        {
+            throw new ObjectDisposedException(message: "Hook is already disposed", null);
+        }
     }
 }

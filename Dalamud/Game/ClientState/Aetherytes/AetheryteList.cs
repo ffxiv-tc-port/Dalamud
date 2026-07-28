@@ -1,14 +1,12 @@
 using System.Collections;
 using System.Collections.Generic;
 
-using Dalamud.Game.ClientState.Objects;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
 
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
-
 using Serilog;
 
 namespace Dalamud.Game.ClientState.Aetherytes;
@@ -24,7 +22,7 @@ namespace Dalamud.Game.ClientState.Aetherytes;
 internal sealed unsafe partial class AetheryteList : IServiceType, IAetheryteList
 {
     [ServiceManager.ServiceDependency]
-    private readonly ObjectTable objectTable = Service<ObjectTable>.Get();
+    private readonly ClientState clientState = Service<ClientState>.Get();
 
     private readonly Telepo* telepoInstance = Telepo.Instance();
 
@@ -39,7 +37,7 @@ internal sealed unsafe partial class AetheryteList : IServiceType, IAetheryteLis
     {
         get
         {
-            if (this.objectTable.LocalPlayer == null)
+            if (this.clientState.LocalPlayer == null)
                 return 0;
 
             this.Update();
@@ -61,7 +59,7 @@ internal sealed unsafe partial class AetheryteList : IServiceType, IAetheryteLis
                 return null;
             }
 
-            if (this.objectTable.LocalPlayer == null)
+            if (this.clientState.LocalPlayer == null)
                 return null;
 
             return new AetheryteEntry(this.telepoInstance->TeleportList[index]);
@@ -71,7 +69,7 @@ internal sealed unsafe partial class AetheryteList : IServiceType, IAetheryteLis
     private void Update()
     {
         // this is very very important as otherwise it crashes
-        if (this.objectTable.LocalPlayer == null)
+        if (this.clientState.LocalPlayer == null)
             return;
 
         this.telepoInstance->UpdateAetheryteList();
@@ -89,42 +87,15 @@ internal sealed partial class AetheryteList
     /// <inheritdoc/>
     public IEnumerator<IAetheryteEntry> GetEnumerator()
     {
-        return new Enumerator(this);
+        for (var i = 0; i < this.Length; i++)
+        {
+            yield return this[i];
+        }
     }
 
     /// <inheritdoc/>
     IEnumerator IEnumerable.GetEnumerator()
     {
         return this.GetEnumerator();
-    }
-
-    private struct Enumerator(AetheryteList aetheryteList) : IEnumerator<IAetheryteEntry>
-    {
-        private int index = -1;
-
-        public IAetheryteEntry Current { get; private set; }
-
-        object IEnumerator.Current => this.Current;
-
-        public bool MoveNext()
-        {
-            if (++this.index < aetheryteList.Length)
-            {
-                this.Current = aetheryteList[this.index];
-                return true;
-            }
-
-            this.Current = default;
-            return false;
-        }
-
-        public void Reset()
-        {
-            this.index = -1;
-        }
-
-        public void Dispose()
-        {
-        }
     }
 }

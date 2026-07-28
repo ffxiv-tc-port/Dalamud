@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Text;
 
@@ -9,9 +8,7 @@ using Dalamud.Interface.Internal;
 using Dalamud.Plugin.Internal;
 using Dalamud.Plugin.Internal.Types.Manifest;
 using Dalamud.Utility;
-
 using Newtonsoft.Json;
-
 using Serilog;
 
 namespace Dalamud.Support;
@@ -35,7 +32,7 @@ public static class Troubleshooting
     {
         LastException = exception;
 
-        var fixedContext = context?.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        var fixedContext = context?.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
 
         try
         {
@@ -69,15 +66,14 @@ public static class Troubleshooting
         {
             var payload = new TroubleshootingPayload
             {
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 LoadedPlugins = pluginManager?.InstalledPlugins?.Select(x => x.Manifest as LocalPluginManifest)?.OrderByDescending(x => x.InternalName).ToArray(),
                 PluginStates = pluginManager?.InstalledPlugins?.Where(x => !x.IsDev).ToDictionary(x => x.Manifest.InternalName, x => x.IsBanned ? "Banned" : x.State.ToString()),
                 EverStartedLoadingPlugins = pluginManager?.InstalledPlugins.Where(x => x.HasEverStartedLoad).Select(x => x.InternalName).ToList(),
-                DalamudVersion = Versioning.GetScmVersion(),
-                DalamudGitHash = Versioning.GetGitHash() ?? "Unknown",
+                DalamudVersion = Util.GetScmVersion(),
+                DalamudGitHash = Util.GetGitHash() ?? "Unknown",
                 GameVersion = startInfo.GameVersion?.ToString() ?? "Unknown",
                 Language = startInfo.Language.ToString(),
-                BetaKey = Versioning.GetActiveTrack(),
+                BetaKey = configuration.DalamudBetaKey,
                 DoPluginTest = configuration.DoPluginTest,
                 LoadAllApiLevels = pluginManager?.LoadAllApiLevels == true,
                 InterfaceLoaded = interfaceManager?.IsReady ?? false,
@@ -87,12 +83,6 @@ public static class Troubleshooting
 
             var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload)));
             Log.Information($"TROUBLESHOOTING:{encodedPayload}");
-
-            File.WriteAllText(
-                Path.Join(
-                    startInfo.LogPath,
-                    "dalamud.troubleshooting.json"),
-                JsonConvert.SerializeObject(payload, Formatting.Indented));
         }
         catch (Exception ex)
         {
@@ -111,8 +101,6 @@ public static class Troubleshooting
 
     private class TroubleshootingPayload
     {
-        public long Timestamp { get; set; }
-
         public LocalPluginManifest[]? LoadedPlugins { get; set; }
 
         public Dictionary<string, string>? PluginStates { get; set; }
@@ -139,7 +127,7 @@ public static class Troubleshooting
 
         public bool ForcedMinHook { get; set; }
 
-        public List<ThirdPartyRepoSettings> ThirdRepo => [];
+        public List<ThirdPartyRepoSettings> ThirdRepo => new();
 
         public bool HasThirdRepo { get; set; }
     }

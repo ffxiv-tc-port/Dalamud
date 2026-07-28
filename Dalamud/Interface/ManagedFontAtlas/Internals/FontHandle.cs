@@ -10,7 +10,6 @@ using Dalamud.Interface.Utility;
 using Dalamud.Plugin.Internal;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Utility;
-
 using Serilog;
 
 namespace Dalamud.Interface.ManagedFontAtlas.Internals;
@@ -21,7 +20,7 @@ namespace Dalamud.Interface.ManagedFontAtlas.Internals;
 internal abstract class FontHandle : IFontHandle
 {
     private const int NonMainThreadFontAccessWarningCheckInterval = 10000;
-    private static readonly ConditionalWeakTable<LocalPlugin, object> NonMainThreadFontAccessWarning = [];
+    private static readonly ConditionalWeakTable<LocalPlugin, object> NonMainThreadFontAccessWarning = new();
     private static long nextNonMainThreadFontAccessWarningCheck;
 
     private readonly List<IDisposable> pushedFonts = new(8);
@@ -239,17 +238,12 @@ internal abstract class FontHandle : IFontHandle
     }
 
     /// <inheritdoc/>
-    public Task<IFontHandle> WaitAsync() => this.WaitAsync(CancellationToken.None);
-
-    /// <inheritdoc/>
-    public Task<IFontHandle> WaitAsync(CancellationToken cancellationToken)
+    public Task<IFontHandle> WaitAsync()
     {
         if (this.Available)
             return Task.FromResult<IFontHandle>(this);
 
         var tcs = new TaskCompletionSource<IFontHandle>(TaskCreationOptions.RunContinuationsAsynchronously);
-        cancellationToken.Register(() => tcs.TrySetCanceled());
-
         this.ImFontChanged += OnImFontChanged;
         this.Disposed += OnDisposed;
         if (this.Available)

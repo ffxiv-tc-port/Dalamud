@@ -3,16 +3,15 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 using CheapLoc;
-
 using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Interface.Colors;
-using Dalamud.Utility.Internal;
+using Dalamud.Interface.Utility;
 
 namespace Dalamud.Interface.Internal.Windows.Settings.Widgets;
 
 [SuppressMessage("StyleCop.CSharp.DocumentationRules", "SA1600:Elements should be documented", Justification = "Internals")]
-internal sealed class LanguageChooserSettingsEntry : SettingsEntry
+public sealed class LanguageChooserSettingsEntry : SettingsEntry
 {
     private readonly string[] languages;
     private readonly string[] locLanguages;
@@ -21,9 +20,9 @@ internal sealed class LanguageChooserSettingsEntry : SettingsEntry
 
     public LanguageChooserSettingsEntry()
     {
-        this.languages = [.. Localization.ApplicableLangCodes.Prepend("en")];
+        this.languages = Localization.ApplicableLangCodes.Prepend("en").ToArray();
 
-        this.Name = LazyLoc.Localize("DalamudSettingsLanguage", "Language");
+        this.Name = Loc.Localize("DalamudSettingsLanguage", "Language");
         this.IsValid = true;
         this.IsVisible = true;
 
@@ -47,7 +46,7 @@ internal sealed class LanguageChooserSettingsEntry : SettingsEntry
                 }
             }
 
-            this.locLanguages = [.. locLanguagesList];
+            this.locLanguages = locLanguagesList.ToArray();
         }
         catch (Exception)
         {

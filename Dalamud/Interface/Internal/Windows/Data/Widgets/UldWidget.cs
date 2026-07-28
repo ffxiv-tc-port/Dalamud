@@ -12,9 +12,7 @@ using Dalamud.Interface.Colors;
 using Dalamud.Interface.Components;
 using Dalamud.Interface.Textures.Internal;
 using Dalamud.Interface.Utility;
-using Dalamud.Interface.Utility.Raii;
 using Dalamud.Memory;
-
 using Lumina.Data.Files;
 using Lumina.Data.Parsing.Uld;
 
@@ -27,10 +25,9 @@ namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
 /// </summary>
 internal class UldWidget : IDataWindowWidget
 {
-    private const string UldBaseBath = "ui/uld/";
-
     // ULD styles can be hardcoded for now as they don't add new ones regularly. Can later try and find where to load these from in the game EXE.
-    private static readonly string[] ThemeDisplayNames = ["Dark", "Light", "Classic FF", "Clear Blue", "Clear White", "Clear Green"];
+    private static readonly string[] ThemeDisplayNames = ["Dark", "Light", "Classic FF", "Clear Blue"];
+    private static readonly string[] ThemeBasePaths = ["ui/uld/", "ui/uld/img01/", "ui/uld/img02/", "ui/uld/img03/"];
 
     // 48 8D 15 ?? ?? ?? ?? is the part of the signatures that contain the string location offset
     // 48 = 64 bit register prefix
@@ -49,7 +46,6 @@ internal class UldWidget : IDataWindowWidget
         ("48 8D 15 ?? ?? ?? ?? 45 33 C0 E9 ?? ?? ?? ??", 3)
     ];
 
-    private DataManager dataManager;
     private CancellationTokenSource? cts;
     private Task<string[]>? uldNamesTask;
 
@@ -72,8 +68,6 @@ internal class UldWidget : IDataWindowWidget
     /// <inheritdoc/>
     public void Load()
     {
-        this.dataManager ??= Service<DataManager>.Get();
-
         this.cts?.Cancel();
         ClearTask(ref this.uldNamesTask);
         this.uldNamesTask = null;
@@ -164,19 +158,17 @@ internal class UldWidget : IDataWindowWidget
                     ImGuiColors.DalamudRed,
                     $"Error: {nameof(UldFile.AssetData)} is not populated.");
             }
-            else
+            else if (ImGui.BeginTable("##uldTextureEntries"u8, 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders))
             {
-                using var table = ImRaii.Table("##uldTextureEntries"u8, 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders);
-                if (table.Success)
-                {
-                    ImGui.TableSetupColumn("Id"u8, ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("000000"u8).X);
-                    ImGui.TableSetupColumn("Path"u8, ImGuiTableColumnFlags.WidthStretch);
-                    ImGui.TableSetupColumn("Actions"u8, ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("Preview___"u8).X);
-                    ImGui.TableHeadersRow();
+                ImGui.TableSetupColumn("Id"u8, ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("000000"u8).X);
+                ImGui.TableSetupColumn("Path"u8, ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Actions"u8, ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("Preview___"u8).X);
+                ImGui.TableHeadersRow();
 
-                    foreach (var textureEntry in uld.AssetData)
-                        this.DrawTextureEntry(textureEntry, textureManager);
-                }
+                foreach (var textureEntry in uld.AssetData)
+                    this.DrawTextureEntry(textureEntry, textureManager);
+
+                ImGui.EndTable();
             }
         }
 
@@ -271,7 +263,7 @@ internal class UldWidget : IDataWindowWidget
     }
 
     private string ToThemedPath(string path) =>
-        UldBaseBath + (this.selectedTheme > 0 ? $"img{this.selectedTheme:D2}/" : string.Empty) + path[UldBaseBath.Length..];
+        ThemeBasePaths[this.selectedTheme] + path[ThemeBasePaths[0].Length..];
 
     private void DrawTextureEntry(UldRoot.TextureEntry textureEntry, TextureManager textureManager)
     {
@@ -290,7 +282,7 @@ internal class UldWidget : IDataWindowWidget
 
         if (ImGui.IsItemHovered())
         {
-            using var tooltip = ImRaii.Tooltip();
+            ImGui.BeginTooltip();
 
             var texturePath = GetStringNullTerminated(textureEntry.Path);
             ImGui.Text($"Base path at {texturePath}:");
@@ -299,18 +291,17 @@ internal class UldWidget : IDataWindowWidget
             else if (e is not null)
                 ImGui.Text(e.ToString());
 
-            if (this.selectedTheme != 0 && (textureEntry.ThemeSupportBitmask & (1 << (this.selectedTheme - 1))) != 0)
+            if (this.selectedTheme != 0)
             {
                 var texturePathThemed = this.ToThemedPath(texturePath);
-                if (this.dataManager.FileExists(texturePathThemed))
-                {
-                    ImGui.Text($"Themed path at {texturePathThemed}:");
-                    if (textureManager.Shared.GetFromGame(texturePathThemed).TryGetWrap(out wrap, out e))
-                        ImGui.Image(wrap.Handle, wrap.Size);
-                    else if (e is not null)
-                        ImGui.Text(e.ToString());
-                }
+                ImGui.Text($"Themed path at {texturePathThemed}:");
+                if (textureManager.Shared.GetFromGame(texturePathThemed).TryGetWrap(out wrap, out e))
+                    ImGui.Image(wrap.Handle, wrap.Size);
+                else if (e is not null)
+                    ImGui.Text(e.ToString());
             }
+
+            ImGui.EndTooltip();
         }
     }
 
@@ -319,14 +310,15 @@ internal class UldWidget : IDataWindowWidget
         ImGui.SliderInt("FrameData"u8, ref this.selectedFrameData, 0, timeline.FrameData.Length - 1);
         var frameData = timeline.FrameData[this.selectedFrameData];
         ImGui.Text($"FrameInfo: {frameData.StartFrame} -> {frameData.EndFrame}");
-
-        using var indent = ImRaii.PushIndent();
+        ImGui.Indent();
         foreach (var frameDataKeyGroup in frameData.KeyGroups)
         {
             ImGui.Text($"{frameDataKeyGroup.Usage:G} {frameDataKeyGroup.Type:G}");
             foreach (var keyframe in frameDataKeyGroup.Frames)
                 this.DrawTimelineKeyGroupFrame(keyframe);
         }
+
+        ImGui.Unindent();
     }
 
     private void DrawTimelineKeyGroupFrame(IKeyframe frame)
@@ -334,7 +326,8 @@ internal class UldWidget : IDataWindowWidget
         switch (frame)
         {
             case BaseKeyframeData baseKeyframeData:
-                ImGui.Text($"Time: {baseKeyframeData.Time} | Interpolation: {baseKeyframeData.Interpolation} | Acceleration: {baseKeyframeData.Acceleration} | Deceleration: {baseKeyframeData.Deceleration}");
+                ImGui.Text(
+                    $"Time: {baseKeyframeData.Time} | Interpolation: {baseKeyframeData.Interpolation} | Acceleration: {baseKeyframeData.Acceleration} | Deceleration: {baseKeyframeData.Deceleration}");
                 break;
             case Float1Keyframe float1Keyframe:
                 this.DrawTimelineKeyGroupFrame(float1Keyframe.Keyframe);
@@ -349,7 +342,8 @@ internal class UldWidget : IDataWindowWidget
             case Float3Keyframe float3Keyframe:
                 this.DrawTimelineKeyGroupFrame(float3Keyframe.Keyframe);
                 ImGui.SameLine(0, 0);
-                ImGui.Text($" | Value1: {float3Keyframe.Value[0]} | Value2: {float3Keyframe.Value[1]} | Value3: {float3Keyframe.Value[2]}");
+                ImGui.Text(
+                    $" | Value1: {float3Keyframe.Value[0]} | Value2: {float3Keyframe.Value[1]} | Value3: {float3Keyframe.Value[2]}");
                 break;
             case SByte1Keyframe sbyte1Keyframe:
                 this.DrawTimelineKeyGroupFrame(sbyte1Keyframe.Keyframe);
@@ -364,7 +358,8 @@ internal class UldWidget : IDataWindowWidget
             case SByte3Keyframe sbyte3Keyframe:
                 this.DrawTimelineKeyGroupFrame(sbyte3Keyframe.Keyframe);
                 ImGui.SameLine(0, 0);
-                ImGui.Text($" | Value1: {sbyte3Keyframe.Value[0]} | Value2: {sbyte3Keyframe.Value[1]} | Value3: {sbyte3Keyframe.Value[2]}");
+                ImGui.Text(
+                    $" | Value1: {sbyte3Keyframe.Value[0]} | Value2: {sbyte3Keyframe.Value[1]} | Value3: {sbyte3Keyframe.Value[2]}");
                 break;
             case Byte1Keyframe byte1Keyframe:
                 this.DrawTimelineKeyGroupFrame(byte1Keyframe.Keyframe);
@@ -379,7 +374,8 @@ internal class UldWidget : IDataWindowWidget
             case Byte3Keyframe byte3Keyframe:
                 this.DrawTimelineKeyGroupFrame(byte3Keyframe.Keyframe);
                 ImGui.SameLine(0, 0);
-                ImGui.Text($" | Value1: {byte3Keyframe.Value[0]} | Value2: {byte3Keyframe.Value[1]} | Value3: {byte3Keyframe.Value[2]}");
+                ImGui.Text(
+                    $" | Value1: {byte3Keyframe.Value[0]} | Value2: {byte3Keyframe.Value[1]} | Value3: {byte3Keyframe.Value[2]}");
                 break;
             case Short1Keyframe short1Keyframe:
                 this.DrawTimelineKeyGroupFrame(short1Keyframe.Keyframe);
@@ -394,7 +390,8 @@ internal class UldWidget : IDataWindowWidget
             case Short3Keyframe short3Keyframe:
                 this.DrawTimelineKeyGroupFrame(short3Keyframe.Keyframe);
                 ImGui.SameLine(0, 0);
-                ImGui.Text($" | Value1: {short3Keyframe.Value[0]} | Value2: {short3Keyframe.Value[1]} | Value3: {short3Keyframe.Value[2]}");
+                ImGui.Text(
+                    $" | Value1: {short3Keyframe.Value[0]} | Value2: {short3Keyframe.Value[1]} | Value3: {short3Keyframe.Value[2]}");
                 break;
             case UShort1Keyframe ushort1Keyframe:
                 this.DrawTimelineKeyGroupFrame(ushort1Keyframe.Keyframe);
@@ -409,7 +406,8 @@ internal class UldWidget : IDataWindowWidget
             case UShort3Keyframe ushort3Keyframe:
                 this.DrawTimelineKeyGroupFrame(ushort3Keyframe.Keyframe);
                 ImGui.SameLine(0, 0);
-                ImGui.Text($" | Value1: {ushort3Keyframe.Value[0]} | Value2: {ushort3Keyframe.Value[1]} | Value3: {ushort3Keyframe.Value[2]}");
+                ImGui.Text(
+                    $" | Value1: {ushort3Keyframe.Value[0]} | Value2: {ushort3Keyframe.Value[1]} | Value3: {ushort3Keyframe.Value[2]}");
                 break;
             case Int1Keyframe int1Keyframe:
                 this.DrawTimelineKeyGroupFrame(int1Keyframe.Keyframe);
@@ -424,7 +422,8 @@ internal class UldWidget : IDataWindowWidget
             case Int3Keyframe int3Keyframe:
                 this.DrawTimelineKeyGroupFrame(int3Keyframe.Keyframe);
                 ImGui.SameLine(0, 0);
-                ImGui.Text($" | Value1: {int3Keyframe.Value[0]} | Value2: {int3Keyframe.Value[1]} | Value3: {int3Keyframe.Value[2]}");
+                ImGui.Text(
+                    $" | Value1: {int3Keyframe.Value[0]} | Value2: {int3Keyframe.Value[1]} | Value3: {int3Keyframe.Value[2]}");
                 break;
             case UInt1Keyframe uint1Keyframe:
                 this.DrawTimelineKeyGroupFrame(uint1Keyframe.Keyframe);
@@ -439,7 +438,8 @@ internal class UldWidget : IDataWindowWidget
             case UInt3Keyframe uint3Keyframe:
                 this.DrawTimelineKeyGroupFrame(uint3Keyframe.Keyframe);
                 ImGui.SameLine(0, 0);
-                ImGui.Text($" | Value1: {uint3Keyframe.Value[0]} | Value2: {uint3Keyframe.Value[1]} | Value3: {uint3Keyframe.Value[2]}");
+                ImGui.Text(
+                    $" | Value1: {uint3Keyframe.Value[0]} | Value2: {uint3Keyframe.Value[1]} | Value3: {uint3Keyframe.Value[2]}");
                 break;
             case Bool1Keyframe bool1Keyframe:
                 this.DrawTimelineKeyGroupFrame(bool1Keyframe.Keyframe);
@@ -454,22 +454,28 @@ internal class UldWidget : IDataWindowWidget
             case Bool3Keyframe bool3Keyframe:
                 this.DrawTimelineKeyGroupFrame(bool3Keyframe.Keyframe);
                 ImGui.SameLine(0, 0);
-                ImGui.Text($" | Value1: {bool3Keyframe.Value[0]} | Value2: {bool3Keyframe.Value[1]} | Value3: {bool3Keyframe.Value[2]}");
+                ImGui.Text(
+                    $" | Value1: {bool3Keyframe.Value[0]} | Value2: {bool3Keyframe.Value[1]} | Value3: {bool3Keyframe.Value[2]}");
                 break;
             case ColorKeyframe colorKeyframe:
                 this.DrawTimelineKeyGroupFrame(colorKeyframe.Keyframe);
                 ImGui.SameLine(0, 0);
-                ImGui.Text($" | Add: {colorKeyframe.AddRed} {colorKeyframe.AddGreen} {colorKeyframe.AddBlue} | Multiply: {colorKeyframe.MultiplyRed} {colorKeyframe.MultiplyGreen} {colorKeyframe.MultiplyBlue}");
+                ImGui.Text(
+                    $" | Add: {colorKeyframe.AddRed} {colorKeyframe.AddGreen} {colorKeyframe.AddBlue} | Multiply: {colorKeyframe.MultiplyRed} {colorKeyframe.MultiplyGreen} {colorKeyframe.MultiplyBlue}");
                 break;
             case LabelKeyframe labelKeyframe:
                 this.DrawTimelineKeyGroupFrame(labelKeyframe.Keyframe);
                 ImGui.SameLine(0, 0);
-                ImGui.Text($" | LabelCommand: {labelKeyframe.LabelCommand} | JumpId: {labelKeyframe.JumpId} | LabelId: {labelKeyframe.LabelId}");
+                ImGui.Text(
+                    $" | LabelCommand: {labelKeyframe.LabelCommand} | JumpId: {labelKeyframe.JumpId} | LabelId: {labelKeyframe.LabelId}");
                 break;
         }
     }
 
-    private void DrawParts(UldRoot.PartsData partsData, UldRoot.TextureEntry[] textureEntries, TextureManager textureManager)
+    private void DrawParts(
+        UldRoot.PartsData partsData,
+        UldRoot.TextureEntry[] textureEntries,
+        TextureManager textureManager)
     {
         for (var index = 0; index < partsData.Parts.Length; index++)
         {
@@ -535,9 +541,10 @@ internal class UldWidget : IDataWindowWidget
 
             if (ImGui.IsItemHovered())
             {
-                using var tooltip = ImRaii.Tooltip();
+                ImGui.BeginTooltip();
                 ImGui.Text("Click to copy:"u8);
                 ImGui.Text(texturePath);
+                ImGui.EndTooltip();
             }
         }
     }

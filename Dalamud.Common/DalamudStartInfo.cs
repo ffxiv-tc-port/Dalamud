@@ -35,12 +35,6 @@ public record DalamudStartInfo
     public string? ConfigurationPath { get; set; }
 
     /// <summary>
-    /// Gets or sets the directory for temporary files. This directory needs to exist and be writable to the user.
-    /// It should also be predictable and easy for launchers to find.
-    /// </summary>
-    public string? TempDirectory { get; set; }
-
-    /// <summary>
     /// Gets or sets the path of the log files.
     /// </summary>
     public string? LogPath { get; set; }
@@ -63,10 +57,7 @@ public record DalamudStartInfo
     /// <summary>
     /// Gets or sets the language of the game client.
     /// </summary>
-    public ClientLanguage Language => DefaultLanguage;
-    
-    // REGION TODO: 非国际服需要更新此处的默认 Excel 语言
-    public const ClientLanguage DefaultLanguage = ClientLanguage.ChineseSimplified;
+    public ClientLanguage Language { get; set; } = ClientLanguage.ChineseTraditional;
 
     /// <summary>
     /// Gets or sets the underlying platform�Dalamud runs on.

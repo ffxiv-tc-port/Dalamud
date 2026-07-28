@@ -1,12 +1,11 @@
+using System.Runtime.InteropServices;
+
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Hooking;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
-
-using FFXIVClientStructs.FFXIV.Client.Game.Object;
-using FFXIVClientStructs.FFXIV.Client.Network;
 
 namespace Dalamud.Game.DutyState;
 
@@ -16,7 +15,8 @@ namespace Dalamud.Game.DutyState;
 [ServiceManager.EarlyLoadedService]
 internal unsafe class DutyState : IInternalDisposableService, IDutyState
 {
-    private readonly Hook<PacketDispatcher.Delegates.HandleActorControlPacket> handleActorControlPacketHook;
+    private readonly DutyStateAddressResolver address;
+    private readonly Hook<SetupContentDirectNetworkMessageDelegate> contentDirectorNetworkMessageHook;
 
     [ServiceManager.ServiceDependency]
     private readonly Condition condition = Service<Condition>.Get();
@@ -28,17 +28,21 @@ internal unsafe class DutyState : IInternalDisposableService, IDutyState
     private readonly ClientState.ClientState clientState = Service<ClientState.ClientState>.Get();
 
     [ServiceManager.ServiceConstructor]
-    private DutyState()
+    private DutyState(TargetSigScanner sigScanner)
     {
-        this.handleActorControlPacketHook = Hook<PacketDispatcher.Delegates.HandleActorControlPacket>.FromAddress(
-            (nint)PacketDispatcher.MemberFunctionPointers.HandleActorControlPacket,
-            this.HandleActorControlPacketDetour);
+        this.address = new DutyStateAddressResolver();
+        this.address.Setup(sigScanner);
+
+        this.contentDirectorNetworkMessageHook = Hook<SetupContentDirectNetworkMessageDelegate>.FromAddress(this.address.ContentDirectorNetworkMessage, this.ContentDirectorNetworkMessageDetour);
 
         this.framework.Update += this.FrameworkOnUpdateEvent;
         this.clientState.TerritoryChanged += this.TerritoryOnChangedEvent;
 
-        this.handleActorControlPacketHook.Enable();
+        this.contentDirectorNetworkMessageHook.Enable();
     }
+
+    [UnmanagedFunctionPointer(CallingConvention.ThisCall)]
+    private delegate byte SetupContentDirectNetworkMessageDelegate(IntPtr a1, IntPtr a2, ushort* a3);
 
     /// <inheritdoc/>
     public event EventHandler<ushort>? DutyStarted;
@@ -60,16 +64,20 @@ internal unsafe class DutyState : IInternalDisposableService, IDutyState
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
     {
-        this.handleActorControlPacketHook.Dispose();
+        this.contentDirectorNetworkMessageHook.Dispose();
         this.framework.Update -= this.FrameworkOnUpdateEvent;
         this.clientState.TerritoryChanged -= this.TerritoryOnChangedEvent;
     }
 
-    private void HandleActorControlPacketDetour(uint entityId, uint category, uint arg1, uint arg2, uint arg3, uint arg4, uint arg5, uint arg6, uint arg7, uint arg8, GameObjectId targetId, bool isRecorded)
+    private byte ContentDirectorNetworkMessageDetour(IntPtr a1, IntPtr a2, ushort* a3)
     {
+        var category = *a3;
+        var type = *(uint*)(a3 + 4);
+
+        // DirectorUpdate Category
         if (category == 0x6D)
         {
-            switch (arg2)
+            switch (type)
             {
                 // Duty Commenced
                 case 0x4000_0001:
@@ -105,7 +113,7 @@ internal unsafe class DutyState : IInternalDisposableService, IDutyState
             }
         }
 
-        this.handleActorControlPacketHook.Original(entityId, category, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, targetId, isRecorded);
+        return this.contentDirectorNetworkMessageHook.Original(a1, a2, a3);
     }
 
     private void TerritoryOnChangedEvent(ushort territoryId)

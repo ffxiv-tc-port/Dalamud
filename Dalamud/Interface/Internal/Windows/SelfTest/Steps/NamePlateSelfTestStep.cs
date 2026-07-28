@@ -4,7 +4,6 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Gui.NamePlate;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
-using Dalamud.Plugin.SelfTest;
 
 namespace Dalamud.Interface.Internal.Windows.SelfTest.Steps;
 
@@ -36,7 +35,7 @@ internal class NamePlateSelfTestStep : ISelfTestStep
                 namePlateGui.OnNamePlateUpdate += this.OnNamePlateUpdate;
                 namePlateGui.OnDataUpdate += this.OnDataUpdate;
                 namePlateGui.RequestRedraw();
-                this.updateCount = [];
+                this.updateCount = new Dictionary<ulong, int>();
                 this.currentSubStep++;
                 break;
 

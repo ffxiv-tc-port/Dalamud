@@ -9,7 +9,7 @@ namespace Dalamud.Plugin.Services;
 /// <summary>
 /// A class handling many aspects of the in-game UI.
 /// </summary>
-public unsafe interface IGameGui : IDalamudService
+public unsafe interface IGameGui
 {
     /// <summary>
     /// Event which is fired when the game UI hiding is toggled.
@@ -25,12 +25,6 @@ public unsafe interface IGameGui : IDalamudService
     /// Event that is fired when the currently hovered action changes.
     /// </summary>
     public event EventHandler<HoveredAction> HoveredActionChanged;
-
-    /// <summary>
-    /// Fired when the game sets one or more <see cref="AgentUpdateFlag"/> values,
-    /// used by agents to conditionally update their addons.
-    /// </summary>
-    event Action<AgentUpdateFlag> AgentUpdate;
 
     /// <summary>
     /// Gets a value indicating whether the game UI is hidden.

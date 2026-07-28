@@ -19,7 +19,6 @@ using Dalamud.Utility.TerraFxCom;
 
 using Lumina.Data;
 using Lumina.Data.Files;
-using Lumina.Data.Parsing.Tex.Buffers;
 
 using TerraFX.Interop.DirectX;
 using TerraFX.Interop.Windows;
@@ -34,7 +33,7 @@ internal sealed partial class TextureManager
       ITextureSubstitutionProvider,
       ITextureReadbackProvider
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<TextureManager>();
+    private static readonly ModuleLog Log = new(nameof(TextureManager));
 
     [ServiceManager.ServiceDependency]
     private readonly Dalamud dalamud = Service<Dalamud>.Get();
@@ -219,7 +218,7 @@ internal sealed partial class TextureManager
             null,
             _ => Task.FromResult(
                 this.BlameSetName(
-                    this.NoThrottleCreateFromTexFile(file.Header, file.TextureBuffer),
+                    this.NoThrottleCreateFromTexFile(file),
                     debugName ?? $"{nameof(this.CreateFromTexFile)}({ForceNullable(file.FilePath)?.Path})")),
             cancellationToken);
 
@@ -249,7 +248,7 @@ internal sealed partial class TextureManager
             usage = D3D11_USAGE.D3D11_USAGE_DYNAMIC;
         else
             usage = D3D11_USAGE.D3D11_USAGE_DEFAULT;
-
+        
         using var texture = this.device.CreateTexture2D(
             new()
             {
@@ -345,14 +344,14 @@ internal sealed partial class TextureManager
 
     /// <summary>Creates a texture from the given <see cref="TexFile"/>. Skips the load throttler; intended to be used
     /// from implementation of <see cref="SharedImmediateTexture"/>s.</summary>
-    /// <param name="header">Header of a <c>.tex</c> file.</param>
-    /// <param name="buffer">Texture buffer.</param>
+    /// <param name="file">The data.</param>
     /// <returns>The loaded texture.</returns>
-    internal IDalamudTextureWrap NoThrottleCreateFromTexFile(TexFile.TexHeader header, TextureBuffer buffer)
+    internal IDalamudTextureWrap NoThrottleCreateFromTexFile(TexFile file)
     {
         ObjectDisposedException.ThrowIf(this.disposeCts.IsCancellationRequested, this);
 
-        var (dxgiFormat, conversion) = TexFile.GetDxgiFormatFromTextureFormat(header.Format, false);
+        var buffer = file.TextureBuffer;
+        var (dxgiFormat, conversion) = TexFile.GetDxgiFormatFromTextureFormat(file.Header.Format, false);
         if (conversion != TexFile.DxgiFormatConversion.NoConversion ||
             !this.IsDxgiFormatSupported((DXGI_FORMAT)dxgiFormat))
         {
@@ -361,31 +360,34 @@ internal sealed partial class TextureManager
         }
 
         var wrap = this.NoThrottleCreateFromRaw(new(buffer.Width, buffer.Height, dxgiFormat), buffer.RawData);
-        this.BlameSetName(wrap, $"{nameof(this.NoThrottleCreateFromTexFile)}({header.Width} x {header.Height})");
+        this.BlameSetName(wrap, $"{nameof(this.NoThrottleCreateFromTexFile)}({ForceNullable(file.FilePath).Path})");
         return wrap;
+
+        static T? ForceNullable<T>(T s) => s;
     }
 
     /// <summary>Creates a texture from the given <paramref name="fileBytes"/>, trying to interpret it as a
     /// <see cref="TexFile"/>.</summary>
     /// <param name="fileBytes">The file bytes.</param>
     /// <returns>The loaded texture.</returns>
-    internal unsafe IDalamudTextureWrap NoThrottleCreateFromTexFile(ReadOnlySpan<byte> fileBytes)
+    internal IDalamudTextureWrap NoThrottleCreateFromTexFile(ReadOnlySpan<byte> fileBytes)
     {
         ObjectDisposedException.ThrowIf(this.disposeCts.IsCancellationRequested, this);
 
         if (!TexFileExtensions.IsPossiblyTexFile2D(fileBytes))
             throw new InvalidDataException("The file is not a TexFile.");
 
-        TexFile.TexHeader header;
-        TextureBuffer buffer;
-        fixed (byte* p = fileBytes)
-        {
-            var lbr = new LuminaBinaryReader(new UnmanagedMemoryStream(p, fileBytes.Length));
-            header = lbr.ReadStructure<TexFile.TexHeader>();
-            buffer = TextureBuffer.FromStream(header, lbr);
-        }
+        var bytesArray = fileBytes.ToArray();
+        var tf = new TexFile();
+        typeof(TexFile).GetProperty(nameof(tf.Data))!.GetSetMethod(true)!.Invoke(
+            tf,
+            new object?[] { bytesArray });
+        typeof(TexFile).GetProperty(nameof(tf.Reader))!.GetSetMethod(true)!.Invoke(
+            tf,
+            new object?[] { new LuminaBinaryReader(bytesArray) });
+        // Note: FileInfo and FilePath are not used from TexFile; skip it.
 
-        var wrap = this.NoThrottleCreateFromTexFile(header, buffer);
+        var wrap = this.NoThrottleCreateFromTexFile(tf);
         this.BlameSetName(wrap, $"{nameof(this.NoThrottleCreateFromTexFile)}({fileBytes.Length:n0})");
         return wrap;
     }

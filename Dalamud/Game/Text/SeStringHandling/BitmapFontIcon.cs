@@ -784,9 +784,4 @@ public enum BitmapFontIcon : uint
     /// The Cross-World Party Member icon.
     /// </summary>
     CrossWorldPartyMember = 181,
-
-    /// <summary>
-    /// The Event Tutorial icon.
-    /// </summary>
-    EventTutorial = 182,
 }

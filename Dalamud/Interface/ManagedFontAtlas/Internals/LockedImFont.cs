@@ -34,7 +34,8 @@ internal class LockedImFont : ILockedImFont
     /// <inheritdoc/>
     public ILockedImFont NewRef()
     {
-        ObjectDisposedException.ThrowIf(this.owner == null, this);
+        if (this.owner is null)
+            throw new ObjectDisposedException(nameof(LockedImFont));
 
         var newRef = new LockedImFont(this.ImFont, this.owner);
         this.owner.AddRef();

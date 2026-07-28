@@ -5,24 +5,19 @@ namespace Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 /// <summary>
 /// Base class for AddonLifecycle AddonArgTypes.
 /// </summary>
-public class AddonArgs
+public abstract unsafe class AddonArgs
 {
     /// <summary>
     /// Constant string representing the name of an addon that is invalid.
     /// </summary>
     public const string InvalidAddon = "NullAddon";
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AddonArgs"/> class.
-    /// </summary>
-    internal AddonArgs()
-    {
-    }
+    private string? addonName;
 
     /// <summary>
     /// Gets the name of the addon this args referrers to.
     /// </summary>
-    public string AddonName { get; private set; } = InvalidAddon;
+    public string AddonName => this.GetAddonName();
 
     /// <summary>
     /// Gets the pointer to the addons AtkUnitBase.
@@ -30,28 +25,55 @@ public class AddonArgs
     public AtkUnitBasePtr Addon
     {
         get;
-        internal set
-        {
-            field = value;
-
-            if (!this.Addon.IsNull && !string.IsNullOrEmpty(value.Name))
-                this.AddonName = value.Name;
-        }
+        internal set;
     }
 
     /// <summary>
     /// Gets the type of these args.
     /// </summary>
-    public virtual AddonArgsType Type => AddonArgsType.Generic;
+    public abstract AddonArgsType Type { get; }
 
     /// <summary>
-    /// Gets a value indicating whether original is being requested to be skipped.
+    /// Checks if addon name matches the given span of char.
     /// </summary>
-    public bool PreventOriginalRequested { get; internal set; }
+    /// <param name="name">The name to check.</param>
+    /// <returns>Whether it is the case.</returns>
+    internal bool IsAddon(string name)
+    {
+        if (this.Addon.IsNull)
+            return false;
+
+        if (name.Length is 0 or > 32)
+            return false;
+
+        if (string.IsNullOrEmpty(this.Addon.Name))
+            return false;
+
+        return name == this.Addon.Name;
+    }
 
     /// <summary>
-    /// Request that the call to original is skipped.
-    /// Only valid to be called from a Pre event listener not a Post event listener.
+    /// Clears this AddonArgs values.
     /// </summary>
-    public void PreventOriginal() => this.PreventOriginalRequested = true;
+    internal virtual void Clear()
+    {
+        this.addonName = null;
+        this.Addon = 0;
+    }
+
+    /// <summary>
+    /// Helper method for ensuring the name of the addon is valid.
+    /// </summary>
+    /// <returns>The name of the addon for this object. <see cref="InvalidAddon"/> when invalid.</returns>
+    private string GetAddonName()
+    {
+        if (this.Addon.IsNull) return InvalidAddon;
+
+        var name = this.Addon.Name;
+
+        if (string.IsNullOrEmpty(name))
+            return InvalidAddon;
+
+        return this.addonName ??= name;
+    }
 }

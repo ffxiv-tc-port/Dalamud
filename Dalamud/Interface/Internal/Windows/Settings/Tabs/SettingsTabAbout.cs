@@ -5,7 +5,6 @@ using System.Linq;
 using System.Numerics;
 
 using CheapLoc;
-
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Gui;
 using Dalamud.Interface.GameFonts;
@@ -17,13 +16,12 @@ using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Internal;
 using Dalamud.Storage.Assets;
 using Dalamud.Utility;
-
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 
 namespace Dalamud.Interface.Internal.Windows.Settings.Tabs;
 
 [SuppressMessage("StyleCop.CSharp.DocumentationRules", "SA1600:Elements should be documented", Justification = "Internals")]
-internal sealed class SettingsTabAbout : SettingsTab
+public class SettingsTabAbout : SettingsTab
 {
     private const float CreditFps = 60.0f;
     private const string ThankYouText = "Thank you!";
@@ -218,11 +216,9 @@ Contribute at: https://github.com/goatcorp/Dalamud
                             .CreateFontAtlas(nameof(SettingsTabAbout), FontAtlasAutoRebuildMode.Async);
     }
 
+    public override SettingsEntry[] Entries { get; } = { };
+
     public override string Title => Loc.Localize("DalamudAbout", "About");
-
-    public override SettingsOpenKind Kind => SettingsOpenKind.About;
-
-    public override SettingsEntry[] Entries { get; } = [];
 
     /// <inheritdoc/>
     public override unsafe void OnOpen()
@@ -232,7 +228,7 @@ Contribute at: https://github.com/goatcorp/Dalamud
                                                   .Select(plugin => $"{plugin.Manifest.Name} by {plugin.Manifest.Author}\n")
                                                   .Aggregate(string.Empty, (current, next) => $"{current}{next}");
 
-        this.creditsText = string.Format(CreditsTextTempl, typeof(Dalamud).Assembly.GetName().Version, pluginCredits, Versioning.GetGitHashClientStructs());
+        this.creditsText = string.Format(CreditsTextTempl, typeof(Dalamud).Assembly.GetName().Version, pluginCredits, Util.GetGitHashClientStructs());
 
         var gameGui = Service<GameGui>.Get();
         var playerState = PlayerState.Instance();
@@ -298,7 +294,7 @@ Contribute at: https://github.com/goatcorp/Dalamud
 
             var windowX = ImGui.GetWindowSize().X;
 
-            foreach (var creditsLine in this.creditsText.Split(["\r\n", "\r", "\n"], StringSplitOptions.None))
+            foreach (var creditsLine in this.creditsText.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None))
             {
                 var lineLenX = ImGui.CalcTextSize(creditsLine).X;
 

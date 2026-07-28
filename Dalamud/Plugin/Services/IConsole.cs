@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 
 using Dalamud.Console;
 
@@ -8,7 +8,7 @@ namespace Dalamud.Plugin.Services;
 /// Provides functions to register console commands and variables.
 /// </summary>
 [Experimental("Dalamud001")]
-public interface IConsole : IDalamudService
+public interface IConsole
 {
     /// <summary>
     /// Gets this plugin's namespace prefix, derived off its internal name.

@@ -1,7 +1,6 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using Dalamud.Interface.Colors;
-
 using Newtonsoft.Json;
 
 namespace Dalamud.Interface.Style;
@@ -65,8 +64,6 @@ public class DalamudColors
 
     [JsonProperty("s")]
     public Vector4? ParsedGold { get; set; }
-
-    public DalamudColors Clone() => (DalamudColors)this.MemberwiseClone();
 
     public void Apply()
     {

@@ -17,7 +17,7 @@ namespace Dalamud.Plugin.Internal.Types;
 /// </summary>
 internal sealed class LocalDevPlugin : LocalPlugin
 {
-    private static readonly ModuleLog Log = ModuleLog.Create<LocalDevPlugin>();
+    private static readonly ModuleLog Log = new("PLUGIN");
 
     // Ref to Dalamud.Configuration.DevPluginSettings
     private readonly DevPluginSettings devSettings;
@@ -205,7 +205,7 @@ internal sealed class LocalDevPlugin : LocalPlugin
                     }
 
                     await this.ReloadAsync();
-                    notificationManager.AddNotification($"The DevPlugin '{this.Name}' was reloaded successfully.", "Plugin reloaded!", NotificationType.Success);
+                    notificationManager.AddNotification($"The DevPlugin '{this.Name} was reloaded successfully.", "Plugin reloaded!", NotificationType.Success);
                 }
                 catch (Exception ex)
                 {

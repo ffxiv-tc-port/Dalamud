@@ -1,9 +1,9 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 
 using CheapLoc;
-
 using Dalamud.Configuration.Internal;
 using Dalamud.Game;
 using Dalamud.Game.Command;
@@ -11,6 +11,7 @@ using Dalamud.Game.Gui;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Plugin.Internal;
 using Dalamud.Utility;
+using Serilog;
 
 namespace Dalamud.Interface.Internal;
 
@@ -81,6 +82,11 @@ internal class DalamudCommands : IServiceType
         commandManager.AddHandler("/xlstats", new CommandInfo(this.OnTogglePluginStats)
         {
             HelpMessage = Loc.Localize("DalamudPluginStats", "Draw plugin statistics window"),
+        });
+
+        commandManager.AddHandler("/xlbranch", new CommandInfo(this.OnToggleBranchSwitcher)
+        {
+            HelpMessage = Loc.Localize("DalamudBranchSwitcher", "Open the branch switcher"),
         });
 
         commandManager.AddHandler("/xldata", new CommandInfo(this.OnDebugDrawDataMenu)
@@ -202,7 +208,7 @@ internal class DalamudCommands : IServiceType
         var chatGui = Service<ChatGui>.Get();
         var configuration = Service<DalamudConfiguration>.Get();
 
-        configuration.BadWords ??= [];
+        configuration.BadWords ??= new List<string>();
 
         if (configuration.BadWords.Count == 0)
         {
@@ -221,7 +227,7 @@ internal class DalamudCommands : IServiceType
         var chatGui = Service<ChatGui>.Get();
         var configuration = Service<DalamudConfiguration>.Get();
 
-        configuration.BadWords ??= [];
+        configuration.BadWords ??= new List<string>();
 
         configuration.BadWords.RemoveAll(x => x == arguments);
 
@@ -273,6 +279,11 @@ internal class DalamudCommands : IServiceType
         Service<DalamudInterface>.Get().TogglePluginStatsWindow();
     }
 
+    private void OnToggleBranchSwitcher(string command, string arguments)
+    {
+        Service<DalamudInterface>.Get().ToggleBranchSwitcher();
+    }
+
     private void OnDebugDrawDataMenu(string command, string arguments)
     {
         var dalamudInterface = Service<DalamudInterface>.Get();
@@ -294,12 +305,12 @@ internal class DalamudCommands : IServiceType
 
         chatGui.Print(new SeStringBuilder()
                       .AddItalics("Dalamud:")
-                      .AddText($" {Versioning.GetScmVersion()}")
+                      .AddText($" {Util.GetScmVersion()}")
                       .Build());
 
         chatGui.Print(new SeStringBuilder()
                       .AddItalics("FFXIVCS:")
-                      .AddText($" {Versioning.GetGitHashClientStructs()}")
+                      .AddText($" {Util.GetGitHashClientStructs()}")
                       .Build());
     }
 
@@ -315,7 +326,7 @@ internal class DalamudCommands : IServiceType
         var configuration = Service<DalamudConfiguration>.Get();
         var localization = Service<Localization>.Get();
 
-        if (Localization.ApplicableLangCodes.Contains(arguments.ToLowerInvariant()) || arguments.Equals("en", StringComparison.InvariantCultureIgnoreCase))
+        if (Localization.ApplicableLangCodes.Contains(arguments.ToLowerInvariant()) || arguments.ToLowerInvariant() == "en")
         {
             localization.SetupWithLangCode(arguments.ToLowerInvariant());
             configuration.LanguageOverride = arguments.ToLowerInvariant();

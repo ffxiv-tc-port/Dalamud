@@ -5,9 +5,7 @@ using Dalamud.Hooking;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
-
 using FFXIVClientStructs.FFXIV.Client.System.Input;
-
 using Serilog;
 
 namespace Dalamud.Game.ClientState.GamePad;
