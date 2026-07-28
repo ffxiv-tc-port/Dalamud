@@ -5,7 +5,10 @@ namespace Dalamud.Plugin.Services;
 /// <summary>
 /// This class handles interacting with game network events.
 /// </summary>
-[Obsolete("Will be removed in a future release. Use packet handler hooks instead.", true)]
+// TC 差異：維持警告級而非錯誤級。ECommons 的 Svc.cs 仍然參照這個介面，
+// 全艦隊 43 個外掛都吃 ECommons，改成錯誤級會讓它們全部編不過。
+// （執行期本來就沒有實作可注入，這個屬性只影響編譯。）
+[Obsolete("Will be removed in a future release. Use packet handler hooks instead.")]
 public interface IGameNetwork : IDalamudService
 {
     // TODO(v9): we shouldn't be passing pointers to the actual data here
