@@ -1,13 +1,13 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Reflection;
+using System.Runtime.Loader;
 using System.Threading.Tasks;
 
 using Dalamud.Configuration;
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.Sanitizer;
-using Dalamud.Game.Text.SeStringHandling;
-using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface;
 using Dalamud.Interface.Internal.Windows.PluginInstaller;
 using Dalamud.Interface.Internal.Windows.Settings;
@@ -15,13 +15,14 @@ using Dalamud.Plugin.Internal.Types.Manifest;
 using Dalamud.Plugin.Ipc;
 using Dalamud.Plugin.Ipc.Exceptions;
 using Dalamud.Plugin.Ipc.Internal;
+using Dalamud.Plugin.Services;
 
 namespace Dalamud.Plugin;
 
 /// <summary>
 /// This interface acts as an interface to various objects needed to interact with Dalamud and the game.
 /// </summary>
-public interface IDalamudPluginInterface
+public interface IDalamudPluginInterface : IServiceProvider
 {
     /// <summary>
     /// Delegate for localization change with two-letter iso lang code.
@@ -178,6 +179,20 @@ public interface IDalamudPluginInterface
     /// </summary>
     /// <returns>Returns false if the DalamudInterface was null.</returns>
     bool OpenDeveloperMenu();
+
+    /// <summary>
+    /// Gets the plugin the given assembly is part of.
+    /// </summary>
+    /// <param name="assembly">The assembly to check.</param>
+    /// <returns>The plugin the given assembly is part of, or null if this is a shared assembly or if this information cannot be determined.</returns>
+    IExposedPlugin? GetPlugin(Assembly assembly);
+
+    /// <summary>
+    /// Gets the plugin that loads in the given context.
+    /// </summary>
+    /// <param name="context">The context to check.</param>
+    /// <returns>The plugin that loads in the given context, or null if this isn't a plugin's context or if this information cannot be determined.</returns>
+    IExposedPlugin? GetPlugin(AssemblyLoadContext context);
 
     /// <inheritdoc cref="DataShare.GetOrCreateData{T}"/>
     T GetOrCreateData<T>(string tag, Func<T> dataGenerator) where T : class;

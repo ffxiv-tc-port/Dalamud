@@ -193,12 +193,4 @@ public enum GameFontFamilyAndSize
     /// </summary>
     [GameFontFamilyAndSize("common/font/TrumpGothic_68.fdt", "common/font/font{0}.tex", -3)]
     TrumpGothic68,
-
-    /// <summary>
-    /// AXIS (12pt)
-    ///
-    /// Contains Japanese characters in addition to Latin characters. Used in game for the whole UI.
-    /// </summary>
-    [GameFontFamilyAndSize("common/font/AXIS_12.fdt", "common/font/font{0}.tex", -1)]
-    AxisIME,
 }

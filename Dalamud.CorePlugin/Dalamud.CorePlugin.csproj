@@ -26,8 +26,8 @@
 
     <ItemGroup>
         <ProjectReference Include="$(SolutionDir)\lib\Lumina\src\Lumina\Lumina.csproj" />
-        <PackageReference Include="Newtonsoft.Json" Version="$(NewtonsoftJsonVersion)" />
-        <PackageReference Include="StyleCop.Analyzers" Version="1.2.0-beta.333">
+        <PackageReference Include="Newtonsoft.Json" />
+        <PackageReference Include="StyleCop.Analyzers">
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>

@@ -11,7 +11,7 @@ using Dalamud.Interface.Utility.Raii;
 namespace Dalamud.Interface.Internal.Windows.Settings.Widgets;
 
 [SuppressMessage("StyleCop.CSharp.DocumentationRules", "SA1600:Elements should be documented", Justification = "Internals")]
-public class ProxySettingsEntry : SettingsEntry
+internal class ProxySettingsEntry : SettingsEntry
 {
     private bool useManualProxy;
     private string proxyProtocol = string.Empty;

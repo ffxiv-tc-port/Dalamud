@@ -1,12 +1,12 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 
 using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Interface.Colors;
-using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
+using Dalamud.Utility.Internal;
 
 namespace Dalamud.Interface.Internal.Windows.Settings.Widgets;
 
@@ -20,8 +20,8 @@ internal sealed class SettingsEntry<T> : SettingsEntry
     private object? valueBacking;
 
     public SettingsEntry(
-        string name,
-        string description,
+        LazyLoc name,
+        LazyLoc description,
         LoadSettingDelegate load,
         SaveSettingDelegate save,
         Action<T?>? change = null,
@@ -39,13 +39,33 @@ internal sealed class SettingsEntry<T> : SettingsEntry
         this.CheckVisibility = visibility;
     }
 
+    public SettingsEntry(
+        string              name,
+        string              description,
+        LoadSettingDelegate load,
+        SaveSettingDelegate save,
+        Action<T?>?         change     = null,
+        Func<T?, string?>?  warning    = null,
+        Func<T?, string?>?  validity   = null,
+        Func<bool>?         visibility = null)
+    {
+        this.load            = load;
+        this.save            = save;
+        this.change          = change;
+        this.Name            = new(name, name);
+        this.Description     = new(description, description);
+        this.CheckWarning    = warning;
+        this.CheckValidity   = validity;
+        this.CheckVisibility = visibility;
+    }
+
     public delegate T? LoadSettingDelegate(DalamudConfiguration config);
 
     public delegate void SaveSettingDelegate(T? value, DalamudConfiguration config);
 
     public T? Value
     {
-        get => this.valueBacking == default ? default : (T)this.valueBacking;
+        get => this.valueBacking == null ? default : (T)this.valueBacking;
         set
         {
             if (Equals(value, this.valueBacking))
@@ -55,7 +75,7 @@ internal sealed class SettingsEntry<T> : SettingsEntry
         }
     }
 
-    public string Description { get; }
+    public LazyLoc Description { get; }
 
     public Action<SettingsEntry<T>>? CustomDraw { get; init; }
 
@@ -69,7 +89,10 @@ internal sealed class SettingsEntry<T> : SettingsEntry
 
     public override void Draw()
     {
-        Debug.Assert(this.Name != null, "this.Name != null");
+        var name = this.Name.ToString();
+        var description = this.Description.ToString();
+
+        Debug.Assert(!string.IsNullOrWhiteSpace(name), "Name is empty");
 
         var type = typeof(T);
 
@@ -79,7 +102,7 @@ internal sealed class SettingsEntry<T> : SettingsEntry
         }
         else if (type == typeof(DirectoryInfo))
         {
-            ImGui.TextWrapped(this.Name);
+            ImGui.TextWrapped(name);
 
             var value = this.Value as DirectoryInfo;
             var nativeBuffer = value?.FullName ?? string.Empty;
@@ -91,7 +114,7 @@ internal sealed class SettingsEntry<T> : SettingsEntry
         }
         else if (type == typeof(string))
         {
-            ImGui.TextWrapped(this.Name);
+            ImGui.TextWrapped(name);
 
             var nativeBuffer = this.Value as string ?? string.Empty;
 
@@ -104,16 +127,19 @@ internal sealed class SettingsEntry<T> : SettingsEntry
         {
             var nativeValue = this.Value as bool? ?? false;
 
-            if (ImGui.Checkbox($"{this.Name}###{this.Id.ToString()}", ref nativeValue))
+            if (ImGui.Checkbox($"{name}###{this.Id.ToString()}", ref nativeValue))
             {
                 this.valueBacking = nativeValue;
                 this.change?.Invoke(this.Value);
             }
         }
 
-        using (ImRaii.PushColor(ImGuiCol.Text, ImGuiColors.DalamudGrey))
+        if (!string.IsNullOrWhiteSpace(description))
         {
-            ImGui.TextWrapped(this.Description);
+            using (ImRaii.PushColor(ImGuiCol.Text, ImGuiColors.DalamudGrey))
+            {
+                ImGui.TextWrapped(this.Description);
+            }
         }
 
         if (this.CheckValidity != null)

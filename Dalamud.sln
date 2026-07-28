@@ -1,4 +1,4 @@
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.1.32319.34
 MinimumVisualStudioVersion = 10.0.40219.1
@@ -11,6 +11,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		targets\Dalamud.Plugin.targets = targets\Dalamud.Plugin.targets
 		tools\dalamud.ruleset = tools\dalamud.ruleset
 		Directory.Build.props = Directory.Build.props
+		Directory.Packages.props = Directory.Packages.props
 	EndProjectSection
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "build", "build\build.csproj", "{94E5B016-02B1-459B-97D9-E783F28764B2}"
@@ -77,6 +78,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ImGuiScene", "imgui\ImGuiScene\ImGuiScene.csproj", "{66753AC7-0029-4373-9CC4-7760B1F46141}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lumina", "lib\Lumina\src\Lumina\Lumina.csproj", "{9ECBBDED-79BD-42BC-956B-661724EA2197}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "CN", "CN", "{9723B3BA-11AF-4C54-8EB5-428C1B65A4C6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -203,6 +206,8 @@ Global
 		{9C70BD06-D52C-425E-9C14-5D66BC6046EF} = {A217B3DF-607A-4EFB-B107-3C4809348043}
 		{4702A911-2513-478C-A434-2776393FDE77} = {A217B3DF-607A-4EFB-B107-3C4809348043}
 		{66753AC7-0029-4373-9CC4-7760B1F46141} = {A217B3DF-607A-4EFB-B107-3C4809348043}
+		{98452E69-C90D-4893-8B0E-CAA0AE86B176} = {9723B3BA-11AF-4C54-8EB5-428C1B65A4C6}
+		{9ECBBDED-79BD-42BC-956B-661724EA2197} = {9723B3BA-11AF-4C54-8EB5-428C1B65A4C6}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {79B65AC9-C940-410E-AB61-7EA7E12C7599}

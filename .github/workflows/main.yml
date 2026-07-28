@@ -69,6 +69,7 @@ jobs:
       - uses: actions/setup-dotnet@v3
         with:
           dotnet-version: '9.0.200'
+          
       - name: Define VERSION
         run: |
           # 包含生成的 TAG
@@ -81,8 +82,10 @@ jobs:
           ($env:BRANCH) >> VERSION
           ($env:COMMIT) >> VERSION
           ($env:TAG) >> VERSION
+          
       - name: Build and Test Dalamud
         run: .\build.ps1 ci
+        
       - name: Create hashlist
         run: .\CreateHashList.ps1 .\bin\Release
 

@@ -8,6 +8,7 @@ using Dalamud.Configuration.Internal;
 using Dalamud.Data;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.Config;
+using Dalamud.Game.Player;
 using Dalamud.Game.Text.Evaluator.Internal;
 using Dalamud.Game.Text.Noun;
 using Dalamud.Game.Text.Noun.Enums;
@@ -35,7 +36,6 @@ using Lumina.Text.Payloads;
 using Lumina.Text.ReadOnly;
 
 using AddonSheet = Lumina.Excel.Sheets.Addon;
-using PlayerState = FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState;
 using StatusSheet = Lumina.Excel.Sheets.Status;
 
 namespace Dalamud.Game.Text.Evaluator;
@@ -67,6 +67,9 @@ internal class SeStringEvaluator : IServiceType, ISeStringEvaluator
 
     [ServiceManager.ServiceDependency]
     private readonly SheetRedirectResolver sheetRedirectResolver = Service<SheetRedirectResolver>.Get();
+
+    [ServiceManager.ServiceDependency]
+    private readonly PlayerState playerState = Service<PlayerState>.Get();
 
     private readonly ConcurrentDictionary<StringCacheKey<ActionKind>, string> actStrCache = [];
     private readonly ConcurrentDictionary<StringCacheKey<ObjectKind>, string> objStrCache = [];
@@ -564,7 +567,7 @@ internal class SeStringEvaluator : IServiceType, ISeStringEvaluator
             return false;
 
         // the game uses LocalPlayer here, but using PlayerState seems more safe.
-        return this.ResolveStringExpression(in context, PlayerState.Instance()->EntityId == entityId ? eTrue : eFalse);
+        return this.ResolveStringExpression(in context, this.playerState.EntityId == entityId ? eTrue : eFalse);
     }
 
     private bool TryResolveColor(in SeStringContext context, in ReadOnlySePayloadSpan payload)
@@ -1629,23 +1632,63 @@ internal class SeStringEvaluator : IServiceType, ISeStringEvaluator
             return true;
 
         var isNoun = false;
-        var col = 0;
 
-        if (ranges.StartsWith("noun"))
-        {
-            isNoun = true;
-        }
-        else if (ranges.StartsWith("col"))
-        {
-            var colRangeEnd = ranges.IndexOf(',');
-            if (colRangeEnd == -1)
-                colRangeEnd = ranges.Length;
+        var colIndex = 0;
+        Span<int> cols = stackalloc int[8];
+        cols.Clear();
+        var hasRanges = false;
+        var isInRange = false;
 
-            col = int.Parse(ranges[4..colRangeEnd]);
-        }
-        else if (ranges.StartsWith("tail"))
+        while (!string.IsNullOrWhiteSpace(ranges))
         {
-            // couldn't find any, so we don't handle them :p
+            // find the end of the current entry
+            var entryEnd = ranges.IndexOf(',');
+            if (entryEnd == -1)
+                entryEnd = ranges.Length;
+
+            var entry = ranges.AsSpan(0, entryEnd);
+
+            if (ranges.StartsWith("noun", StringComparison.Ordinal))
+            {
+                isNoun = true;
+            }
+            else if (ranges.StartsWith("col", StringComparison.Ordinal) && colIndex < cols.Length)
+            {
+                cols[colIndex++] = int.Parse(entry[4..]);
+            }
+            else if (ranges.StartsWith("tail", StringComparison.Ordinal))
+            {
+                // currently not supported, since there are no known uses
+                context.Builder.Append(payload);
+                return false;
+            }
+            else
+            {
+                var dash = entry.IndexOf('-');
+
+                hasRanges |= true;
+
+                if (dash == -1)
+                {
+                    isInRange |= int.Parse(entry) == rowId;
+                }
+                else
+                {
+                    isInRange |= rowId >= int.Parse(entry[..dash])
+                        && rowId <= int.Parse(entry[(dash + 1)..]);
+                }
+            }
+
+            // if it's the end of the string, we're done
+            if (entryEnd == ranges.Length)
+                break;
+
+            // else, move to the next entry
+            ranges = ranges[(entryEnd + 1)..].TrimStart();
+        }
+
+        if (hasRanges && !isInRange)
+        {
             context.Builder.Append(payload);
             return false;
         }
@@ -1663,7 +1706,23 @@ internal class SeStringEvaluator : IServiceType, ISeStringEvaluator
         }
         else if (this.dataManager.GetExcelSheet<RawRow>(context.Language, sheetName).TryGetRow(rowId, out var row))
         {
-            context.Builder.Append(row.ReadStringColumn(col));
+            if (colIndex == 0)
+            {
+                context.Builder.Append(row.ReadStringColumn(0));
+                return true;
+            }
+            else
+            {
+                for (var i = 0; i < colIndex; i++)
+                {
+                    var text = row.ReadStringColumn(cols[i]);
+                    if (!text.IsEmpty)
+                    {
+                        context.Builder.Append(text);
+                        break;
+                    }
+                }
+            }
         }
 
         return true;
@@ -2007,7 +2066,7 @@ internal class SeStringEvaluator : IServiceType, ISeStringEvaluator
                     value = (uint)MacroDecoder.GetMacroTime()->tm_mday;
                     return true;
                 case ExpressionType.Weekday:
-                    value = (uint)MacroDecoder.GetMacroTime()->tm_wday;
+                    value = (uint)MacroDecoder.GetMacroTime()->tm_wday + 1;
                     return true;
                 case ExpressionType.Month:
                     value = (uint)MacroDecoder.GetMacroTime()->tm_mon + 1;

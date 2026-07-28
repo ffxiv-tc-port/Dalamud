@@ -23,7 +23,9 @@ public static class ClientLanguageExtensions
             ClientLanguage.French             => Language.French,
             ClientLanguage.ChineseSimplified  => Language.ChineseSimplified,
             ClientLanguage.ChineseTraditional => Language.ChineseTraditional,
-            _                                 => Language.ChineseTraditional,
+            ClientLanguage.Korean             => Language.Korean,
+            ClientLanguage.TraditionalChinese => Language.TraditionalChinese,
+            _                                 => throw new ArgumentOutOfRangeException(nameof(language)),
         };
     }
 
@@ -42,8 +44,10 @@ public static class ClientLanguageExtensions
             ClientLanguage.German             => "de",
             ClientLanguage.French             => "fr",
             ClientLanguage.ChineseSimplified  => "chs",
-            ClientLanguage.ChineseTraditional => "tc",
-            _                                 => "tc",
+            ClientLanguage.ChineseTraditional => "cht",
+            ClientLanguage.Korean             => "ko",
+            ClientLanguage.TraditionalChinese => "tc",
+            _                                 => throw new ArgumentOutOfRangeException(nameof(value)),
         };
     }
 
@@ -62,8 +66,10 @@ public static class ClientLanguageExtensions
             "de"  => ClientLanguage.German,
             "fr"  => ClientLanguage.French,
             "chs" => ClientLanguage.ChineseSimplified,
-            "tc" => ClientLanguage.ChineseTraditional,
-            _     => ClientLanguage.ChineseTraditional,
+            "cht" => ClientLanguage.ChineseTraditional,
+            "ko"  => ClientLanguage.Korean,
+            "tc"  => ClientLanguage.TraditionalChinese,
+            _     => throw new ArgumentOutOfRangeException(nameof(value)),
         };
     }
 }
