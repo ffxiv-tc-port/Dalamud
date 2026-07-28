@@ -1,7 +1,9 @@
 using System.IO;
 
 using Dalamud.Utility;
+
 using Newtonsoft.Json;
+
 using Serilog;
 
 namespace Dalamud.Plugin.Internal.Types.Manifest;
@@ -38,7 +40,7 @@ internal record LocalPluginManifest : PluginManifest, ILocalPluginManifest
     /// Gets a value indicating whether this manifest is associated with a plugin that was installed from a third party
     /// repo.
     /// </summary>
-    public bool IsThirdParty => true;
+    public bool IsThirdParty => !this.InstalledFromUrl.IsNullOrEmpty() && this.InstalledFromUrl != SpecialPluginSource.MainRepo;
 
     /// <summary>
     /// Gets the effective version of this plugin.

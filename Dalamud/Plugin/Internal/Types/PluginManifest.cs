@@ -2,6 +2,7 @@ using System.Collections.Generic;
 
 using Dalamud.Common.Game;
 using Dalamud.Plugin.Internal.Types.Manifest;
+
 using Newtonsoft.Json;
 
 namespace Dalamud.Plugin.Internal.Types;
@@ -160,4 +161,11 @@ internal record PluginManifest : IPluginManifest
     /// <inheritdoc/>
     [JsonProperty("_Dip17Channel")]
     public string? Dip17Channel { get; init; }
+
+    /// <inheritdoc/>
+    [JsonIgnore]
+    public bool IsAvailableForTesting
+        => this.TestingAssemblyVersion != null &&
+           this.TestingAssemblyVersion > this.AssemblyVersion &&
+           this.TestingDalamudApiLevel == PluginManager.DalamudApiLevel;
 }

@@ -1,4 +1,4 @@
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.1.32319.34
 MinimumVisualStudioVersion = 10.0.40219.1
@@ -7,10 +7,9 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		.editorconfig = .editorconfig
 		.gitignore = .gitignore
 		tools\BannedSymbols.txt = tools\BannedSymbols.txt
-		targets\Dalamud.Plugin.Bootstrap.targets = targets\Dalamud.Plugin.Bootstrap.targets
-		targets\Dalamud.Plugin.targets = targets\Dalamud.Plugin.targets
 		tools\dalamud.ruleset = tools\dalamud.ruleset
 		Directory.Build.props = Directory.Build.props
+		Directory.Packages.props = Directory.Packages.props
 	EndProjectSection
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "build", "build\build.csproj", "{94E5B016-02B1-459B-97D9-E783F28764B2}"
@@ -25,8 +24,6 @@ EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Dalamud.Boot", "Dalamud.Boot\Dalamud.Boot.vcxproj", "{55198DC3-A03D-408E-A8EB-2077780C8576}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Dalamud.Injector", "Dalamud.Injector\Dalamud.Injector.csproj", "{5B832F73-5F54-4ADC-870F-D0095EF72C9A}"
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Dalamud.Injector.Boot", "Dalamud.Injector.Boot\Dalamud.Injector.Boot.vcxproj", "{8874326B-E755-4D13-90B4-59AB263A3E6B}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Dalamud.Test", "Dalamud.Test\Dalamud.Test.csproj", "{C8004563-1806-4329-844F-0EF6274291FC}"
 EndProject
@@ -49,8 +46,6 @@ EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "InteropGenerator.Runtime", "lib\FFXIVClientStructs\InteropGenerator.Runtime\InteropGenerator.Runtime.csproj", "{A6AA1C3F-9470-4922-9D3F-D4549657AB22}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "FfxivArgLauncher", "lib\FfxivArgLauncher\FfxivArgLauncher.csproj", "{98452E69-C90D-4893-8B0E-CAA0AE86B176}"
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Injector", "Injector", "{19775C83-7117-4A5F-AA00-18889F46A490}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Utilities", "Utilities", "{8F079208-C227-4D96-9427-2BEBE0003944}"
 EndProject
@@ -78,6 +73,21 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ImGuiScene", "imgui\ImGuiSc
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lumina", "lib\Lumina\src\Lumina\Lumina.csproj", "{9ECBBDED-79BD-42BC-956B-661724EA2197}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "CN", "CN", "{9723B3BA-11AF-4C54-8EB5-428C1B65A4C6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lumina.Excel", "lib\Lumina.Excel\src\Lumina.Excel\Lumina.Excel.csproj", "{12DA895C-C064-4759-A278-8CDE9F49BFCA}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Source Generators", "Source Generators", "{3AB9894A-F1AA-4DC4-8FF2-6DCDB170F56E}"
+	ProjectSection(SolutionItems) = preProject
+		generators\Directory.Build.props = generators\Directory.Build.props
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Dalamud.EnumGenerator", "generators\Dalamud.EnumGenerator\Dalamud.EnumGenerator\Dalamud.EnumGenerator.csproj", "{C25BBEB1-CF8A-4833-8F24-426EF16D15BA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Dalamud.EnumGenerator.Sample", "generators\Dalamud.EnumGenerator\Dalamud.EnumGenerator.Sample\Dalamud.EnumGenerator.Sample.csproj", "{464909DE-F2E2-40C7-9885-45FC979963EC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Dalamud.EnumGenerator.Tests", "generators\Dalamud.EnumGenerator\Dalamud.EnumGenerator.Tests\Dalamud.EnumGenerator.Tests.csproj", "{D14008C8-9AA9-42EF-8015-A127ADE9D5E1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -100,10 +110,6 @@ Global
 		{5B832F73-5F54-4ADC-870F-D0095EF72C9A}.Debug|Any CPU.Build.0 = Debug|x64
 		{5B832F73-5F54-4ADC-870F-D0095EF72C9A}.Release|Any CPU.ActiveCfg = Release|x64
 		{5B832F73-5F54-4ADC-870F-D0095EF72C9A}.Release|Any CPU.Build.0 = Release|x64
-		{8874326B-E755-4D13-90B4-59AB263A3E6B}.Debug|Any CPU.ActiveCfg = Debug|x64
-		{8874326B-E755-4D13-90B4-59AB263A3E6B}.Debug|Any CPU.Build.0 = Debug|x64
-		{8874326B-E755-4D13-90B4-59AB263A3E6B}.Release|Any CPU.ActiveCfg = Release|x64
-		{8874326B-E755-4D13-90B4-59AB263A3E6B}.Release|Any CPU.Build.0 = Release|x64
 		{C8004563-1806-4329-844F-0EF6274291FC}.Debug|Any CPU.ActiveCfg = Debug|x64
 		{C8004563-1806-4329-844F-0EF6274291FC}.Debug|Any CPU.Build.0 = Debug|x64
 		{C8004563-1806-4329-844F-0EF6274291FC}.Release|Any CPU.ActiveCfg = Release|x64
@@ -180,13 +186,27 @@ Global
 		{9ECBBDED-79BD-42BC-956B-661724EA2197}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9ECBBDED-79BD-42BC-956B-661724EA2197}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9ECBBDED-79BD-42BC-956B-661724EA2197}.Release|Any CPU.Build.0 = Release|Any CPU
+		{12DA895C-C064-4759-A278-8CDE9F49BFCA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{12DA895C-C064-4759-A278-8CDE9F49BFCA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{12DA895C-C064-4759-A278-8CDE9F49BFCA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{12DA895C-C064-4759-A278-8CDE9F49BFCA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C25BBEB1-CF8A-4833-8F24-426EF16D15BA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C25BBEB1-CF8A-4833-8F24-426EF16D15BA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C25BBEB1-CF8A-4833-8F24-426EF16D15BA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C25BBEB1-CF8A-4833-8F24-426EF16D15BA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{464909DE-F2E2-40C7-9885-45FC979963EC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{464909DE-F2E2-40C7-9885-45FC979963EC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{464909DE-F2E2-40C7-9885-45FC979963EC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{464909DE-F2E2-40C7-9885-45FC979963EC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D14008C8-9AA9-42EF-8015-A127ADE9D5E1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D14008C8-9AA9-42EF-8015-A127ADE9D5E1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D14008C8-9AA9-42EF-8015-A127ADE9D5E1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D14008C8-9AA9-42EF-8015-A127ADE9D5E1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{5B832F73-5F54-4ADC-870F-D0095EF72C9A} = {19775C83-7117-4A5F-AA00-18889F46A490}
-		{8874326B-E755-4D13-90B4-59AB263A3E6B} = {19775C83-7117-4A5F-AA00-18889F46A490}
 		{4AFDB34A-7467-4D41-B067-53BC4101D9D0} = {8F079208-C227-4D96-9427-2BEBE0003944}
 		{C9B87BD7-AF49-41C3-91F1-D550ADEB7833} = {8BBACF2D-7AB8-4610-A115-0E363D35C291}
 		{E0D51896-604F-4B40-8CFE-51941607B3A1} = {8BBACF2D-7AB8-4610-A115-0E363D35C291}
@@ -203,6 +223,12 @@ Global
 		{9C70BD06-D52C-425E-9C14-5D66BC6046EF} = {A217B3DF-607A-4EFB-B107-3C4809348043}
 		{4702A911-2513-478C-A434-2776393FDE77} = {A217B3DF-607A-4EFB-B107-3C4809348043}
 		{66753AC7-0029-4373-9CC4-7760B1F46141} = {A217B3DF-607A-4EFB-B107-3C4809348043}
+		{98452E69-C90D-4893-8B0E-CAA0AE86B176} = {9723B3BA-11AF-4C54-8EB5-428C1B65A4C6}
+		{9ECBBDED-79BD-42BC-956B-661724EA2197} = {9723B3BA-11AF-4C54-8EB5-428C1B65A4C6}
+		{12DA895C-C064-4759-A278-8CDE9F49BFCA} = {9723B3BA-11AF-4C54-8EB5-428C1B65A4C6}
+		{C25BBEB1-CF8A-4833-8F24-426EF16D15BA} = {3AB9894A-F1AA-4DC4-8FF2-6DCDB170F56E}
+		{464909DE-F2E2-40C7-9885-45FC979963EC} = {3AB9894A-F1AA-4DC4-8FF2-6DCDB170F56E}
+		{D14008C8-9AA9-42EF-8015-A127ADE9D5E1} = {3AB9894A-F1AA-4DC4-8FF2-6DCDB170F56E}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {79B65AC9-C940-410E-AB61-7EA7E12C7599}

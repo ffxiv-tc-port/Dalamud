@@ -1,13 +1,13 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Reflection;
+using System.Runtime.Loader;
 using System.Threading.Tasks;
 
 using Dalamud.Configuration;
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.Sanitizer;
-using Dalamud.Game.Text.SeStringHandling;
-using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface;
 using Dalamud.Interface.Internal.Windows.PluginInstaller;
 using Dalamud.Interface.Internal.Windows.Settings;
@@ -15,13 +15,14 @@ using Dalamud.Plugin.Internal.Types.Manifest;
 using Dalamud.Plugin.Ipc;
 using Dalamud.Plugin.Ipc.Exceptions;
 using Dalamud.Plugin.Ipc.Internal;
+using Dalamud.Plugin.VersionInfo;
 
 namespace Dalamud.Plugin;
 
 /// <summary>
 /// This interface acts as an interface to various objects needed to interact with Dalamud and the game.
 /// </summary>
-public interface IDalamudPluginInterface
+public interface IDalamudPluginInterface : IServiceProvider
 {
     /// <summary>
     /// Delegate for localization change with two-letter iso lang code.
@@ -88,6 +89,11 @@ public interface IDalamudPluginInterface
     bool IsTesting { get; }
 
     /// <summary>
+    /// Gets a value indicating whether this plugin's load status is controlled by a profile/collection.
+    /// </summary>
+    bool IsInProfile { get; }
+
+    /// <summary>
     /// Gets the time that this plugin was loaded.
     /// </summary>
     DateTime LoadTime { get; }
@@ -138,6 +144,13 @@ public interface IDalamudPluginInterface
     bool IsDebugging { get; }
 
     /// <summary>
+    /// Gets a value indicating whether the user wants to allow seasonal events, such as April Fools, to be to run.
+    /// Certain users may not wish to be affected by these and may disable them globally.
+    /// We recommend that plugins check this value before running any seasonal event code, and disable or hide such features if this is false.
+    /// </summary>
+    bool AllowSeasonalEvents { get; }
+
+    /// <summary>
     /// Gets the current UI language in two-letter iso format.
     /// </summary>
     string UiLanguage { get; }
@@ -178,6 +191,26 @@ public interface IDalamudPluginInterface
     /// </summary>
     /// <returns>Returns false if the DalamudInterface was null.</returns>
     bool OpenDeveloperMenu();
+
+    /// <summary>
+    /// Gets the plugin the given assembly is part of.
+    /// </summary>
+    /// <param name="assembly">The assembly to check.</param>
+    /// <returns>The plugin the given assembly is part of, or null if this is a shared assembly or if this information cannot be determined.</returns>
+    IExposedPlugin? GetPlugin(Assembly assembly);
+
+    /// <summary>
+    /// Gets the plugin that loads in the given context.
+    /// </summary>
+    /// <param name="context">The context to check.</param>
+    /// <returns>The plugin that loads in the given context, or null if this isn't a plugin's context or if this information cannot be determined.</returns>
+    IExposedPlugin? GetPlugin(AssemblyLoadContext context);
+
+    /// <summary>
+    /// Gets information about the version of Dalamud this plugin is loaded into.
+    /// </summary>
+    /// <returns>Class containing version information.</returns>
+    IDalamudVersionInfo GetDalamudVersion();
 
     /// <inheritdoc cref="DataShare.GetOrCreateData{T}"/>
     T GetOrCreateData<T>(string tag, Func<T> dataGenerator) where T : class;
@@ -311,4 +344,12 @@ public interface IDalamudPluginInterface
     /// <param name="scopedObjects">Objects to inject additionally.</param>
     /// <returns>A <see cref="ValueTask"/> representing the status of the operation.</returns>
     Task InjectAsync(object instance, params object[] scopedObjects);
+
+    /// <summary>
+    /// Check for updates for this plugin, returning information about the latest version if available.
+    /// Does not actually re-request data from the remote repository, but will wait for a pending reload if one is in progress.
+    /// Reloads happen at periodic intervals (10 minutes) so data will stay relatively fresh.
+    /// </summary>
+    /// <returns>A record containing details about the update, or null if no update is available.</returns>
+    Task<PluginUpdate?> CheckForUpdateAsync();
 }

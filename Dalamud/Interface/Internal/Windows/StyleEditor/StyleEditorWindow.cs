@@ -1,9 +1,9 @@
-using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
 
 using CheapLoc;
+
 using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Interface.Colors;
@@ -12,6 +12,7 @@ using Dalamud.Interface.Style;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Windowing;
 using Dalamud.Utility;
+
 using Serilog;
 
 namespace Dalamud.Interface.Internal.Windows.StyleEditor;
@@ -50,7 +51,7 @@ public class StyleEditorWindow : Window
         this.didSave = false;
 
         var config = Service<DalamudConfiguration>.Get();
-        config.SavedStyles ??= new List<StyleModel>();
+        config.SavedStyles ??= [];
         this.currentSel = config.SavedStyles.FindIndex(x => x.Name == config.ChosenStyle);
 
         this.initialStyle = config.ChosenStyle;
@@ -81,8 +82,11 @@ public class StyleEditorWindow : Window
         var config = Service<DalamudConfiguration>.Get();
         var renameModalTitle = Loc.Localize("RenameStyleModalTitle", "Rename Style");
 
+        if (currentSel >= config.SavedStyles.Count)
+            currentSel = 0;
+        
         var workStyle = config.SavedStyles[this.currentSel];
-        workStyle.BuiltInColors ??= StyleModelV1.DalamudStandard.BuiltInColors;
+        workStyle.BuiltInColors ??= StyleModelV1.DalamudStandard.BuiltInColors.Clone();
 
         var isBuiltinStyle = this.currentSel < 2;
         var appliedThisFrame = false;
@@ -101,7 +105,7 @@ public class StyleEditorWindow : Window
         {
             this.SaveStyle();
 
-            var newStyle = StyleModelV1.DalamudStandard;
+            var newStyle = StyleModelV1.DalamudStandard.Clone();
             newStyle.Name = Util.GetRandomName();
             config.SavedStyles.Add(newStyle);
 

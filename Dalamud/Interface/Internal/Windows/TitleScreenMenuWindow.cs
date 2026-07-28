@@ -22,11 +22,12 @@ using Dalamud.Plugin.Internal;
 using Dalamud.Plugin.Services;
 using Dalamud.Storage.Assets;
 using Dalamud.Utility;
-using FFXIVClientStructs.FFXIV.Component.GUI;
-using Lumina.Text.ReadOnly;
-using Serilog;
 
-using LSeStringBuilder = Lumina.Text.SeStringBuilder;
+using FFXIVClientStructs.FFXIV.Component.GUI;
+
+using Lumina.Text.ReadOnly;
+
+using Serilog;
 
 namespace Dalamud.Interface.Internal.Windows;
 
@@ -49,9 +50,9 @@ internal class TitleScreenMenuWindow : Window, IDisposable
     private readonly Lazy<IDalamudTextureWrap> shadeTexture;
     private readonly AddonLifecycleEventListener versionStringListener;
 
-    private readonly Dictionary<Guid, InOutCubic> shadeEasings = new();
-    private readonly Dictionary<Guid, InOutQuint> moveEasings = new();
-    private readonly Dictionary<Guid, InOutCubic> logoEasings = new();
+    private readonly Dictionary<Guid, InOutCubic> shadeEasings = [];
+    private readonly Dictionary<Guid, InOutQuint> moveEasings = [];
+    private readonly Dictionary<Guid, InOutCubic> logoEasings = [];
 
     private readonly IConsoleVariable<bool> showTsm;
 
@@ -86,9 +87,10 @@ internal class TitleScreenMenuWindow : Window, IDisposable
         : base(
             "TitleScreenMenuOverlay",
             ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoScrollbar |
-            ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNavFocus)
+            ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNavFocus |
+            ImGuiWindowFlags.NoDocking)
     {
-        this.showTsm = consoleManager.AddVariable("dalamud.show_tsm", "Show the Title Screen Menu", true);
+        this.showTsm = consoleManager.AddVariable("dalamud.show_tsm", "显示标题界面菜单", true);
 
         this.clientState = clientState;
         this.configuration = configuration;
@@ -471,9 +473,9 @@ internal class TitleScreenMenuWindow : Window, IDisposable
 
     private unsafe void OnVersionStringDraw(AddonEvent ev, AddonArgs args)
     {
-        if (args is not AddonDrawArgs drawArgs) return;
+        if (ev is not (AddonEvent.PostDraw or AddonEvent.PreDraw)) return;
 
-        var addon = drawArgs.Addon.Struct;
+        var addon = args.Addon.Struct;
         var textNode = addon->GetTextNodeById(3);
 
         // look and feel init. should be harmless to set.
@@ -497,20 +499,23 @@ internal class TitleScreenMenuWindow : Window, IDisposable
             return;
         this.lastLoadedPluginCount = count;
 
-        var lssb = LSeStringBuilder.SharedPool.Get();
-        lssb.Append(new ReadOnlySeStringSpan(addon->AtkValues[1].String.Value)).Append("\n\n");
-        lssb.PushEdgeColorType(701).PushColorType(539)
-            .Append(SeIconChar.BoxedLetterD.ToIconChar())
-            .PopColorType().PopEdgeColorType();
-        lssb.Append($" Dalamud: {Util.GetScmVersion()}");
+        using var rssb = new RentedSeStringBuilder();
 
-        lssb.Append($" - {count} {(count != 1 ? "plugins" : "plugin")} loaded");
+        rssb.Builder
+            .Append(new ReadOnlySeStringSpan(addon->AtkValues[1].String.Value))
+            .Append("\n\n")
+            .PushEdgeColorType(701)
+            .PushColorType(539)
+            .Append(SeIconChar.BoxedLetterD.ToIconChar())
+            .PopColorType()
+            .PopEdgeColorType()
+            .Append($" Dalamud: {Versioning.GetScmVersion()}")
+            .Append($" - 已加载插件: {count}");
 
         if (pm?.SafeMode is true)
-            lssb.PushColorType(17).Append(" [SAFE MODE]").PopColorType();
+            rssb.Builder.PushColorType(17).Append(" [安全模式]").PopColorType();
 
-        textNode->SetText(lssb.GetViewAsSpan());
-        LSeStringBuilder.SharedPool.Return(lssb);
+        textNode->SetText(rssb.Builder.GetViewAsSpan());
     }
 
     private void TitleScreenMenuEntryListChange() => this.privateAtlas.BuildFontsAsync();

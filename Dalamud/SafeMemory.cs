@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
+using Windows.Win32.Foundation;
+
 namespace Dalamud;
 
 /// <summary>
@@ -12,11 +14,11 @@ namespace Dalamud;
 /// </remarks>
 public static class SafeMemory
 {
-    private static readonly SafeHandle Handle;
+    private static readonly HANDLE Handle;
 
     static SafeMemory()
     {
-        Handle = Windows.Win32.PInvoke.GetCurrentProcess_SafeHandle();
+        Handle = Windows.Win32.PInvoke.GetCurrentProcess();
     }
 
     /// <summary>
@@ -28,6 +30,12 @@ public static class SafeMemory
     /// <returns>Whether the read succeeded.</returns>
     public static unsafe bool ReadBytes(IntPtr address, int count, out byte[] buffer)
     {
+        if (Handle.IsNull)
+        {
+            buffer = [];
+            return false;
+        }
+
         buffer = new byte[count <= 0 ? 0 : count];
         fixed (byte* p = buffer)
         {
@@ -54,6 +62,9 @@ public static class SafeMemory
     /// <returns>Whether the write succeeded.</returns>
     public static unsafe bool WriteBytes(IntPtr address, byte[] buffer)
     {
+        if (Handle.IsNull)
+            return false;
+
         if (buffer.Length == 0)
             return true;
 
@@ -182,7 +193,7 @@ public static class SafeMemory
             return null;
         var data = encoding.GetString(buffer);
         var eosPos = data.IndexOf('\0');
-        return eosPos == -1 ? data : data.Substring(0, eosPos);
+        return eosPos == -1 ? data : data[..eosPos];
     }
 
     /// <summary>
@@ -292,7 +303,7 @@ public static class SafeMemory
             return bytes;
         }
 
-        public T Read<T>(int offset = 0) => (T)Marshal.PtrToStructure(this.hGlobal + offset, typeof(T));
+        public T Read<T>(int offset = 0) => Marshal.PtrToStructure<T>(this.hGlobal + offset);
 
         public object? Read(Type type, int offset = 0) => Marshal.PtrToStructure(this.hGlobal + offset, type);
 

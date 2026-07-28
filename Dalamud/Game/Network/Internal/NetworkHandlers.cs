@@ -11,18 +11,18 @@ using Dalamud.Game.Gui;
 using Dalamud.Game.Network.Internal.MarketBoardUploaders;
 using Dalamud.Game.Network.Internal.MarketBoardUploaders.Universalis;
 using Dalamud.Game.Network.Structures;
+using Dalamud.Game.Player;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Hooking;
 using Dalamud.Networking.Http;
 using Dalamud.Utility;
 
-using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
-using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.Network;
-using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
+
 using Lumina.Excel.Sheets;
+
 using Serilog;
 
 namespace Dalamud.Game.Network.Internal;
@@ -33,7 +33,7 @@ namespace Dalamud.Game.Network.Internal;
 [ServiceManager.EarlyLoadedService]
 internal unsafe class NetworkHandlers : IInternalDisposableService
 {
-    private readonly IMarketBoardUploader uploader;
+    private readonly UniversalisMarketBoardUploader uploader;
 
     private readonly IDisposable handleMarketBoardItemRequest;
     private readonly IDisposable handleMarketTaxRates;
@@ -55,10 +55,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
     private bool disposing;
 
     [ServiceManager.ServiceConstructor]
-    private NetworkHandlers(
-        GameNetwork gameNetwork,
-        TargetSigScanner sigScanner,
-        HappyHttpClient happyHttpClient)
+    private NetworkHandlers(TargetSigScanner sigScanner, HappyHttpClient happyHttpClient)
     {
         this.uploader = new UniversalisMarketBoardUploader(happyHttpClient);
 
@@ -176,18 +173,8 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         this.cfPopHook.Enable();
     }
 
-    private delegate nint MarketBoardPurchasePacketHandler(nint a1, nint packetRef);
-
-    private delegate nint MarketBoardHistoryPacketHandler(nint self, nint packetData, uint a3, char a4);
-
     private delegate void CustomTalkReceiveResponse(
         nuint a1, ushort eventId, byte responseId, uint* args, byte argCount);
-
-    private delegate nint MarketBoardItemRequestStartPacketHandler(nint a1, nint packetRef);
-
-    private delegate byte InfoProxyItemSearchAddPage(nint self, nint packetRef);
-
-    private delegate byte MarketBoardSendPurchaseRequestPacket(InfoProxyItemSearch* infoProxy);
 
     /// <summary>
     /// Event which gets fired when a duty is ready.
@@ -269,29 +256,8 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
 
     private static (ulong UploaderId, uint WorldId) GetUploaderInfo()
     {
-        var agentLobby = AgentLobby.Instance();
-
-        var uploaderId = agentLobby->LobbyData.ContentId;
-        if (uploaderId == 0)
-        {
-            var playerState = PlayerState.Instance();
-            if (playerState->IsLoaded)
-            {
-                uploaderId = playerState->ContentId;
-            }
-        }
-
-        var worldId = agentLobby->LobbyData.CurrentWorldId;
-        if (worldId == 0)
-        {
-            var localPlayer = Control.GetLocalPlayer();
-            if (localPlayer != null)
-            {
-                worldId = localPlayer->CurrentWorld;
-            }
-        }
-
-        return (uploaderId, worldId);
+        var playerState = Service<PlayerState>.Get();
+        return (playerState.ContentId, playerState.CurrentWorld.RowId);
     }
 
     private unsafe nint CfPopDetour(PublicContentDirector.EnterContentInfoPacket* packetData)
@@ -440,7 +406,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
 
     private IDisposable HandleMarketBoardItemRequest()
     {
-        void LogStartObserved(MarketBoardItemRequest request)
+        static void LogStartObserved(MarketBoardItemRequest request)
         {
             Log.Verbose("Observed start of request for item with {NumListings} expected listings", request.AmountToArrive);
         }
@@ -469,7 +435,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
     private void UploadMarketBoardData(
         MarketBoardItemRequest request,
         (uint CatalogId, ICollection<MarketBoardHistory.MarketBoardHistoryListing> Sales) sales,
-        ICollection<MarketBoardCurrentOfferings.MarketBoardItemListing> listings,
+        List<MarketBoardCurrentOfferings.MarketBoardItemListing> listings,
         ulong uploaderId,
         uint worldId)
     {

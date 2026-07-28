@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 using CheapLoc;
+
 using Dalamud.Plugin.Internal;
 using Dalamud.Plugin.Internal.Types;
 
@@ -30,6 +31,9 @@ internal class PluginCategoryManager
         new(CategoryKind.PluginChangelogs, "special.plugins", () => Locs.Category_Plugins),
         new(CategoryKind.PluginProfiles, "special.profiles", () => Locs.Category_PluginProfiles),
         new(CategoryKind.UpdateablePlugins, "special.updateable", () => Locs.Category_UpdateablePlugins),
+        new(CategoryKind.EnabledPlugins, "special.enabled", () => Locs.Category_EnabledPlugins),
+        new(CategoryKind.DisabledPlugins, "special.disabled", () => Locs.Category_DisabledPlugins),
+        new(CategoryKind.IncompatiblePlugins, "special.incompatible", () => Locs.Category_IncompatiblePlugins),
 
         // Tag-driven categories
         new(CategoryKind.Other, "other", () => Locs.Category_Other),
@@ -47,7 +51,7 @@ internal class PluginCategoryManager
     private GroupInfo[] groupList =
     [
         new(GroupKind.DevTools, () => Locs.Group_DevTools, CategoryKind.DevInstalled, CategoryKind.IconTester),
-        new(GroupKind.Installed, () => Locs.Group_Installed, CategoryKind.All, CategoryKind.IsTesting, CategoryKind.UpdateablePlugins, CategoryKind.PluginProfiles),
+        new(GroupKind.Installed, () => Locs.Group_Installed, CategoryKind.All, CategoryKind.IsTesting, CategoryKind.UpdateablePlugins, CategoryKind.EnabledPlugins, CategoryKind.DisabledPlugins, CategoryKind.IncompatiblePlugins, CategoryKind.PluginProfiles),
         new(GroupKind.Available, () => Locs.Group_Available, CategoryKind.All),
         new(GroupKind.Changelog, () => Locs.Group_Changelog, CategoryKind.All, CategoryKind.DalamudChangelogs, CategoryKind.PluginChangelogs)
 
@@ -58,8 +62,8 @@ internal class PluginCategoryManager
     private CategoryKind currentCategoryKind = CategoryKind.All;
     private bool isContentDirty;
 
-    private Dictionary<PluginManifest, CategoryKind[]> mapPluginCategories = new();
-    private List<CategoryKind> highlightedCategoryKinds = new();
+    private Dictionary<PluginManifest, CategoryKind[]> mapPluginCategories = [];
+    private List<CategoryKind> highlightedCategoryKinds = [];
 
     /// <summary>
     /// Type of category group.
@@ -142,6 +146,21 @@ internal class PluginCategoryManager
         /// </summary>
         UpdateablePlugins = 15,
         
+        /// <summary>
+        /// Enabled plugins.
+        /// </summary>
+        EnabledPlugins = 16,
+
+        /// <summary>
+        /// Disabled plugins.
+        /// </summary>
+        DisabledPlugins = 17,
+
+        /// <summary>
+        /// Incompatible plugins.
+        /// </summary>
+        IncompatiblePlugins = 18,
+
         /// <summary>
         /// Plugins tagged as "other".
         /// </summary>
@@ -294,7 +313,7 @@ internal class PluginCategoryManager
                 }
             }
 
-            if (PluginManager.HasTestingVersion(manifest) || manifest.IsTestingExclusive)
+            if (manifest.IsTestingExclusive || manifest.IsAvailableForTesting)
                 categoryList.Add(CategoryKind.AvailableForTesting);
 
             // always add, even if empty
@@ -513,8 +532,7 @@ internal class PluginCategoryManager
             this.GroupKind = groupKind;
             this.nameFunc = nameFunc;
 
-            this.Categories = new();
-            this.Categories.AddRange(categories);
+            this.Categories = [.. categories];
         }
 
         /// <summary>
@@ -542,7 +560,7 @@ internal class PluginCategoryManager
 
         public static string Category_All => Loc.Localize("InstallerCategoryAll", "All");
 
-        public static string Category_IsTesting => Loc.Localize("InstallerCategoryIsTesting", "Currently Testing");
+        public static string Category_IsTesting => "测试版";
 
         public static string Category_AvailableForTesting => Loc.Localize("InstallerCategoryAvailableForTesting", "Testing Available");
 
@@ -555,6 +573,12 @@ internal class PluginCategoryManager
         public static string Category_PluginProfiles => Loc.Localize("InstallerCategoryPluginProfiles", "Plugin Collections");
 
         public static string Category_UpdateablePlugins => Loc.Localize("InstallerCategoryCanBeUpdated", "Can be updated");
+
+        public static string Category_EnabledPlugins => Loc.Localize("InstallerCategoryEnabledPlugins", "Enabled");
+
+        public static string Category_DisabledPlugins => Loc.Localize("InstallerCategoryDisabledPlugins", "Disabled");
+
+        public static string Category_IncompatiblePlugins => Loc.Localize("InstallerCategoryIncompatiblePlugins", "Incompatible");
         
         public static string Category_Other => Loc.Localize("InstallerCategoryOther", "Other");
 

@@ -2,12 +2,12 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 
-namespace Dalamud.Game;
+namespace Dalamud.Plugin.Services;
 
 /// <summary>
 /// A SigScanner facilitates searching for memory signatures in a given ProcessModule.
 /// </summary>
-public interface ISigScanner
+public interface ISigScanner : IDalamudService
 {
     /// <summary>
     /// Gets a value indicating whether the search on this module is performed on a copy.
@@ -17,17 +17,18 @@ public interface ISigScanner
     /// <summary>
     /// Gets a value indicating whether the ProcessModule is 32-bit.
     /// </summary>
+    [Obsolete("We're now only supporting 64-bit processes.")]
     public bool Is32BitProcess { get; }
 
     /// <summary>
     /// Gets the base address of the search area. When copied, this will be the address of the copy.
     /// </summary>
-    public IntPtr SearchBase { get; }
+    public nint SearchBase { get; }
 
     /// <summary>
     /// Gets the base address of the .text section search area.
     /// </summary>
-    public IntPtr TextSectionBase { get; }
+    public nint TextSectionBase { get; }
 
     /// <summary>
     /// Gets the offset of the .text section from the base of the module.
@@ -42,7 +43,7 @@ public interface ISigScanner
     /// <summary>
     /// Gets the base address of the .data section search area.
     /// </summary>
-    public IntPtr DataSectionBase { get; }
+    public nint DataSectionBase { get; }
 
     /// <summary>
     /// Gets the offset of the .data section from the base of the module.
@@ -57,7 +58,7 @@ public interface ISigScanner
     /// <summary>
     /// Gets the base address of the .rdata section search area.
     /// </summary>
-    public IntPtr RDataSectionBase { get; }
+    public nint RDataSectionBase { get; }
 
     /// <summary>
     /// Gets the offset of the .rdata section from the base of the module.

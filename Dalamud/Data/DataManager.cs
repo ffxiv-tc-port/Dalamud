@@ -9,14 +9,15 @@ using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
 using Dalamud.Utility.Timing;
+
 using Lumina;
 using Lumina.Data;
 using Lumina.Excel;
 using Lumina.Excel.Sheets;
 
 using Newtonsoft.Json;
+
 using Serilog;
-using Framework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework;
 
 namespace Dalamud.Data;
 
@@ -56,12 +57,25 @@ internal sealed class DataManager : IInternalDisposableService, IDataManager
                     DefaultExcelLanguage = this.Language.ToLumina(),
                 };
 
-                this.GameData = new(
-                    Path.Combine(Path.GetDirectoryName(Environment.ProcessPath)!, "sqpack"),
-                    luminaOptions)
+                try
                 {
-                    StreamPool = new(),
-                };
+                    this.GameData = new(
+                        Path.Combine(Path.GetDirectoryName(Environment.ProcessPath)!, "sqpack"),
+                        luminaOptions)
+                    {
+                        StreamPool = new(),
+                    };
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Lumina GameData init failed");
+                    Util.Fatal(
+                        "Dalamud could not read required game data files. This likely means your game installation is corrupted or incomplete.\n\n" +
+                        "Please repair your installation by right-clicking the login button in XIVLauncher and choosing \"Repair game files\".",
+                        "Dalamud");
+
+                    return;
+                }
 
                 Log.Information("Lumina is ready: {0}", this.GameData.DataPath);
 
@@ -72,8 +86,13 @@ internal sealed class DataManager : IInternalDisposableService, IDataManager
                         var tsInfo =
                             JsonConvert.DeserializeObject<LauncherTroubleshootingInfo>(
                                 dalamud.StartInfo.TroubleshootingPackData);
-                        this.HasModifiedGameDataFiles =
-                            tsInfo?.IndexIntegrity is LauncherTroubleshootingInfo.IndexIntegrityResult.Failed or LauncherTroubleshootingInfo.IndexIntegrityResult.Exception;
+
+                        // Don't fail for IndexIntegrityResult.Exception, since the check during launch has a very small timeout
+                        // this.HasModifiedGameDataFiles =
+                        //     tsInfo?.IndexIntegrity is LauncherTroubleshootingInfo.IndexIntegrityResult.Failed;
+
+                        // TODO: Put above back when check in XL is fixed
+                        this.HasModifiedGameDataFiles = false;
 
                         if (this.HasModifiedGameDataFiles)
                             Log.Verbose("Game data integrity check failed!\n{TsData}", dalamud.StartInfo.TroubleshootingPackData);
@@ -137,11 +156,11 @@ internal sealed class DataManager : IInternalDisposableService, IDataManager
 
     /// <inheritdoc/>
     public ExcelSheet<T> GetExcelSheet<T>(ClientLanguage? language = null, string? name = null) where T : struct, IExcelRow<T>
-        => this.Excel.GetSheet<T>(language?.ToLumina(), name);
+        => this.Excel.GetSheet<T>(ClientLanguage.ChineseSimplified.ToLumina(), name);
 
     /// <inheritdoc/>
     public SubrowExcelSheet<T> GetSubrowExcelSheet<T>(ClientLanguage? language = null, string? name = null) where T : struct, IExcelSubrow<T>
-        => this.Excel.GetSubrowSheet<T>(language?.ToLumina(), name);
+        => this.Excel.GetSubrowSheet<T>(ClientLanguage.ChineseSimplified.ToLumina(), name);
 
     /// <inheritdoc/>
     public FileResource? GetFile(string path)

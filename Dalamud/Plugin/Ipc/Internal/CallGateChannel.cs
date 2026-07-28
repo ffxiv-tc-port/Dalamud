@@ -2,11 +2,14 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 
+using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.Ipc.Exceptions;
 using Dalamud.Plugin.Ipc.Internal.Converters;
 
 using Newtonsoft.Json;
+
 using Serilog;
 
 namespace Dalamud.Plugin.Ipc.Internal;
@@ -16,10 +19,12 @@ namespace Dalamud.Plugin.Ipc.Internal;
 /// </summary>
 internal class CallGateChannel
 {
+    private readonly ThreadLocal<IpcContext> ipcExecutionContext = new();
+
     /// <summary>
     /// The actual storage.
     /// </summary>
-    private readonly HashSet<Delegate> subscriptions = new();
+    private readonly HashSet<Delegate> subscriptions = [];
 
     /// <summary>
     /// A copy of the actual storage, that will be cleared and populated depending on changes made to
@@ -143,6 +148,32 @@ internal class CallGateChannel
             result = this.ConvertObject(result, typeof(TRet));
 
         return (TRet)result;
+    }
+
+    /// <summary>
+    /// Set the context for the invocations through this channel.
+    /// </summary>
+    /// <param name="ipcContext">The context to set.</param>
+    internal void SetInvocationContext(IpcContext ipcContext)
+    {
+        this.ipcExecutionContext.Value = ipcContext;
+    }
+
+    /// <summary>
+    /// Get the context for invocations through this channel.
+    /// </summary>
+    /// <returns>The context, if one was set.</returns>
+    internal IpcContext? GetInvocationContext()
+    {
+        return this.ipcExecutionContext.IsValueCreated ? this.ipcExecutionContext.Value : null;
+    }
+
+    /// <summary>
+    /// Clear the context for this channel.
+    /// </summary>
+    internal void ClearInvocationContext()
+    {
+        this.ipcExecutionContext.Value = null;
     }
 
     private void CheckAndConvertArgs(object?[]? args, MethodInfo methodInfo)

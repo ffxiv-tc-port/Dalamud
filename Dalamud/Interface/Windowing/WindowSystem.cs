@@ -4,6 +4,7 @@ using System.Linq;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Interface.Windowing.Persistence;
+
 using Serilog;
 
 namespace Dalamud.Interface.Windowing;
@@ -15,7 +16,7 @@ public class WindowSystem
 {
     private static DateTimeOffset lastAnyFocus;
 
-    private readonly List<Window> windows = new();
+    private readonly List<Window> windows = [];
 
     private string lastFocusedWindowName = string.Empty;
 
@@ -59,6 +60,12 @@ public class WindowSystem
     /// Gets or sets the name/ID-space of this <see cref="WindowSystem"/>.
     /// </summary>
     public string? Namespace { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether ATK close events should be inhibited while any window has focus.
+    /// Does not respect windows that are pinned or clickthrough.
+    /// </summary>
+    internal static bool ShouldInhibitAtkCloseEvents { get; set; }
 
     /// <summary>
     /// Add a window to this <see cref="WindowSystem"/>.
@@ -130,7 +137,7 @@ public class WindowSystem
             window.DrawInternal(flags, persistence);
         }
 
-        var focusedWindow = this.windows.FirstOrDefault(window => window.IsFocused && window.RespectCloseHotkey);
+        var focusedWindow = this.windows.FirstOrDefault(window => window.IsFocused);
         this.HasAnyFocus = focusedWindow != default;
 
         if (this.HasAnyFocus)
@@ -154,6 +161,11 @@ public class WindowSystem
                 this.lastFocusedWindowName = string.Empty;
             }
         }
+
+        ShouldInhibitAtkCloseEvents |= this.windows.Any(w => w.IsFocused &&
+                                                            w.RespectCloseHotkey &&
+                                                            !w.IsPinned &&
+                                                            !w.IsClickthrough);
 
         if (hasNamespace)
             ImGui.PopID();

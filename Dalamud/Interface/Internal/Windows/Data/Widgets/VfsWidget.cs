@@ -4,6 +4,7 @@ using System.IO;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Storage;
+
 using Serilog;
 
 namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
@@ -17,7 +18,7 @@ internal class VfsWidget : IDataWindowWidget
     private int reps = 1;
 
     /// <inheritdoc/>
-    public string[]? CommandShortcuts { get; init; } = { "vfs" };
+    public string[]? CommandShortcuts { get; init; } = ["vfs"];
 
     /// <inheritdoc/>
     public string DisplayName { get; init; } = "VFS Performance";
@@ -52,7 +53,7 @@ internal class VfsWidget : IDataWindowWidget
             for (var i = 0; i < this.reps; i++)
             {
                 stopwatch.Restart();
-                service.WriteAllBytes(path, data);
+                service.WriteAllBytesAsync(path, data).GetAwaiter().GetResult();
                 stopwatch.Stop();
                 acc += stopwatch.ElapsedMilliseconds;
                 Log.Information("Turn {Turn} took {Ms}ms", i, stopwatch.ElapsedMilliseconds);
@@ -70,7 +71,7 @@ internal class VfsWidget : IDataWindowWidget
             for (var i = 0; i < this.reps; i++)
             {
                 stopwatch.Restart();
-                service.ReadAllBytes(path);
+                service.ReadAllBytesAsync(path).GetAwaiter().GetResult();
                 stopwatch.Stop();
                 acc += stopwatch.ElapsedMilliseconds;
                 Log.Information("Turn {Turn} took {Ms}ms", i, stopwatch.ElapsedMilliseconds);

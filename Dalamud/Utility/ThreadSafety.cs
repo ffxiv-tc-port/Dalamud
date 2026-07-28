@@ -12,7 +12,7 @@ public static class ThreadSafety
     /// <summary>
     /// Gets a value indicating whether the current thread is the main thread.
     /// </summary>
-    public static bool IsMainThread => true;
+    public static bool IsMainThread => threadStaticIsMainThread;
 
     /// <summary>
     /// Throws an exception when the current thread is not the main thread.

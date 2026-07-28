@@ -9,11 +9,14 @@ using System.Threading.Tasks;
 using Dalamud.Common;
 using Dalamud.Configuration.Internal;
 using Dalamud.Game;
+using Dalamud.Hooking.Internal.Verification;
 using Dalamud.Plugin.Internal;
 using Dalamud.Storage;
 using Dalamud.Utility;
 using Dalamud.Utility.Timing;
+
 using Serilog;
+
 using Windows.Win32.Foundation;
 using Windows.Win32.Security;
 
@@ -73,6 +76,11 @@ internal sealed unsafe class Dalamud : IServiceType
             scanner,
             Localization.FromAssets(info.AssetDirectory!, configuration.LanguageOverride));
 
+        using (Timings.Start("HookVerifier Init"))
+        {
+            HookVerifier.Initialize(scanner);
+        }
+
         // Set up FFXIVClientStructs
         this.SetupClientStructsResolver(cacheDir);
 
@@ -90,6 +98,7 @@ internal sealed unsafe class Dalamud : IServiceType
             if (Interlocked.CompareExchange(ref shownServiceError, 1, 0) != 0)
                 return;
 
+            ErrorHandling.ShowSystemIntegrityPolicyErrorIfApplicable(t.Exception);
             Util.Fatal(
                 $"Dalamud failed to load all necessary services.\nThe game will continue, but you may not be able to use plugins.\n\n{t.Exception}",
                 "Dalamud", false);

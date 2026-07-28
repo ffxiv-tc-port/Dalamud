@@ -1,5 +1,4 @@
 using Dalamud.Plugin.Ipc.Internal;
-using Dalamud.Utility;
 
 #pragma warning disable SA1402 // File may only contain a single type
 
@@ -19,6 +18,9 @@ public interface ICallGateProvider
 
     /// <inheritdoc cref="CallGatePubSubBase.UnregisterFunc"/>
     public void UnregisterFunc();
+
+    /// <inheritdoc cref="CallGatePubSubBase.GetContext"/>
+    public IpcContext? GetContext();
 }
 
 /// <inheritdoc cref="ICallGateProvider"/>

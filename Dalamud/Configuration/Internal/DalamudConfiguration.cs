@@ -10,7 +10,6 @@ using System.Threading.Tasks;
 using Dalamud.Game.Text;
 using Dalamud.Interface;
 using Dalamud.Interface.FontIdentifier;
-using Dalamud.Interface.ImGuiNotification.Internal;
 using Dalamud.Interface.Internal;
 using Dalamud.Interface.Internal.ReShadeHandling;
 using Dalamud.Interface.Style;
@@ -21,10 +20,12 @@ using Dalamud.Plugin.Internal.Profiles;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Storage;
 using Dalamud.Utility;
+
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+
 using Serilog;
 using Serilog.Events;
+
 using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Dalamud.Configuration.Internal;
@@ -69,7 +70,7 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// <summary>
     /// Gets or sets main Repo Url for Dalamud Plugin init. Default is PluginRepository.MainRepoUrlDailyRoutines
     /// </summary>
-    public string MainRepoUrl { get; set; } = PluginRepository.MainRepoUrlDailyRoutines;
+    public string MainRepoUrl { get; set; } = PluginRepository.MainRepoUrlSoil;
 
     /// <summary>
     /// Gets or sets a value indicating whether gets or sets main Repo Url for Dalamud Plugin init. Default is PluginRepository.MainRepoUrlDailyRoutines
@@ -104,7 +105,7 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// <summary>
     /// Gets or sets a dictionary of seen FTUE levels.
     /// </summary>
-    public Dictionary<string, int> SeenFtueLevels { get; set; } = new();
+    public Dictionary<string, int> SeenFtueLevels { get; set; } = [];
 
     /// <summary>
     /// Gets or sets the last loaded Dalamud version.
@@ -122,29 +123,24 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     public bool DoPluginTest { get; set; } = false;
 
     /// <summary>
-    /// Gets or sets a key to opt into Dalamud staging builds.
-    /// </summary>
-    public string? DalamudBetaKey { get; set; } = null;
-
-    /// <summary>
     /// Gets or sets a list of custom repos.
     /// </summary>
-    public List<ThirdPartyRepoSettings> ThirdRepoList { get; set; } = new();
+    public List<ThirdPartyRepoSettings> ThirdRepoList { get; set; } = [];
 
     /// <summary>
-    /// Gets or sets a value indicating whether a disclaimer regarding third-party repos has been dismissed.
+    /// Gets or sets a value indicating weather some preset third repos should be added by default
     /// </summary>
-    public bool? ThirdRepoSpeedbumpDismissed { get; set; } = null;
+    public bool AddPresetThirdRepos { get; set; } = true;
 
     /// <summary>
     /// Gets or sets a list of hidden plugins.
     /// </summary>
-    public List<string> HiddenPluginInternalName { get; set; } = new();
+    public List<string> HiddenPluginInternalName { get; set; } = [];
 
     /// <summary>
     /// Gets or sets a list of seen plugins.
     /// </summary>
-    public List<string> SeenPluginInternalName { get; set; } = new();
+    public List<string> SeenPluginInternalName { get; set; } = [];
 
     /// <summary>
     /// Gets or sets a list of additional settings for devPlugins. The key is the absolute path
@@ -152,14 +148,14 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// However by specifiying this value manually, you can add arbitrary files outside the normal
     /// file paths.
     /// </summary>
-    public Dictionary<string, DevPluginSettings> DevPluginSettings { get; set; } = new();
+    public Dictionary<string, DevPluginSettings> DevPluginSettings { get; set; } = [];
 
     /// <summary>
     /// Gets or sets a list of additional locations that dev plugins should be loaded from. This can
     /// be either a DLL or folder, but should be the absolute path, or a path relative to the currently
     /// injected Dalamud instance.
     /// </summary>
-    public List<DevPluginLocationSettings> DevPluginLoadLocations { get; set; } = new();
+    public List<DevPluginLocationSettings> DevPluginLoadLocations { get; set; } = [];
 
     /// <summary>
     /// Gets or sets the global UI scale.
@@ -241,7 +237,7 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// <summary>
     /// Gets or sets a list representing the command history for the Dalamud Console.
     /// </summary>
-    public List<string> LogCommandHistory { get; set; } = new();
+    public List<string> LogCommandHistory { get; set; } = [];
 
     /// <summary>
     /// Gets or sets a value indicating whether the dev bar should open at startup.
@@ -258,7 +254,7 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// This setting is effected by the in-game "System Sounds" option and volume.
     /// </summary>
     [SuppressMessage("ReSharper", "InconsistentNaming", Justification = "ABI")]
-    public bool EnablePluginUISoundEffects { get; set; }
+    public bool EnablePluginUISoundEffects { get; set; } = true;
 
     /// <summary>
     /// Gets or sets a value indicating whether an additional button allowing pinning and clickthrough options should be shown
@@ -285,11 +281,6 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// Gets or sets a value indicating whether to resume game main thread after plugins load.
     /// </summary>
     public bool IsResumeGameAfterPluginLoad { get; set; } = false;
-
-    /// <summary>
-    /// Gets or sets the kind of beta to download when <see cref="DalamudBetaKey"/> matches the server value.
-    /// </summary>
-    public string? DalamudBetaKind { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether any plugin should be loaded when the game is started.
@@ -344,27 +335,12 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// Gets or sets a value indicating whether the user has seen the profiles tutorial.
     /// </summary>
     public bool ProfilesHasSeenTutorial { get; set; } = false;
-
-    /// <summary>
-    /// Gets or sets a value whether or not Dalamud use manual proxy settings.
-    /// </summary>
-    public bool UseManualProxy { get; set; }
-
-    /// <summary>
-    /// Gets or sets a value what type proxy Dalamud will use.
-    /// </summary>
-    public string ProxyProtocol { get; set; } = "socks5";
-
-    /// <summary>
-    /// Gets or sets the proxy host address.
-    /// </summary>
-    public string ProxyHost { get; set; } = "127.0.0.1";
-
-    /// <summary>
-    /// Gets or sets the proxy port.
-    /// </summary>
-    public int ProxyPort { get; set; } = 1080;
     
+    /// <summary>
+    /// Gets or sets a value indicating whether the user has enabled character-specific profiles.
+    /// </summary>
+    public bool ProfilesEnableCharacters { get; set; } = false;
+
     /// <summary>
     /// Gets or sets the default UI preset.
     /// </summary>
@@ -408,13 +384,7 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// Gets or sets a value indicating whether market board data should be uploaded.
     /// </summary>
     public bool IsMbCollect { get; set; } = true;
-
-    /// <summary>
-    /// Gets the accepted TOS hash.
-    /// </summary>
-    public string AcceptedTOSHash { get; set; } = string.Empty;
-
-
+    
     /// <summary>
     /// Gets the ISO 639-1 two-letter code for the language of the effective Dalamud display language.
     /// </summary>
@@ -509,7 +479,7 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// <summary>
     /// Gets or sets a value indicating how auto-updating should behave.
     /// </summary>
-    public AutoUpdateBehavior? AutoUpdateBehavior { get; set; } = null;
+    public AutoUpdateBehavior? AutoUpdateBehavior { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether users should be notified regularly about pending updates.
@@ -532,18 +502,48 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     public Vector2 NotificationAnchorPosition { get; set; } = new(1f, 1f);
 
     /// <summary>
+    /// Gets or sets a value indicating whether seasonal events, such as April Fools, should be allowed to run.
+    /// </summary>
+    public bool AllowSeasonalEvents { get; set; } = true;
+
+#pragma warning disable SA1600
+#pragma warning disable SA1516
+    public bool Fools26Dismissed { get; set; } = false;
+    public List<ulong> Fools26CompletedContentIds { get; set; } = [];
+#pragma warning restore SA1516
+#pragma warning restore SA1600
+
+#pragma warning disable SA1600
+#pragma warning disable SA1516
+    // XLCore/XoM compatibility until they move it out
+    public string? DalamudBetaKey { get; set; } = null;
+    public string? DalamudBetaKind { get; set; }
+#pragma warning restore SA1516
+#pragma warning restore SA1600
+
+    /// <summary>
+    /// Gets or sets a list of badge passwords used to unlock badges.
+    /// </summary>
+    public List<string> UsedBadgePasswords { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets a value indicating whether badges should be shown on the title screen.
+    /// </summary>
+    public bool ShowBadgesOnTitleScreen { get; set; } = true;
+
+    /// <summary>
     /// Load a configuration from the provided path.
     /// </summary>
     /// <param name="path">Path to read from.</param>
     /// <param name="fs">File storage.</param>
     /// <returns>The deserialized configuration file.</returns>
-    public static DalamudConfiguration Load(string path, ReliableFileStorage fs)
+    public static async Task<DalamudConfiguration> Load(string path, ReliableFileStorage fs)
     {
         DalamudConfiguration deserialized = null;
 
         try
         {
-            fs.ReadAllText(path, text =>
+            await fs.ReadAllTextAsync(path, text =>
             {
                 deserialized =
                     JsonConvert.DeserializeObject<DalamudConfiguration>(text, SerializerSettings);
@@ -564,10 +564,6 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
 
         deserialized ??= new DalamudConfiguration();
         deserialized.configPath = path;
-
-        var splitedValue = deserialized.ProxyHost.Split("://");
-        if (splitedValue.Length >= 2)
-            deserialized.ProxyHost = splitedValue[1];
             
         try
         {
@@ -618,8 +614,6 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
         {
             this.Save();
             this.isSaveQueued = false;
-
-            Log.Verbose("Config saved");
         }
     }
 
@@ -631,7 +625,7 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
         {
             // https://source.chromium.org/chromium/chromium/src/+/main:ui/gfx/animation/animation_win.cc;l=29?q=ReducedMotion&ss=chromium
             var winAnimEnabled = 0;
-            var success = false;
+            bool success;
             unsafe
             {
                 success = Windows.Win32.PInvoke.SystemParametersInfo(
@@ -668,16 +662,20 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
         // Wait for previous write to finish
         this.writeTask?.Wait();
 
-        this.writeTask = Task.Run(() =>
+        this.writeTask = Task.Run(async () =>
         {
-            Service<ReliableFileStorage>.Get().WriteAllText(
-                this.configPath,
-                JsonConvert.SerializeObject(this, SerializerSettings));
+            await Service<ReliableFileStorage>.Get().WriteAllTextAsync(
+                                                   this.configPath,
+                                                   JsonConvert.SerializeObject(this, SerializerSettings));
+            Log.Verbose("DalamudConfiguration saved");
         }).ContinueWith(t =>
         {
             if (t.IsFaulted)
             {
-                Log.Error(t.Exception, "Failed to save DalamudConfiguration to {Path}", this.configPath);
+                Log.Error(
+                    t.Exception,
+                    "Failed to save DalamudConfiguration to {Path}",
+                    this.configPath);
             }
         });
 

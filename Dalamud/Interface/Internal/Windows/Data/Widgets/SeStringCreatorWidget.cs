@@ -2,9 +2,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Text;
+using System.Threading.Tasks;
 
 using Dalamud.Bindings.ImGui;
-using Dalamud.Configuration.Internal;
 using Dalamud.Data;
 using Dalamud.Game;
 using Dalamud.Game.ClientState;
@@ -13,12 +13,13 @@ using Dalamud.Game.Text.Noun.Enums;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
-using Dalamud.Memory;
 using Dalamud.Utility;
+
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.Text;
+
 using Lumina.Data;
 using Lumina.Data.Files.Excel;
 using Lumina.Data.Structs.Excel;
@@ -28,8 +29,6 @@ using Lumina.Text.Expressions;
 using Lumina.Text.Payloads;
 using Lumina.Text.ReadOnly;
 
-using LSeStringBuilder = Lumina.Text.SeStringBuilder;
-
 namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
 
 /// <summary>
@@ -38,6 +37,11 @@ namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
 internal class SeStringCreatorWidget : IDataWindowWidget
 {
     private const LinkMacroPayloadType DalamudLinkType = (LinkMacroPayloadType)Payload.EmbeddedInfoType.DalamudLink - 1;
+
+    private const ImGuiTableFlags TableFlags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg |
+                                               ImGuiTableFlags.ScrollY | ImGuiTableFlags.NoSavedSettings;
+
+    private static readonly string[] TextEntryTypeOptions = ["String", "Macro", "Fixed"];
 
     private readonly Dictionary<MacroCode, string[]> expressionNames = new()
     {
@@ -143,9 +147,10 @@ internal class SeStringCreatorWidget : IDataWindowWidget
         new TextEntry(TextEntryType.Macro, " <string(lstr1)>"),
     ];
 
-    private SeStringParameter[]? localParameters = [Util.GetScmVersion()];
+    private SeStringParameter[]? localParameters = [Versioning.GetScmVersion()];
     private ReadOnlySeString input;
     private ClientLanguage? language;
+    private Task? validImportSheetNamesTask;
     private int importSelectedSheetName;
     private int importRowId;
     private string[]? validImportSheetNames;
@@ -191,7 +196,7 @@ internal class SeStringCreatorWidget : IDataWindowWidget
         if (contentWidth != this.lastContentWidth)
         {
             var originalWidth = this.lastContentWidth != 0 ? this.lastContentWidth : contentWidth;
-            this.inputsWidth = this.inputsWidth / originalWidth * contentWidth;
+            this.inputsWidth = (this.inputsWidth / originalWidth) * contentWidth;
             this.lastContentWidth = contentWidth;
         }
 
@@ -258,7 +263,7 @@ internal class SeStringCreatorWidget : IDataWindowWidget
         using var tab = ImRaii.TabItem("Global Parameters"u8);
         if (!tab) return;
 
-        using var table = ImRaii.Table("GlobalParametersTable"u8, 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.NoSavedSettings);
+        using var table = ImRaii.Table("GlobalParametersTable"u8, 5, TableFlags);
         if (!table) return;
 
         ImGui.TableSetupColumn("Id"u8, ImGuiTableColumnFlags.WidthFixed, 40);
@@ -313,13 +318,13 @@ internal class SeStringCreatorWidget : IDataWindowWidget
             ImGui.Text(i switch
             {
                 0 => "Player Name",
-                1 => "Temp Player 1 Name",
-                2 => "Temp Player 2 Name",
+                1 => "Temp Entity 1: Name",
+                2 => "Temp Entity 2: Name",
                 3 => "Player Sex",
-                4 => "Temp Player 1 Sex",
-                5 => "Temp Player 2 Sex",
-                6 => "Temp Player 1 Unk 1",
-                7 => "Temp Player 2 Unk 1",
+                4 => "Temp Entity 1: Sex",
+                5 => "Temp Entity 2: Sex",
+                6 => "Temp Entity 1: ObjStrId",
+                7 => "Temp Entity 2: ObjStrId",
                 10 => "Eorzea Time Hours",
                 11 => "Eorzea Time Minutes",
                 12 => "ColorSay",
@@ -368,14 +373,19 @@ internal class SeStringCreatorWidget : IDataWindowWidget
                 62 => "ColorLoot",
                 63 => "ColorCraft",
                 64 => "ColorGathering",
-                65 => "Temp Player 1 Unk 2",
-                66 => "Temp Player 2 Unk 2",
+                65 => "Temp Entity 1: Name starts with Vowel",
+                66 => "Temp Entity 2: Name starts with Vowel",
                 67 => "Player ClassJobId",
                 68 => "Player Level",
+                69 => "Player StartTown",
                 70 => "Player Race",
                 71 => "Player Synced Level",
-                77 => "Client/Plattform?",
+                73 => "Quest#66047: Has met Alphinaud and Alisaie",
+                74 => "PlayStation Generation",
+                75 => "Is Legacy Player",
+                77 => "Client/Platform?",
                 78 => "Player BirthMonth",
+                79 => "PadMode",
                 82 => "Datacenter Region",
                 83 => "ColorCWLS2",
                 84 => "ColorCWLS3",
@@ -396,6 +406,11 @@ internal class SeStringCreatorWidget : IDataWindowWidget
                 100 => "LogSetRoleColor 1: LogColorOtherClass",
                 101 => "LogSetRoleColor 2: LogColorOtherClass",
                 102 => "Has Login Security Token",
+                103 => "Is subscribed to PlayStation Plus",
+                104 => "PadMouseMode",
+                106 => "Preferred World Bonus Max Level",
+                107 => "Occult Crescent Support Job Level",
+                108 => "Deep Dungeon Id",
                 _ => string.Empty,
             });
         }
@@ -462,25 +477,25 @@ internal class SeStringCreatorWidget : IDataWindowWidget
 
         if (ImGui.Button("Print Evaluated"u8))
         {
-            var sb = new LSeStringBuilder();
+            using var rssb = new RentedSeStringBuilder();
 
             foreach (var entry in this.entries)
             {
                 switch (entry.Type)
                 {
                     case TextEntryType.String:
-                        sb.Append(entry.Message);
+                        rssb.Builder.Append(entry.Message);
                         break;
 
                     case TextEntryType.Macro:
                     case TextEntryType.Fixed:
-                        sb.AppendMacroString(entry.Message);
+                        rssb.Builder.AppendMacroString(entry.Message);
                         break;
                 }
             }
 
             var evaluated = Service<SeStringEvaluator>.Get().Evaluate(
-                sb.ToReadOnlySeString(),
+                rssb.Builder.ToReadOnlySeString(),
                 this.localParameters,
                 this.language);
 
@@ -493,24 +508,24 @@ internal class SeStringCreatorWidget : IDataWindowWidget
 
             if (ImGui.Button("Copy MacroString"u8))
             {
-                var sb = new LSeStringBuilder();
+                using var rssb = new RentedSeStringBuilder();
 
                 foreach (var entry in this.entries)
                 {
                     switch (entry.Type)
                     {
                         case TextEntryType.String:
-                            sb.Append(entry.Message);
+                            rssb.Builder.Append(entry.Message);
                             break;
 
                         case TextEntryType.Macro:
                         case TextEntryType.Fixed:
-                            sb.AppendMacroString(entry.Message);
+                            rssb.Builder.AppendMacroString(entry.Message);
                             break;
                     }
                 }
 
-                ImGui.SetClipboardText(sb.ToReadOnlySeString().ToString());
+                ImGui.SetClipboardText(rssb.Builder.ToReadOnlySeString().ToMacroString());
             }
 
             ImGui.SameLine();
@@ -531,18 +546,16 @@ internal class SeStringCreatorWidget : IDataWindowWidget
 
         ImGui.SameLine();
         ImGui.SetNextItemWidth(90 * ImGuiHelpers.GlobalScale);
-        using (var dropdown = ImRaii.Combo("##Language"u8, this.language.ToString() ?? "Language..."))
+        using var dropdown = ImRaii.Combo("##Language"u8, this.language.ToString() ?? "Language...");
+        if (dropdown)
         {
-            if (dropdown)
+            var values = Enum.GetValues<ClientLanguage>().OrderBy(lang => lang.ToString());
+            foreach (var value in values)
             {
-                var values = Enum.GetValues<ClientLanguage>().OrderBy((ClientLanguage lang) => lang.ToString());
-                foreach (var value in values)
+                if (ImGui.Selectable(Enum.GetName(value), value == this.language))
                 {
-                    if (ImGui.Selectable(Enum.GetName(value), value == this.language))
-                    {
-                        this.language = value;
-                        this.UpdateInputString();
-                    }
+                    this.language = value;
+                    this.UpdateInputString();
                 }
             }
         }
@@ -555,22 +568,31 @@ internal class SeStringCreatorWidget : IDataWindowWidget
 
         var dataManager = Service<DataManager>.Get();
 
-        this.validImportSheetNames ??= dataManager.Excel.SheetNames.Where(sheetName =>
+        this.validImportSheetNamesTask ??= Task.Run(() =>
         {
-            try
+            this.validImportSheetNames = dataManager.Excel.SheetNames.Where(sheetName =>
             {
-                var headerFile = dataManager.GameData.GetFile<ExcelHeaderFile>($"exd/{sheetName}.exh");
-                if (headerFile.Header.Variant != ExcelVariant.Default)
-                    return false;
+                try
+                {
+                    var headerFile = dataManager.GameData.GetFile<ExcelHeaderFile>($"exd/{sheetName}.exh");
+                    if (headerFile == null || headerFile.Header.Variant != ExcelVariant.Default)
+                        return false;
 
-                var sheet = dataManager.Excel.GetSheet<RawRow>(Language.English, sheetName);
-                return sheet.Columns.Any(col => col.Type == ExcelColumnDataType.String);
-            }
-            catch
-            {
-                return false;
-            }
-        }).OrderBy(sheetName => sheetName, StringComparer.InvariantCulture).ToArray();
+                    var sheet = dataManager.Excel.GetSheet<RawRow>(Language.English, sheetName);
+                    return sheet.Columns.Any(col => col.Type == ExcelColumnDataType.String);
+                }
+                catch
+                {
+                    return false;
+                }
+            }).OrderBy(sheetName => sheetName, StringComparer.InvariantCulture).ToArray();
+        });
+
+        if (this.validImportSheetNames == null)
+        {
+            ImGui.Text("Loading sheets..."u8);
+            return;
+        }
 
         var sheetChanged = ImGui.Combo("Sheet Name", ref this.importSelectedSheetName, this.validImportSheetNames);
 
@@ -625,7 +647,7 @@ internal class SeStringCreatorWidget : IDataWindowWidget
                 ImGui.Text(i.ToString());
 
                 ImGui.TableNextColumn();
-                if (ImGui.Selectable($"{value.ToString().Truncate(100)}###Column{i}"))
+                if (ImGui.Selectable($"{value.ToMacroString().Truncate(100)}###Column{i}"))
                 {
                     foreach (var payload in value)
                     {
@@ -649,11 +671,10 @@ internal class SeStringCreatorWidget : IDataWindowWidget
         catch (Exception e)
         {
             ImGui.Text(e.Message);
-            return;
         }
     }
 
-    private unsafe void DrawInputs()
+    private void DrawInputs()
     {
         using var child = ImRaii.Child("Inputs"u8, new Vector2(this.inputsWidth, -1));
         if (!child) return;
@@ -669,8 +690,6 @@ internal class SeStringCreatorWidget : IDataWindowWidget
 
         var arrowUpButtonSize = this.GetIconButtonSize(FontAwesomeIcon.ArrowUp);
         var arrowDownButtonSize = this.GetIconButtonSize(FontAwesomeIcon.ArrowDown);
-        var trashButtonSize = this.GetIconButtonSize(FontAwesomeIcon.Trash);
-        var terminalButtonSize = this.GetIconButtonSize(FontAwesomeIcon.Terminal);
 
         var entryToRemove = -1;
         var entryToMoveUp = -1;
@@ -687,7 +706,7 @@ internal class SeStringCreatorWidget : IDataWindowWidget
             ImGui.TableNextColumn(); // Type
             var type = (int)entry.Type;
             ImGui.SetNextItemWidth(-1);
-            if (ImGui.Combo($"##Type{i}", ref type, ["String", "Macro", "Fixed"]))
+            if (ImGui.Combo($"##Type{i}", ref type, TextEntryTypeOptions))
             {
                 entry.Type = (TextEntryType)type;
                 updateString |= true;
@@ -696,7 +715,7 @@ internal class SeStringCreatorWidget : IDataWindowWidget
             ImGui.TableNextColumn(); // Text
             var message = entry.Message;
             ImGui.SetNextItemWidth(-1);
-            if (ImGui.InputText($"##{i}_Message", ref message, 255))
+            if (ImGui.InputText($"##{i}_Message", ref message, 2048))
             {
                 entry.Message = message;
                 updateString |= true;
@@ -779,26 +798,26 @@ internal class SeStringCreatorWidget : IDataWindowWidget
         }
     }
 
-    private unsafe void UpdateInputString(bool resetLocalParameters = true)
+    private void UpdateInputString(bool resetLocalParameters = true)
     {
-        var sb = new LSeStringBuilder();
+        using var rssb = new RentedSeStringBuilder();
 
         foreach (var entry in this.entries)
         {
             switch (entry.Type)
             {
                 case TextEntryType.String:
-                    sb.Append(entry.Message);
+                    rssb.Builder.Append(entry.Message);
                     break;
 
                 case TextEntryType.Macro:
                 case TextEntryType.Fixed:
-                    sb.AppendMacroString(entry.Message);
+                    rssb.Builder.AppendMacroString(entry.Message);
                     break;
             }
         }
 
-        this.input = sb.ToReadOnlySeString();
+        this.input = rssb.Builder.ToReadOnlySeString();
 
         if (resetLocalParameters)
             this.localParameters = null;
@@ -977,10 +996,9 @@ internal class SeStringCreatorWidget : IDataWindowWidget
                     }
                 }
 
-                var builder = LSeStringBuilder.SharedPool.Get();
-                builder.AppendIcon(iconId);
-                ImGuiHelpers.SeStringWrapped(builder.ToArray());
-                LSeStringBuilder.SharedPool.Return(builder);
+                using var rssb = new RentedSeStringBuilder();
+                rssb.Builder.AppendIcon(iconId);
+                ImGuiHelpers.SeStringWrapped(rssb.Builder.ToArray());
 
                 ImGui.SameLine();
             }
@@ -1004,14 +1022,14 @@ internal class SeStringCreatorWidget : IDataWindowWidget
 
             if (macroCode is MacroCode.JaNoun or MacroCode.EnNoun or MacroCode.DeNoun or MacroCode.FrNoun && exprIdx == 1)
             {
-                var language = macroCode switch
+                var macroLanguage = macroCode switch
                 {
                     MacroCode.JaNoun => ClientLanguage.Japanese,
                     MacroCode.DeNoun => ClientLanguage.German,
                     MacroCode.FrNoun => ClientLanguage.French,
                     _ => ClientLanguage.English,
                 };
-                var articleTypeEnumType = language switch
+                var articleTypeEnumType = macroLanguage switch
                 {
                     ClientLanguage.Japanese => typeof(JapaneseArticleType),
                     ClientLanguage.German => typeof(GermanArticleType),
@@ -1190,12 +1208,10 @@ internal class SeStringCreatorWidget : IDataWindowWidget
                 if (expressionType == (int)ExpressionType.LocalNumber)
                 {
                     parameters[index] = new SeStringParameter(0);
-                    return;
                 }
                 else if (expressionType == (int)ExpressionType.LocalString)
                 {
                     parameters[index] = new SeStringParameter(string.Empty);
-                    return;
                 }
             }
         }

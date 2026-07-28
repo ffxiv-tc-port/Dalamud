@@ -1,5 +1,6 @@
-﻿using Dalamud.Configuration.Internal;
-using Dalamud.Game.Addon.Events.EventDataTypes;
+using System.Numerics;
+
+using Dalamud.Configuration.Internal;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Utility;
@@ -40,6 +41,11 @@ public interface IReadOnlyDtrBarEntry
     public bool Shown { get; }
 
     /// <summary>
+    /// Gets a value indicating this entry's minimum width.
+    /// </summary>
+    public ushort MinimumWidth { get; }
+
+    /// <summary>
     /// Gets a value indicating whether the user has hidden this entry from view through the Dalamud settings.
     /// </summary>
     public bool UserHidden { get; }
@@ -48,6 +54,11 @@ public interface IReadOnlyDtrBarEntry
     /// Gets an action to be invoked when the user clicks on the dtr entry.
     /// </summary>
     public Action<DtrInteractionEvent>? OnClick { get; }
+
+    /// <summary>
+    /// Gets the axis-aligned bounding box of this entry, in screen coordinates.
+    /// </summary>
+    public (Vector2 Min, Vector2 Max) ScreenBounds { get; }
 }
 
 /// <summary>
@@ -69,6 +80,11 @@ public interface IDtrBarEntry : IReadOnlyDtrBarEntry
     /// Gets or sets a value indicating whether this entry is visible.
     /// </summary>
     public new bool Shown { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value specifying the requested minimum width to make this entry.
+    /// </summary>
+    public new ushort MinimumWidth { get; set; }
 
     /// <summary>
     /// Gets or sets an action to be invoked when the user clicks on the dtr entry.
@@ -122,6 +138,25 @@ internal sealed unsafe class DtrBarEntry : IDisposable, IDtrBarEntry
     /// <inheritdoc cref="IDtrBarEntry.Tooltip" />
     public SeString? Tooltip { get; set; }
 
+    /// <inheritdoc cref="MinimumWidth" />
+    public ushort MinimumWidth
+    {
+        get;
+        set
+        {
+            field = value;
+            if (this.TextNode is not null)
+            {
+                if (this.TextNode->GetWidth() < value)
+                {
+                    this.TextNode->SetWidth(value);
+                }
+            }
+
+            this.Dirty = true;
+        }
+    }
+
     /// <inheritdoc/>
     public Action<DtrInteractionEvent>? OnClick { get; set; }
 
@@ -143,8 +178,19 @@ internal sealed unsafe class DtrBarEntry : IDisposable, IDtrBarEntry
     }
 
     /// <inheritdoc/>
-    [Api13ToDo("Maybe make this config scoped to internal name?")]
+    [Api15ToDo("Maybe make this config scoped to internal name?")]
     public bool UserHidden => this.configuration.DtrIgnore?.Contains(this.Title) ?? false;
+
+    /// <inheritdoc/>
+    public (Vector2 Min, Vector2 Max) ScreenBounds
+        => this.TextNode switch
+        {
+            null => default,
+            var node => node->IsVisible()
+                            ? (new(node->ScreenX, node->ScreenY),
+                                  new(node->ScreenX + node->GetWidth(), node->ScreenY + node->GetHeight()))
+                            : default,
+        };
 
     /// <summary>
     /// Gets or sets the internal text node of this entry.

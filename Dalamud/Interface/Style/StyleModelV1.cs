@@ -3,6 +3,7 @@ using System.Numerics;
 
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Colors;
+
 using Newtonsoft.Json;
 
 namespace Dalamud.Interface.Style;
@@ -17,7 +18,7 @@ public class StyleModelV1 : StyleModel
     /// </summary>
     private StyleModelV1()
     {
-        this.Colors = new Dictionary<string, Vector4>();
+        this.Colors = [];
         this.Name = "Unknown";
     }
 
@@ -25,7 +26,7 @@ public class StyleModelV1 : StyleModel
     /// Gets the standard Dalamud look.
     /// </summary>
     public static StyleModel DalamudStandard { get; } = Deserialize(
-        "DS1H4sIAAAAAAAACqWYW3ObOBSA/0qG52yHi0DgtybeNg9tJxNnp5u+ybaCqYnlYuw0zeS/79EVSdg7AechNvicj3OXxGtAgkn0IbwM5sHkNfg3mOT84kF8vl0Gi2CS8RvLYBLyT6qkQiUVfkhB6hEYl0GpZFeKWAUTxD/JXMn/VMqZUoZfQXmtxGol9aSkkJJKhdTGuyt1mXc3Fne3R2V/wc/CrgbsEybslLct3BCP3iudgyBdBs/q+rcy7cV4n1re/+nFJOK3CVH3E3U/kRFl4OhrcE9/t0avQFGEM80s0izPYgyXP8SluEJw+V0EFhhceVrtyLymSwNBUZGFONcUhHOURAlWlBQVIQgkFuV7tVmy56vSEKJQIjLtBhiFcJgpRCQNySzE9aqqlzYhjrjxiQagNCzyUHsSW5q3bLvf2ppG9MF9ltTkAYDfLcAVa5a0MfqdhNCPM/GXK/3E0D392YpADLoECrGk0A6EIvKRooQmT4byqSFP1HZDR0xaASiIiM5BjMM0z+Mj+jfsQBsrl3GcpDE8TXNk9ow3Msqoz/m4aKtD16MynUh701ElRqTbjul91daON647kXAfaTM6ug/wzeCQNC80xuipqIjkxH3MNatrst1ZcRlM+ko3+yvS2D4lmIdThzaShFgjRGRjOyizRQN2zF2ILJNYQ0SCNMMErY/43PBhOLZkHUyvZER/a7cS+YcUDAknI3QK5iVMlon2zkBk+dqQ6xVdrL+SZn3CjFTkq1CAvDfIZnUFTehGZSTgf11w2rjfxVf7tmWbU4lBsm10ejMehCTt6/cyIgWRGcg6fAKD+00sMX7ziEKLdA8m3K0Im7Eu82wX2w0l9mAc3DJS/+yJJDFnDqQZ3ZKGtGzUnO+iY5PO7hsNGtszd3RX/aGfm2o7uOaB5wB8XwYVfYfxPPFCnOqsSHNkyuxhbTXv8El/ZJANbRtg+B7kSVhgbBAxwgk2GyoY73mWFpmL+GfzyBZ7Z7EZvPpZFN8is648OAn/4Q4Yg5qyxbralLcNPVT0eeRwVJC/n7bty1nbvNuatV+qDd2NqzSj7qcauVHJrKiInbpDuKl2LSthn9Opu1bk0hE9GfnOKytOQXqmyAXdsHQLqJEvl3c70zWVE+6crYXAqI1o27BNOX5vYKG+VOWqHb0jFaC70eeC0IN8rNsx8ZGTjp9zZrSmi5bap4z3j8uYd0FDymnDtvekKak2RpSXzLQ4JcXaGbvqvpHDDcSyduI5qPKBIE9Z0IY+6r0mGMC0ehqdlJzvhdmS1JLmogacesDjN34ah9NGMAmmpKpfLu7YvuXdffHXxTVbUvg3J5B1eGkgj7qk53B4xNNuEcFKShcptqTgfcQ7pJb9c7qeCpYU9ewSn73R82hYOdbtKL7JcuPfjGzZ8xSHujBt5qr3xiA78uSqJ2XWHrlLsWT1qxX+RLVcnoz0+oTfYtdipOqO6Ie6cGrcmsf+5seS6nbXUEzeY23j9BudzmmUyBC6wek2Txn/XQ03Y6ETHHjz46UF9jRHnt3tMmGK6KcbJuz7LdluKczNlNbpEXQlCaKw0MDdt/8ADUD9a2sTAAA=")!;
+        "DS1H4sIAAAAAAAACpWXXXPaOhCG/8oZXXsYWbblj7umnNNcNJ1Mw5m0vVOMYlSM5QpDknb47x3ZWlsGDMoVoHkfdvVqtV7/QQxl/gx76Allf9A3lPlE//qOMh/P8MFDOSwtUYb1JzdCPItaHZ5FBw89o8z3UAHilRELWGBPZuUnxGl/fUcZbcOsUea3eZRGtzG6ZCSrztPyrLgGMeyoXf2FMtLSCmU+1V+28H8NfNnBlz3KAv35Avt4Nem9nXXhd7+KrVXGzDIdpZfLUq8v+GvTY2louDTx0A+T+iOkrqVzsWVPJV/2CDVE3AJ4FicW8SiqpXy5KYa8ojAJEpzEhvIJDsOQAkxwSH2ss+j/4uNKlEv7H+I0JgmBsD4NfUID4GNKoxh3PJ6FBw/dy3pXj3ggQ4BAniYHD91IteTqxEhsxJ0fXW120ocVW8oXJ+A/xTbcysXHfkpxnMBmiGEC4kc0obYNBr2Ve64s931i0BB2QynsZqA+5I3Y81MohoApQIkumIVoSjtNDDXmG7lvn7FRH8WYtHkEfZRlyeqttaEr3B2vdjdM2cn1lQCbIZb+IVeyLJ/GBBQ57oq8i3WKfFK6axx7piuvhSaZyTOK4IrQKdT1oOBq8Hx9x9S6B8C8tPdiZEYplnxiW6elkEYjZJQatDQ8i8NzHt7smkZWJ2IKQXyIQXrx2LWBSci5ouuYiZxCOgrTEbecje510jcQsMq+OJ3a9STxLIp6yP2yUW0wr5lijRwyC4/N0g60et/WT+Z2GofYnOM5aj8OHvrKt+I3/6RE7WACISPiHRmGY/IdFmpwYRX05XawcL+d5kwXJ5dyqBxoH8E4wv/Vs8x3o6Z2uYFayPu66Fzma1EV94rvBX9x8SsYqH83dfPm3OXvS9l8FhXfujanHnjfxdbYrdg2slBs49BAomNmKtzZprDQs0x3bV1GBAsyz/5Gyapwubp0DH4Wxapx4HAC3NfxHHVhyhjkH8rGZe4hbRD+2jzwkucNt8etS21Fj1dzxYq5kvWCqYI3Vw+5665f2P5WFKvSMuESos/4C9t3w6SoimP2cpbJET0XGwcjA91Y7uSSlR3oRkXkoN8S2IajDC2UrEXOyn8eWJU3O6bekIeW3dTNTrZN+hnYbidDY9O1MT1o50Mt9S8E/URod8ChKRHoY0E/0USWkDu+FDz3un6MTc82hOLabe5kK9cGIxynnp+OVq9PK7EfDSxZOZxIcNxaUtvAjePRVY77gJfMq8YMj+orGf5yOxEYTSwD4VkZ2X8HjwbLQCjBYNAdPLTXcxg+/AVMRvRx/Q8AAA==")!;
 
     /// <summary>
     /// Gets the standard Dalamud look.
@@ -170,7 +171,7 @@ public class StyleModelV1 : StyleModel
         model.SelectableTextAlign = style.SelectableTextAlign;
         model.DisplaySafeAreaPadding = style.DisplaySafeAreaPadding;
 
-        model.Colors = new Dictionary<string, Vector4>();
+        model.Colors = [];
 
         foreach (var imGuiCol in Enum.GetValues<ImGuiCol>())
         {
@@ -206,6 +207,14 @@ public class StyleModelV1 : StyleModel
         };
 
         return model;
+    }
+
+    public override StyleModel Clone()
+    {
+        var clone = (StyleModelV1)this.MemberwiseClone();
+        clone.Colors        = new Dictionary<string, Vector4>(this.Colors);
+        clone.BuiltInColors = this.BuiltInColors?.Clone();
+        return clone;
     }
 
     /// <summary>

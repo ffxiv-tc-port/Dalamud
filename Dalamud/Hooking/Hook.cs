@@ -4,6 +4,9 @@ using System.Runtime.InteropServices;
 
 using Dalamud.Configuration.Internal;
 using Dalamud.Hooking.Internal;
+using Dalamud.Hooking.Internal.Verification;
+
+using TerraFX.Interop.Windows;
 
 namespace Dalamud.Hooking;
 
@@ -14,13 +17,6 @@ namespace Dalamud.Hooking;
 /// <typeparam name="T">Delegate type to represents a function prototype. This must be the same prototype as original function do.</typeparam>
 public abstract class Hook<T> : IDalamudHook where T : Delegate
 {
-#pragma warning disable SA1310
-    // ReSharper disable once InconsistentNaming
-    private const ulong IMAGE_ORDINAL_FLAG64 = 0x8000000000000000;
-    // ReSharper disable once InconsistentNaming
-    private const uint IMAGE_ORDINAL_FLAG32 = 0x80000000;
-#pragma warning restore SA1310
-
     private readonly IntPtr address;
 
     /// <summary>
@@ -123,25 +119,13 @@ public abstract class Hook<T> : IDalamudHook where T : Delegate
         module ??= Process.GetCurrentProcess().MainModule;
         if (module == null)
             throw new InvalidOperationException("Current module is null?");
-        var pDos = (PeHeader.IMAGE_DOS_HEADER*)module.BaseAddress;
-        var pNt = (PeHeader.IMAGE_FILE_HEADER*)(module.BaseAddress + (int)pDos->e_lfanew + 4);
-        var isPe64 = pNt->SizeOfOptionalHeader == Marshal.SizeOf<PeHeader.IMAGE_OPTIONAL_HEADER64>();
-        PeHeader.IMAGE_DATA_DIRECTORY* pDataDirectory;
-        if (isPe64)
-        {
-            var pOpt = (PeHeader.IMAGE_OPTIONAL_HEADER64*)(module.BaseAddress + (int)pDos->e_lfanew + 4 + Marshal.SizeOf<PeHeader.IMAGE_FILE_HEADER>());
-            pDataDirectory = &pOpt->ImportTable;
-        }
-        else
-        {
-            var pOpt = (PeHeader.IMAGE_OPTIONAL_HEADER32*)(module.BaseAddress + (int)pDos->e_lfanew + 4 + Marshal.SizeOf<PeHeader.IMAGE_FILE_HEADER>());
-            pDataDirectory = &pOpt->ImportTable;
-        }
-
+        var pDos = (IMAGE_DOS_HEADER*)module.BaseAddress;
+        var pNt = (IMAGE_NT_HEADERS64*)(module.BaseAddress + pDos->e_lfanew);
+        var pDataDirectory = &pNt->OptionalHeader.DataDirectory[IMAGE.IMAGE_DIRECTORY_ENTRY_IMPORT];
         var moduleNameLowerWithNullTerminator = (moduleName + "\0").ToLowerInvariant();
-        foreach (ref var importDescriptor in new Span<PeHeader.IMAGE_IMPORT_DESCRIPTOR>(
-                     (PeHeader.IMAGE_IMPORT_DESCRIPTOR*)(module.BaseAddress + (int)pDataDirectory->VirtualAddress),
-                     (int)(pDataDirectory->Size / Marshal.SizeOf<PeHeader.IMAGE_IMPORT_DESCRIPTOR>())))
+        foreach (ref var importDescriptor in new Span<IMAGE_IMPORT_DESCRIPTOR>(
+                     (IMAGE_IMPORT_DESCRIPTOR*)(module.BaseAddress + (int)pDataDirectory->VirtualAddress),
+                     (int)(pDataDirectory->Size / sizeof(IMAGE_IMPORT_DESCRIPTOR))))
         {
             // Having all zero values signals the end of the table. We didn't find anything.
             if (importDescriptor.Characteristics == 0)
@@ -159,17 +143,10 @@ public abstract class Hook<T> : IDalamudHook where T : Delegate
                 (int)Math.Min(pDataDirectory->Size + pDataDirectory->VirtualAddress - importDescriptor.Name, moduleNameLowerWithNullTerminator.Length));
 
             // Is this entry about the DLL that we're looking for? (Case insensitive)
-            if (currentDllNameWithNullTerminator.ToLowerInvariant() != moduleNameLowerWithNullTerminator)
+            if (!currentDllNameWithNullTerminator.Equals(moduleNameLowerWithNullTerminator, StringComparison.InvariantCultureIgnoreCase))
                 continue;
 
-            if (isPe64)
-            {
-                return new FunctionPointerVariableHook<T>(FromImportHelper64(module.BaseAddress, ref importDescriptor, ref *pDataDirectory, functionName, hintOrOrdinal), detour, Assembly.GetCallingAssembly());
-            }
-            else
-            {
-                return new FunctionPointerVariableHook<T>(FromImportHelper32(module.BaseAddress, ref importDescriptor, ref *pDataDirectory, functionName, hintOrOrdinal), detour, Assembly.GetCallingAssembly());
-            }
+            return new FunctionPointerVariableHook<T>(FromImportHelper(module.BaseAddress, ref importDescriptor, ref *pDataDirectory, functionName, hintOrOrdinal), detour, Assembly.GetCallingAssembly());
         }
 
         throw new MissingMethodException("Specified dll not found");
@@ -201,19 +178,19 @@ public abstract class Hook<T> : IDalamudHook where T : Delegate
         if (EnvironmentConfiguration.DalamudForceMinHook)
             useMinHook = true;
 
-        using var moduleHandle = Windows.Win32.PInvoke.GetModuleHandle(moduleName);
-        if (moduleHandle.IsInvalid)
+        var moduleHandle = Windows.Win32.PInvoke.GetModuleHandle(moduleName);
+        if (moduleHandle.IsNull)
             throw new Exception($"Could not get a handle to module {moduleName}");
 
-        var procAddress = (nint)Windows.Win32.PInvoke.GetProcAddress(moduleHandle, exportName);
-        if (procAddress == IntPtr.Zero)
+        var procAddress = Windows.Win32.PInvoke.GetProcAddress(moduleHandle, exportName);
+        if (procAddress.IsNull)
             throw new Exception($"Could not get the address of {moduleName}::{exportName}");
 
-        procAddress = HookManager.FollowJmp(procAddress);
+        var address = HookManager.FollowJmp(procAddress.Value);
         if (useMinHook)
-            return new MinHookHook<T>(procAddress, detour, Assembly.GetCallingAssembly());
+            return new MinHookHook<T>(address, detour, Assembly.GetCallingAssembly());
         else
-            return new ReloadedHook<T>(procAddress, detour, Assembly.GetCallingAssembly());
+            return new ReloadedHook<T>(address, detour, Assembly.GetCallingAssembly());
     }
 
     /// <summary>
@@ -230,6 +207,8 @@ public abstract class Hook<T> : IDalamudHook where T : Delegate
         if (EnvironmentConfiguration.DalamudForceMinHook)
             useMinHook = true;
 
+        HookVerifier.Verify<T>(procAddress);
+
         procAddress = HookManager.FollowJmp(procAddress);
         if (useMinHook)
             return new MinHookHook<T>(procAddress, detour, Assembly.GetCallingAssembly());
@@ -242,16 +221,13 @@ public abstract class Hook<T> : IDalamudHook where T : Delegate
     /// </summary>
     protected void CheckDisposed()
     {
-        if (this.IsDisposed)
-        {
-            throw new ObjectDisposedException(message: "Hook is already disposed", null);
-        }
+        ObjectDisposedException.ThrowIf(this.IsDisposed, this);
     }
 
-    private static unsafe IntPtr FromImportHelper32(IntPtr baseAddress, ref PeHeader.IMAGE_IMPORT_DESCRIPTOR desc, ref PeHeader.IMAGE_DATA_DIRECTORY dir, string functionName, uint hintOrOrdinal)
+    private static unsafe IntPtr FromImportHelper(IntPtr baseAddress, ref IMAGE_IMPORT_DESCRIPTOR desc, ref IMAGE_DATA_DIRECTORY dir, string functionName, uint hintOrOrdinal)
     {
-        var importLookupsOversizedSpan = new Span<uint>((uint*)(baseAddress + (int)desc.OriginalFirstThunk), (int)((dir.Size - desc.OriginalFirstThunk) / Marshal.SizeOf<int>()));
-        var importAddressesOversizedSpan = new Span<uint>((uint*)(baseAddress + (int)desc.FirstThunk), (int)((dir.Size - desc.FirstThunk) / Marshal.SizeOf<int>()));
+        var importLookupsOversizedSpan = new Span<ulong>((ulong*)(baseAddress + (int)desc.OriginalFirstThunk), (int)((dir.Size - desc.OriginalFirstThunk) / sizeof(ulong)));
+        var importAddressesOversizedSpan = new Span<ulong>((ulong*)(baseAddress + (int)desc.FirstThunk), (int)((dir.Size - desc.FirstThunk) / sizeof(ulong)));
 
         var functionNameWithNullTerminator = functionName + "\0";
         for (int i = 0, i_ = Math.Min(importLookupsOversizedSpan.Length, importAddressesOversizedSpan.Length); i < i_ && importLookupsOversizedSpan[i] != 0 && importAddressesOversizedSpan[i] != 0; i++)
@@ -259,59 +235,9 @@ public abstract class Hook<T> : IDalamudHook where T : Delegate
             var importLookup = importLookupsOversizedSpan[i];
 
             // Is this entry importing by ordinals? A lot of socket functions are the case.
-            if ((importLookup & IMAGE_ORDINAL_FLAG32) != 0)
+            if ((importLookup & IMAGE.IMAGE_ORDINAL_FLAG64) != 0)
             {
-                var ordinal = importLookup & ~IMAGE_ORDINAL_FLAG32;
-
-                // Is this the entry?
-                if (hintOrOrdinal == 0 || ordinal != hintOrOrdinal)
-                    continue;
-
-                // Is this entry not importing by ordinals, and are we using hint exclusively to find the entry?
-            }
-            else
-            {
-                var hint = Marshal.ReadInt16(baseAddress + (int)importLookup);
-
-                if (functionName.Length > 0)
-                {
-                    // Is this the entry?
-                    if (hint != hintOrOrdinal)
-                        continue;
-                }
-                else
-                {
-                    // Name must be contained in this directory.
-                    var currentFunctionNameWithNullTerminator = Marshal.PtrToStringUTF8(
-                        baseAddress + (int)importLookup + 2,
-                        (int)Math.Min(dir.VirtualAddress + dir.Size - (uint)baseAddress - importLookup - 2, (uint)functionNameWithNullTerminator.Length));
-
-                    // Is this entry about the function that we're looking for?
-                    if (currentFunctionNameWithNullTerminator != functionNameWithNullTerminator)
-                        continue;
-                }
-            }
-
-            return baseAddress + (int)desc.FirstThunk + (i * Marshal.SizeOf<int>());
-        }
-
-        throw new MissingMethodException("Specified method not found");
-    }
-
-    private static unsafe IntPtr FromImportHelper64(IntPtr baseAddress, ref PeHeader.IMAGE_IMPORT_DESCRIPTOR desc, ref PeHeader.IMAGE_DATA_DIRECTORY dir, string functionName, uint hintOrOrdinal)
-    {
-        var importLookupsOversizedSpan = new Span<ulong>((ulong*)(baseAddress + (int)desc.OriginalFirstThunk), (int)((dir.Size - desc.OriginalFirstThunk) / Marshal.SizeOf<ulong>()));
-        var importAddressesOversizedSpan = new Span<ulong>((ulong*)(baseAddress + (int)desc.FirstThunk), (int)((dir.Size - desc.FirstThunk) / Marshal.SizeOf<ulong>()));
-
-        var functionNameWithNullTerminator = functionName + "\0";
-        for (int i = 0, i_ = Math.Min(importLookupsOversizedSpan.Length, importAddressesOversizedSpan.Length); i < i_ && importLookupsOversizedSpan[i] != 0 && importAddressesOversizedSpan[i] != 0; i++)
-        {
-            var importLookup = importLookupsOversizedSpan[i];
-
-            // Is this entry importing by ordinals? A lot of socket functions are the case.
-            if ((importLookup & IMAGE_ORDINAL_FLAG64) != 0)
-            {
-                var ordinal = importLookup & ~IMAGE_ORDINAL_FLAG64;
+                var ordinal = importLookup & ~IMAGE.IMAGE_ORDINAL_FLAG64;
 
                 // Is this the entry?
                 if (hintOrOrdinal == 0 || ordinal != hintOrOrdinal)
@@ -342,7 +268,7 @@ public abstract class Hook<T> : IDalamudHook where T : Delegate
                 }
             }
 
-            return baseAddress + (int)desc.FirstThunk + (i * Marshal.SizeOf<ulong>());
+            return baseAddress + (int)desc.FirstThunk + (i * sizeof(ulong));
         }
 
         throw new MissingMethodException("Specified method not found");

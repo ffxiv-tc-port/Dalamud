@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using System.Runtime.Loader;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -32,7 +33,7 @@ internal class LocalPlugin : IAsyncDisposable
     protected LocalPluginManifest manifest;
 #pragma warning restore SA1401
 
-    private static readonly ModuleLog Log = new("LOCALPLUGIN");
+    private static readonly ModuleLog Log = ModuleLog.Create<LocalPlugin>();
 
     private readonly FileInfo manifestFile;
     private readonly FileInfo disabledFile;
@@ -100,6 +101,14 @@ internal class LocalPlugin : IAsyncDisposable
 
             needsSaveDueToLegacyFiles = true;
         }
+        
+        // 迁移旧的 `预装库`，保留一段时间待大部分用户迁移完成可删除
+        if (this.manifest.InstalledFromUrl is PluginRepository.MainRepoUrlSoil or PluginRepository.MainRepoUrlGoatCorp)
+        {
+            this.manifest.InstalledFromUrl = SpecialPluginSource.MainRepo;
+            
+            needsSaveDueToLegacyFiles = true;
+        }
 
         var pluginManager = Service<PluginManager>.Get();
         this.IsBanned = pluginManager.IsManifestBanned(this.manifest); // && !this.IsDev;
@@ -159,6 +168,12 @@ internal class LocalPlugin : IAsyncDisposable
     /// 获取一个值，表示插件是否已加载并正在运行。
     /// </summary>
     public bool IsLoaded => this.State == PluginState.Loaded;
+
+    /// <summary>
+    /// Gets a value indicating whether this plugin is in the default profile.
+    /// </summary>
+    public bool IsInDefaultProfile =>
+        Service<ProfileManager>.Get().IsInDefaultProfile(this.EffectiveWorkingPluginId);
 
     /// <summary>
     /// 获取一个值，表示此插件是否被任何配置文件希望激活。
@@ -300,9 +315,9 @@ internal class LocalPlugin : IAsyncDisposable
             if (this.manifest.ApplicableVersion < dalamud.StartInfo.GameVersion)
                 throw new PluginPreconditionFailedException($"无法加载 {this.Name}，游戏版本新于适用版本 {this.manifest.ApplicableVersion}");
 
-            // 我们希望允许加载 API 级别低于当前 Dalamud API 级别的开发插件，以便于开发
-            if (APILevel != PluginManager.DalamudApiLevel && !pluginManager.LoadAllApiLevels && !this.IsDev)
-                throw new PluginPreconditionFailedException($"无法加载 {this.Name}，不兼容的 API 级别 {this.manifest.EffectiveApiLevel}");
+            // We want to allow loading dev plugins with a lower API level than the current Dalamud API level, for ease of development
+            if (!pluginManager.LoadAllApiLevels && !this.IsDev && this.manifest.EffectiveApiLevel < PluginManager.DalamudApiLevel)
+                throw new PluginPreconditionFailedException($"无法加载 {this.Name}, 不兼容的 API 等级 {this.manifest.EffectiveApiLevel}");
 
             // 我们可能想在这里抛出异常？
             if (!this.IsWantedByAnyProfile)
@@ -314,7 +329,7 @@ internal class LocalPlugin : IAsyncDisposable
             if (!this.CheckPolicy())
                 throw new PluginPreconditionFailedException($"由于加载策略禁止，无法加载 {this.Name}");
 
-            if (this.Manifest.MinimumDalamudVersion != null && this.Manifest.MinimumDalamudVersion > Util.AssemblyVersionParsed)
+            if (this.Manifest.MinimumDalamudVersion != null && this.Manifest.MinimumDalamudVersion > Versioning.GetAssemblyVersionParsed())
                 throw new PluginPreconditionFailedException($"Unable to load {this.Name}, Dalamud version is lower than minimum required version {this.Manifest.MinimumDalamudVersion}");
 
             this.State = PluginState.Loading;
@@ -552,7 +567,15 @@ internal class LocalPlugin : IAsyncDisposable
     }
 
     /// <summary>
-    /// 保存此插件清单。
+    /// Checks whether this plugin loads in the given load context.
+    /// </summary>
+    /// <param name="context">The load context to check.</param>
+    /// <returns>Whether this plugin loads in the given load context.</returns>
+    public bool LoadsIn(AssemblyLoadContext context)
+        => this.loader?.LoadContext == context;
+
+    /// <summary>
+    /// Save this plugin manifest.
     /// </summary>
     /// <param name="reason">为什么应该保存。</param>
     protected void SaveManifest(string reason) => this.manifest.Save(this.manifestFile, reason);

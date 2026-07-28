@@ -1,11 +1,12 @@
-﻿using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Plugin.Services;
 
-namespace Dalamud.Game.ClientState.Objects;
+namespace Dalamud.Plugin.Services;
 
 /// <summary>
 /// Get and set various kinds of targets for the player.
 /// </summary>
-public interface ITargetManager
+public interface ITargetManager : IDalamudService
 {
     /// <summary>
     /// Gets or sets the current target.
@@ -36,13 +37,13 @@ public interface ITargetManager
     /// Set to null to clear the target.
     /// </summary>
     public IGameObject? SoftTarget { get; set; }
-    
+
     /// <summary>
     /// Gets or sets the gpose target.
     /// Set to null to clear the target.
     /// </summary>
     public IGameObject? GPoseTarget { get; set; }
-    
+
     /// <summary>
     /// Gets or sets the mouseover nameplate target.
     /// Set to null to clear the target.

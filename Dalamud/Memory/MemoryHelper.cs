@@ -6,11 +6,15 @@ using System.Text;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Memory.Exceptions;
 using Dalamud.Utility;
+
 using FFXIVClientStructs.FFXIV.Client.System.Memory;
 using FFXIVClientStructs.FFXIV.Client.System.String;
+
 using Lumina.Text.Payloads;
 using Lumina.Text.ReadOnly;
+
 using Microsoft.Extensions.ObjectPool;
+
 using Windows.Win32.Foundation;
 using Windows.Win32.System.Memory;
 
@@ -265,6 +269,31 @@ public static unsafe class MemoryHelper
     }
 
     /// <summary>
+    /// Compares a UTF-16 character span with a null-terminated UTF-16 string at <paramref name="memoryAddress"/>.
+    /// </summary>
+    /// <param name="charSpan">UTF-16 character span (e.g., from a string literal).</param>
+    /// <param name="memoryAddress">Address of null-terminated UTF-16 (wide) string, as used by Windows APIs.</param>
+    /// <returns><see langword="true"/> if equal; otherwise, <see langword="false"/>.</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe bool EqualsZeroTerminatedWideString(
+        scoped ReadOnlySpan<char> charSpan,
+        nint memoryAddress)
+    {
+        if (memoryAddress == 0)
+            return charSpan.Length == 0;
+
+        char* p = (char*)memoryAddress;
+
+        foreach (char c in charSpan)
+        {
+            if (*p++ != c)
+                return false;
+        }
+
+        return *p == '\0';
+    }
+
+    /// <summary>
     /// Read a UTF-8 encoded string from a specified memory address.
     /// </summary>
     /// <remarks>
@@ -382,6 +411,7 @@ public static unsafe class MemoryHelper
     /// <param name="utf8String">The memory address to read from.</param>
     /// <returns>The read in string.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Obsolete("Use the extension functions from Utf8StringExtensions instead.")]
     public static SeString ReadSeString(Utf8String* utf8String) =>
         utf8String == null ? string.Empty : SeString.Parse(utf8String->AsSpan());
 
@@ -613,6 +643,7 @@ public static unsafe class MemoryHelper
     /// <param name="utf8String">The memory address to read from.</param>
     /// <param name="value">The read in string.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Obsolete("Use the extension functions from Utf8StringExtensions instead.")]
     public static unsafe void ReadSeString(Utf8String* utf8String, out SeString value)
         => value = ReadSeString(utf8String);
 

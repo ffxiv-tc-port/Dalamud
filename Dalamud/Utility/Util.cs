@@ -3,15 +3,12 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
 using System.Numerics;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -25,9 +22,13 @@ using Dalamud.Interface.Internal;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Support;
+
 using Lumina.Excel.Sheets;
+
 using Serilog;
+
 using TerraFX.Interop.Windows;
+
 using Windows.Win32.System.Memory;
 using Windows.Win32.System.Ole;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -68,103 +69,9 @@ public static partial class Util
     ];
 
     private static readonly Type GenericSpanType = typeof(Span<>);
-    private static string? scmVersionInternal;
-    private static string? gitHashInternal;
-    private static string? gitHashClientStructsInternal;
 
     private static ulong moduleStartAddr;
     private static ulong moduleEndAddr;
-
-    /// <summary>
-    /// Gets the Dalamud version.
-    /// </summary>
-    [Api13ToDo("Remove. Make both versions here internal. Add an API somewhere.")]
-    public static string AssemblyVersion { get; } =
-        Assembly.GetAssembly(typeof(ChatHandlers))!.GetName().Version!.ToString();
-
-    /// <summary>
-    /// Gets the Dalamud version.
-    /// </summary>
-    internal static Version AssemblyVersionParsed { get; } =
-        Assembly.GetAssembly(typeof(ChatHandlers))!.GetName().Version!;
-
-    /// <summary>
-    /// Gets the SCM Version from the assembly, or null if it cannot be found. This method will generally return
-    /// the <c>git describe</c> output for this build, which will be a raw version if this is a stable build or an
-    /// appropriately-annotated version if this is *not* stable. Local builds will return a `Local Build` text string.
-    /// </summary>
-    /// <returns>The SCM version of the assembly.</returns>
-    public static string GetScmVersion()
-    {
-        if (scmVersionInternal != null) return scmVersionInternal;
-
-        var asm = typeof(Util).Assembly;
-        var attrs = asm.GetCustomAttributes<AssemblyMetadataAttribute>();
-
-        return scmVersionInternal = attrs.First(a => a.Key == "SCMVersion").Value
-                                        ?? asm.GetName().Version!.ToString();
-    }
-    
-    public static async Task<string?> GetLatestVersionAsync()
-    {
-        using var httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Dalamud");
-        
-        var response = await httpClient.GetStringAsync("https://api.github.com/repos/ottercorp/Dalamud/tags");
-        
-        using var doc = JsonDocument.Parse(response);
-        
-        return doc.RootElement.EnumerateArray()
-                  .Select(tag => {
-                      var name = tag.GetProperty("name").GetString()?.Trim();
-                      if (string.IsNullOrEmpty(name)) return (null, null);
-                
-                      // 去除v前缀并进行语义化版本解析
-                      var versionStr = name.StartsWith("v", StringComparison.OrdinalIgnoreCase) 
-                                           ? name[1..] 
-                                           : name;
-                
-                      return Version.TryParse(versionStr, out var ver) 
-                                 ? (name, ver)
-                                 : (null, null);
-                  })
-                  .Where(x => x.ver != null)
-                  .OrderByDescending(x => x.ver)
-                  .FirstOrDefault().name ?? string.Empty;
-    }
-
-    /// <summary>
-    /// Gets the git commit hash value from the assembly or null if it cannot be found. Will be null for Debug builds,
-    /// and will be suffixed with `-dirty` if in release with pending changes.
-    /// </summary>
-    /// <returns>The git hash of the assembly.</returns>
-    public static string? GetGitHash()
-    {
-        if (gitHashInternal != null)
-            return gitHashInternal;
-
-        var asm = typeof(Util).Assembly;
-        var attrs = asm.GetCustomAttributes<AssemblyMetadataAttribute>();
-
-        return gitHashInternal = attrs.FirstOrDefault(a => a.Key == "GitHash")?.Value ?? "N/A";
-    }
-
-    /// <summary>
-    /// Gets the git hash value from the assembly or null if it cannot be found.
-    /// </summary>
-    /// <returns>The git hash of the assembly.</returns>
-    public static string? GetGitHashClientStructs()
-    {
-        if (gitHashClientStructsInternal != null)
-            return gitHashClientStructsInternal;
-
-        var asm = typeof(Util).Assembly;
-        var attrs = asm.GetCustomAttributes<AssemblyMetadataAttribute>();
-
-        gitHashClientStructsInternal = attrs.First(a => a.Key == "GitHashClientStructs").Value;
-
-        return gitHashClientStructsInternal;
-    }
 
     /// <inheritdoc cref="DescribeAddress(nint)"/>
     public static unsafe string DescribeAddress(void* p) => DescribeAddress((nint)p);
@@ -461,7 +368,7 @@ public static partial class Util
     /// <returns>Human readable version.</returns>
     public static string FormatBytes(long bytes)
     {
-        string[] suffix = { "B", "KB", "MB", "GB", "TB" };
+        string[] suffix = ["B", "KB", "MB", "GB", "TB"];
         int i;
         double dblSByte = bytes;
         for (i = 0; i < suffix.Length && bytes >= 1024; i++, bytes /= 1024)
@@ -555,26 +462,7 @@ public static partial class Util
     /// <returns>If Windows 11 has been detected.</returns>
     public static bool IsWindows11() => Environment.OSVersion.Version.Build >= 22000;
 
-    /// <summary>
-    /// Set the proxy.
-    /// </summary>
-    /// <param name="useManualProxy">System proxy/Manual proxy.</param>
-    /// <param name="proxyProtocol">The protocol of proxy.</param>
-    /// <param name="proxyHost">The proxy host.</param>
-    /// <param name="proxyPort">The proxy port.</param>
-    public static void SetProxy(bool useManualProxy, string proxyProtocol, string proxyHost, int proxyPort)
-    {
-        if (useManualProxy)
-        {
-            var proxy = new WebProxy($"{proxyProtocol}://{proxyHost}:{proxyPort}", true);
-            WebRequest.DefaultWebProxy = proxy;
-            HttpClient.DefaultProxy = proxy;
-        }
-
-    }
-
     /// Open a link in the default browser, and attempts to focus the newly launched application.
-    /// </summary>
     /// <param name="url">The link to open.</param>
     public static void OpenLink(string url) => new Thread(static url =>
     {
@@ -724,7 +612,7 @@ public static partial class Util
     internal static string GetRandomName()
     {
         var data = Service<DataManager>.Get();
-        var names = data.GetExcelSheet<BNpcName>()!;
+        var names = data.GetExcelSheet<BNpcName>(ClientLanguage.ChineseSimplified)!;
         var rng = new Random();
 
         return names.GetRowAt(rng.Next(0, names.Count - 1)).Singular.ExtractText();
@@ -800,7 +688,7 @@ public static partial class Util
             $"{actor.Address.ToInt64():X}:{actor.GameObjectId:X}[{tag}] - {actor.ObjectKind} - {actor.Name} - X{actor.Position.X} Y{actor.Position.Y} Z{actor.Position.Z} D{actor.YalmDistanceX} R{actor.Rotation} - Target: {actor.TargetObjectId:X}\n";
 
         if (actor is Npc npc)
-            actorString += $"       DataId: {npc.DataId}  NameId:{npc.NameId}\n";
+            actorString += $"       BaseId: {npc.BaseId}  NameId:{npc.NameId}\n";
 
         if (actor is ICharacter chara)
         {
@@ -834,7 +722,7 @@ public static partial class Util
             $"{actor.Address.ToInt64():X}:{actor.GameObjectId:X}[{tag}] - {actor.ObjectKind} - {actor.Name} - X{actor.Position.X} Y{actor.Position.Y} Z{actor.Position.Z} D{actor.YalmDistanceX} R{actor.Rotation} - Target: {actor.TargetObjectId:X}\n";
 
         if (actor is Npc npc)
-            actorString += $"       DataId: {npc.DataId}  NameId:{npc.NameId}\n";
+            actorString += $"       BaseId: {npc.BaseId}  NameId:{npc.NameId}\n";
 
         if (actor is Character chara)
         {
@@ -872,7 +760,7 @@ public static partial class Util
         var sizeWithTerminators = pathBytesSize + (pathBytes.Length * 2);
 
         var dropFilesSize = sizeof(DROPFILES);
-        var hGlobal = Win32_PInvoke.GlobalAlloc_SafeHandle(
+        var hGlobal = Win32_PInvoke.GlobalAlloc(
             GLOBAL_ALLOC_FLAGS.GHND,
             // struct size + size of encoded strings + null terminator for each
             // string + two null terminators for end of list
@@ -910,12 +798,11 @@ public static partial class Util
         {
             Win32_PInvoke.SetClipboardData(
                 (uint)CLIPBOARD_FORMAT.CF_HDROP,
-                hGlobal);
+                (Windows.Win32.Foundation.HANDLE)hGlobal.Value);
             Win32_PInvoke.CloseClipboard();
             return true;
         }
 
-        hGlobal.Dispose();
         return false;
     }
 
@@ -934,7 +821,7 @@ public static partial class Util
             MethodAttributes.Public | MethodAttributes.Static,
             CallingConventions.Standard,
             null,
-            new[] { typeof(object), typeof(IList<string>), typeof(ulong) },
+            [typeof(object), typeof(IList<string>), typeof(ulong)],
             obj.GetType(),
             true);
 
@@ -961,7 +848,7 @@ public static partial class Util
         ilg.Emit(OpCodes.Call, mm);
         ilg.Emit(OpCodes.Ret);
 
-        dm.Invoke(null, new[] { obj, path, addr });
+        dm.Invoke(null, [obj, path, addr]);
     }
 
 #pragma warning disable CS8500 // This takes the address of, gets the size of, or declares a pointer to a managed type
@@ -1140,8 +1027,8 @@ public static partial class Util
                 foreach (var f in obj.GetType()
                                      .GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.Instance))
                 {
-                    var fixedBuffer = (FixedBufferAttribute)f.GetCustomAttribute(typeof(FixedBufferAttribute));
-                    var offset = (FieldOffsetAttribute)f.GetCustomAttribute(typeof(FieldOffsetAttribute));
+                    var fixedBuffer = f.GetCustomAttribute<FixedBufferAttribute>();
+                    var offset = f.GetCustomAttribute<FieldOffsetAttribute>();
 
                     if (fixedBuffer != null)
                     {

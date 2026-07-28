@@ -26,7 +26,7 @@ namespace Dalamud.Game;
 [ServiceManager.EarlyLoadedService]
 internal sealed class Framework : IInternalDisposableService, IFramework
 {
-    private static readonly ModuleLog Log = new("Framework");
+    private static readonly ModuleLog Log = ModuleLog.Create<Framework>();
 
     private static readonly Stopwatch StatsStopwatch = new();
 
@@ -86,7 +86,7 @@ internal sealed class Framework : IInternalDisposableService, IFramework
     /// <summary>
     /// Gets the stats history mapping.
     /// </summary>
-    public static Dictionary<string, List<double>> StatsHistory { get; } = new();
+    public static Dictionary<string, List<double>> StatsHistory { get; } = [];
 
     /// <inheritdoc/>
     public DateTime LastUpdate { get; private set; } = DateTime.MinValue;
@@ -106,7 +106,7 @@ internal sealed class Framework : IInternalDisposableService, IFramework
     /// <summary>
     /// Gets the list of update sub-delegates that didn't get updated this frame.
     /// </summary>
-    internal List<string> NonUpdatedSubDelegates { get; private set; } = new();
+    internal List<string> NonUpdatedSubDelegates { get; private set; } = [];
 
     /// <summary>
     /// Gets or sets a value indicating whether to dispatch update events.
@@ -121,9 +121,9 @@ internal sealed class Framework : IInternalDisposableService, IFramework
     /// <inheritdoc/>
     public Task DelayTicks(long numTicks, CancellationToken cancellationToken = default)
     {
-        if (this.frameworkDestroy.IsCancellationRequested)
+        if (this.frameworkDestroy.IsCancellationRequested) // Going away
             return Task.FromCanceled(this.frameworkDestroy.Token);
-        if (numTicks <= 0)
+        if (numTicks <= 0 || this.frameworkThreadTaskScheduler.BoundThread == null) // Nonsense or before first tick
             return Task.CompletedTask;
 
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -212,11 +212,10 @@ internal sealed class Framework : IInternalDisposableService, IFramework
         if (cancellationToken == default)
             cancellationToken = this.FrameworkThreadTaskFactory.CancellationToken;
         return this.FrameworkThreadTaskFactory.ContinueWhenAll(
-            new[]
-            {
+            [
                 Task.Delay(delay, cancellationToken),
                 this.DelayTicks(delayTicks, cancellationToken),
-            },
+            ],
             _ => func(),
             cancellationToken,
             TaskContinuationOptions.HideScheduler,
@@ -239,11 +238,10 @@ internal sealed class Framework : IInternalDisposableService, IFramework
         if (cancellationToken == default)
             cancellationToken = this.FrameworkThreadTaskFactory.CancellationToken;
         return this.FrameworkThreadTaskFactory.ContinueWhenAll(
-            new[]
-            {
+            [
                 Task.Delay(delay, cancellationToken),
                 this.DelayTicks(delayTicks, cancellationToken),
-            },
+            ],
             _ => action(),
             cancellationToken,
             TaskContinuationOptions.HideScheduler,
@@ -266,11 +264,10 @@ internal sealed class Framework : IInternalDisposableService, IFramework
         if (cancellationToken == default)
             cancellationToken = this.FrameworkThreadTaskFactory.CancellationToken;
         return this.FrameworkThreadTaskFactory.ContinueWhenAll(
-            new[]
-            {
+            [
                 Task.Delay(delay, cancellationToken),
                 this.DelayTicks(delayTicks, cancellationToken),
-            },
+            ],
             _ => func(),
             cancellationToken,
             TaskContinuationOptions.HideScheduler,
@@ -293,11 +290,10 @@ internal sealed class Framework : IInternalDisposableService, IFramework
         if (cancellationToken == default)
             cancellationToken = this.FrameworkThreadTaskFactory.CancellationToken;
         return this.FrameworkThreadTaskFactory.ContinueWhenAll(
-            new[]
-            {
+            [
                 Task.Delay(delay, cancellationToken),
                 this.DelayTicks(delayTicks, cancellationToken),
-            },
+            ],
             _ => func(),
             cancellationToken,
             TaskContinuationOptions.HideScheduler,
@@ -333,7 +329,7 @@ internal sealed class Framework : IInternalDisposableService, IFramework
     internal static void AddToStats(string key, double ms)
     {
         if (!StatsHistory.ContainsKey(key))
-            StatsHistory.Add(key, new List<double>());
+            StatsHistory.Add(key, []);
 
         StatsHistory[key].Add(ms);
 
@@ -378,26 +374,17 @@ internal sealed class Framework : IInternalDisposableService, IFramework
 
         ThreadSafety.MarkMainThread();
 
-        this.BeforeUpdate?.InvokeSafely(this);
-
         this.hitchDetector.Start();
+
+        this.BeforeUpdate?.InvokeSafely(this);
 
         try
         {
-            var chatGui = Service<ChatGui>.GetNullable();
-            var toastGui = Service<ToastGui>.GetNullable();
-            var config = Service<DalamudConfiguration>.GetNullable();
-            if (chatGui == null || toastGui == null)
-                goto original;
-
-            chatGui.UpdateQueue();
-            toastGui.UpdateQueue();
-
-            config?.Update();
+            this.configuration.Update();
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Exception while handling Framework::Update hook.");
+            Log.Error(ex, "Exception in DalamudConfiguration.Update.");
         }
 
         if (this.DispatchUpdateEvents)
@@ -464,7 +451,6 @@ internal sealed class Framework : IInternalDisposableService, IFramework
 
         this.hitchDetector.Stop();
 
-    original:
         return this.updateHook.OriginalDisposeSafe(thisPtr);
     }
 
