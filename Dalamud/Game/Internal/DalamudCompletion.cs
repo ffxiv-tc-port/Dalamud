@@ -201,7 +201,9 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
 
         if (scanner.TryScanText(OpenCompletionCoreSig, out var direct))
         {
-            Log.Verbose($"OpenCompletion core found by prologue at {direct:X}");
+            // Logged at Information on purpose: the failure mode this replaces was completely
+            // silent, so leave a one-line-per-session record of where the hook actually landed.
+            Log.Information($"OpenCompletion core found by prologue at {direct:X}");
             return direct;
         }
 
@@ -211,7 +213,9 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
         {
             var callOpcode = callSite + OpenCompletionCoreCallOffset;
             var target = callOpcode + 5 + Marshal.ReadInt32(callOpcode + 1);
-            Log.Verbose($"OpenCompletion core found via call site {callOpcode:X} -> {target:X}");
+            Log.Warning(
+                $"OpenCompletion core prologue sig failed; recovered via call site " +
+                $"{callOpcode:X} -> {target:X}. The prologue sig needs updating.");
             return target;
         }
 
