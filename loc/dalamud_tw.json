@@ -283,6 +283,10 @@
     "message": "繪製此視窗時發生錯誤。詳情請聯絡插件開發者。",
     "description": "Window.DrawErrorMessage"
   },
+  "WindowSystemErrorAutoRetry": {
+    "message": "將自動重試…",
+    "description": "Window.DrawErrorMessage"
+  },
   "WindowSystemErrorRecoverButton": {
     "message": "嘗試重試",
     "description": "Window.DrawErrorMessage"

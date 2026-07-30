@@ -59,8 +59,13 @@ public abstract class Window
     private Vector2 fadeOutSize = Vector2.Zero;
     private Vector2 fadeOutOrigin = Vector2.Zero;
 
+    private static readonly TimeSpan DrawErrorAutoRetryDelay = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan DrawErrorAutoRetrySuppressWindow = TimeSpan.FromSeconds(10);
+
     private bool hasError = false;
     private Exception? lastError;
+    private DateTime lastErrorAt = DateTime.MinValue;
+    private bool autoRetrySuppressed = false;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Window"/> class.
@@ -523,6 +528,12 @@ public abstract class Window
                 {
                     Log.Error(ex, "Error during Draw(): {WindowName}", this.WindowName);
 
+                    // Retry automatically once after a short delay; if this
+                    // window errored again shortly after a previous error,
+                    // stop auto-retrying and fall back to the manual button
+                    // so we never enter an endless error/retry loop.
+                    this.autoRetrySuppressed = DateTime.UtcNow - this.lastErrorAt < DrawErrorAutoRetrySuppressWindow;
+                    this.lastErrorAt = DateTime.UtcNow;
                     this.hasError = true;
                     this.lastError = ex;
                 }
@@ -904,6 +915,23 @@ public abstract class Window
 
     private void DrawErrorMessage()
     {
+        // First error in a while: retry automatically after a short delay
+        // instead of blocking the window behind the manual button. Repeated
+        // errors keep the manual UI (autoRetrySuppressed set at catch time).
+        if (!this.autoRetrySuppressed)
+        {
+            if (DateTime.UtcNow - this.lastErrorAt >= DrawErrorAutoRetryDelay)
+            {
+                this.hasError = false;
+                this.lastError = null;
+                return;
+            }
+
+            ImGui.TextColoredWrapped(ImGuiColors.DalamudRed, Loc.Localize("WindowSystemErrorOccurred", "An error occurred while rendering this window. Please contact the developer for details."));
+            ImGui.TextColoredWrapped(ImGuiColors.DalamudGrey, Loc.Localize("WindowSystemErrorAutoRetry", "Retrying automatically..."));
+            return;
+        }
+
         // TODO: Once window systems are services, offer to reload the plugin
         ImGui.TextColoredWrapped(ImGuiColors.DalamudRed, Loc.Localize("WindowSystemErrorOccurred", "An error occurred while rendering this window. Please contact the developer for details."));
 
