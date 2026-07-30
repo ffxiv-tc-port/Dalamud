@@ -92,6 +92,12 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     public bool DutyFinderChatMessage { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether command help messages should be shown next to the
+    /// command in the chat box's autocompletion list.
+    /// </summary>
+    public bool ShowCommandHelpInCompletion { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the language code to load Dalamud localization with.
     /// </summary>
     public string? LanguageOverride { get; set; } = null;

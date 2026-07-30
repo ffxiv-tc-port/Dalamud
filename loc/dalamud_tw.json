@@ -883,6 +883,14 @@
     "message": "任務配對成功時，將在聊天中發送訊息。",
     "description": "SettingsTabGeneral..ctor"
   },
+  "DalamudSettingsCompletionHelpMessage": {
+    "message": "聊天欄補完顯示指令說明",
+    "description": "SettingsTabGeneral..ctor"
+  },
+  "DalamudSettingsCompletionHelpMessageHint": {
+    "message": "在聊天欄的自動補完清單中，於指令後方一併顯示該指令的說明文字。選取項目時只會插入指令本身，不會插入說明。",
+    "description": "SettingsTabGeneral..ctor"
+  },
   "DalamudSettingsPrintDalamudWelcomeMsg": {
     "message": "顯示 Dalamud 歡迎資訊",
     "description": "SettingsTabGeneral..ctor"

@@ -61,6 +61,12 @@ internal sealed class SettingsTabGeneral : SettingsTab
             (v, c) => c.DutyFinderChatMessage = v),
 
         new SettingsEntry<bool>(
+            LazyLoc.Localize("DalamudSettingsCompletionHelpMessage", "Show command descriptions in chat autocompletion"),
+            LazyLoc.Localize("DalamudSettingsCompletionHelpMessageHint", "Show each command's help message next to it in the chat box's autocompletion list. Only the command itself is inserted when you pick an entry."),
+            c => c.ShowCommandHelpInCompletion,
+            (v, c) => c.ShowCommandHelpInCompletion = v),
+
+        new SettingsEntry<bool>(
             LazyLoc.Localize("DalamudSettingsPrintDalamudWelcomeMsg", "Display Dalamud's welcome message"),
             LazyLoc.Localize("DalamudSettingsPrintDalamudWelcomeMsgHint", "Display Dalamud's welcome message in FFXIV chat when logging in with a character."),
             c => c.PrintDalamudWelcomeMsg,
