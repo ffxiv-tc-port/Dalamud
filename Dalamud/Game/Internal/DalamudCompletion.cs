@@ -1,10 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.InteropServices;
 
 using Dalamud.Game.Command;
 using Dalamud.Hooking;
-using Dalamud.Logging.Internal;
 using Dalamud.Utility;
 
 using FFXIVClientStructs.FFXIV.Client.System.Memory;
@@ -27,49 +25,6 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
     // as raw strings instead of as lookups into an EXD sheet
     private const int GroupNumber = 0xFF;
 
-    /// <summary>
-    /// UIColor row used for the command itself.
-    /// </summary>
-    private const ushort CommandColorType = 539;
-
-    /// <summary>
-    /// UIColor row used for the trailing help message.
-    /// </summary>
-    private const ushort HelpColorType = 3;
-
-    /// <summary>
-    /// Help messages longer than this get ellipsised so a completion row stays readable.
-    /// </summary>
-    private const int MaxHelpLength = 48;
-
-    /// <summary>
-    /// Prologue of the function that <c>AtkTextInput::OpenCompletion</c> calls to build the
-    /// "word currently being completed" strings, right before handing them to
-    /// <c>CompletionModule</c>.
-    /// </summary>
-    /// <remarks>
-    /// The TC/CN client inlines <c>OpenCompletion</c> into <c>AtkTextInput::ProcessKeyShortcut</c>,
-    /// which leaves the standalone <c>OpenCompletion</c> body completely unreferenced - hooking it
-    /// (as upstream does) silently never fires. This inner function is still a real call on every
-    /// completion-open path, so it is the portable place to hook.
-    /// </remarks>
-    private const string OpenCompletionCoreSig =
-        "48 89 5C 24 ?? 55 56 41 56 48 83 EC ?? 4C 8B F2 49 8B E8 48 8D 91 ?? ?? ?? ?? 48 8B F1 48 8B 02 80 38 00";
-
-    /// <summary>
-    /// The call site of <see cref="OpenCompletionCoreSig"/> inside <c>ProcessKeyShortcut</c>.
-    /// Used as a second way to find the same function if its prologue ever drifts.
-    /// </summary>
-    private const string OpenCompletionCoreCallSig =
-        "4C 8D 86 ?? ?? ?? ?? 48 8B CE 48 8D 96 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 4E";
-
-    /// <summary>
-    /// Offset of the <c>E8</c> opcode within <see cref="OpenCompletionCoreCallSig"/>.
-    /// </summary>
-    private const int OpenCompletionCoreCallOffset = 17;
-
-    private static readonly ModuleLog Log = new("DalamudCompletion");
-
     [ServiceManager.ServiceDependency]
     private readonly CommandManager commandManager = Service<CommandManager>.Get();
 
@@ -78,16 +33,9 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
 
     private readonly Dictionary<string, EntryStrings> cachedCommands = [];
 
-    /// <summary>
-    /// Maps the payload-stripped text of an entry we added back onto the bare command, so that
-    /// picking an entry inserts just the command and not its help message.
-    /// </summary>
-    private readonly Dictionary<string, string> displayToCommand = [];
-
     private EntryStrings? dalamudCategory;
 
-    private Hook<OpenCompletionCoreDelegate>? openCompletionCoreHook;
-    private Hook<AtkTextInput.Delegates.OpenCompletion>? openSuggestionsHook;
+    private Hook<AtkTextInput.Delegates.OpenCompletion> openSuggestionsHook;
     private Hook<CompletionModule.Delegates.GetSelection>? getSelectionHook;
 
     /// <summary>
@@ -99,23 +47,9 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
         this.framework.RunOnTick(this.Setup);
     }
 
-    /// <summary>
-    /// Builds the two <see cref="Utf8String"/>s describing the word being completed.
-    /// </summary>
-    /// <param name="thisPtr">The owning text input.</param>
-    /// <param name="rawWord">Receives the raw word.</param>
-    /// <param name="filteredWord">Receives the filtered word.</param>
-    /// <returns>Whether a completable word was found.</returns>
-    [UnmanagedFunctionPointer(CallingConvention.ThisCall)]
-    private delegate bool OpenCompletionCoreDelegate(
-        AtkTextInput* thisPtr, Utf8String* rawWord, Utf8String* filteredWord);
-
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
     {
-        this.openCompletionCoreHook?.Disable();
-        this.openCompletionCoreHook?.Dispose();
-
         this.openSuggestionsHook?.Disable();
         this.openSuggestionsHook?.Dispose();
 
@@ -125,21 +59,6 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
         this.dalamudCategory?.Dispose();
 
         this.ClearCachedCommands();
-    }
-
-    /// <summary>
-    /// Flattens a help message onto a single short line so it can ride along in a completion row.
-    /// </summary>
-    /// <param name="help">The raw help message.</param>
-    /// <returns>The flattened message, possibly empty.</returns>
-    private static string SanitizeHelp(string help)
-    {
-        if (string.IsNullOrWhiteSpace(help))
-            return string.Empty;
-
-        var flat = string.Join(' ', help.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-
-        return flat.Length > MaxHelpLength ? flat[..MaxHelpLength] + "…" : flat;
     }
 
     private void Setup()
@@ -153,75 +72,16 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
 
         this.dalamudCategory = new EntryStrings("【Dalamud】");
 
-        this.SetupOpenCompletionHook();
+        this.openSuggestionsHook = Hook<AtkTextInput.Delegates.OpenCompletion>.FromAddress(
+            (nint)AtkTextInput.MemberFunctionPointers.OpenCompletion,
+            this.OpenSuggestionsDetour);
 
         this.getSelectionHook = Hook<CompletionModule.Delegates.GetSelection>.FromAddress(
             (nint)uiModule->CompletionModule.VirtualTable->GetSelection,
             this.GetSelectionDetour);
 
-        this.getSelectionHook.Enable();
-    }
-
-    /// <summary>
-    /// Installs the hook that repopulates the completion data just before the game opens the
-    /// completion list.
-    /// </summary>
-    private void SetupOpenCompletionHook()
-    {
-        var address = this.ResolveOpenCompletionCore();
-        if (address != nint.Zero)
-        {
-            this.openCompletionCoreHook = Hook<OpenCompletionCoreDelegate>.FromAddress(
-                address,
-                this.OpenCompletionCoreDetour);
-            this.openCompletionCoreHook.Enable();
-            return;
-        }
-
-        // Last resort: upstream's hook point. It is dead code on the TC client, so this will not
-        // actually populate anything - but a future client may make it live again, and it is
-        // better to be a no-op than to have no hook at all.
-        Log.Error(
-            "Could not locate the OpenCompletion core function; plugin commands will most likely " +
-            "be missing from chat autocompletion. Falling back to AtkTextInput::OpenCompletion.");
-
-        this.openSuggestionsHook = Hook<AtkTextInput.Delegates.OpenCompletion>.FromAddress(
-            (nint)AtkTextInput.MemberFunctionPointers.OpenCompletion,
-            this.OpenSuggestionsDetour);
         this.openSuggestionsHook.Enable();
-    }
-
-    /// <summary>
-    /// Finds the function that actually runs whenever the completion list is opened.
-    /// </summary>
-    /// <returns>Its address, or <see cref="nint.Zero"/> if it could not be found.</returns>
-    private nint ResolveOpenCompletionCore()
-    {
-        var scanner = Service<TargetSigScanner>.Get();
-
-        if (scanner.TryScanText(OpenCompletionCoreSig, out var direct))
-        {
-            Log.Verbose($"OpenCompletion core found by prologue at {direct:X}");
-            return direct;
-        }
-
-        // The prologue drifted. Fall back to the call site inside ProcessKeyShortcut and follow
-        // its rel32 - the same technique GetStaticAddressFromSig uses for data references.
-        if (scanner.TryScanText(OpenCompletionCoreCallSig, out var callSite))
-        {
-            var callOpcode = callSite + OpenCompletionCoreCallOffset;
-            var target = callOpcode + 5 + Marshal.ReadInt32(callOpcode + 1);
-            Log.Verbose($"OpenCompletion core found via call site {callOpcode:X} -> {target:X}");
-            return target;
-        }
-
-        return nint.Zero;
-    }
-
-    private bool OpenCompletionCoreDetour(AtkTextInput* thisPtr, Utf8String* rawWord, Utf8String* filteredWord)
-    {
-        this.UpdateCompletionData();
-        return this.openCompletionCoreHook!.Original(thisPtr, rawWord, filteredWord);
+        this.getSelectionHook.Enable();
     }
 
     private void OpenSuggestionsDetour(AtkTextInput* thisPtr)
@@ -274,11 +134,7 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
         foreach (var (cmd, info) in commands)
         {
             if (!this.cachedCommands.TryGetValue(cmd, out var entryString))
-            {
-                entryString = new EntryStrings(cmd, SanitizeHelp(info.HelpMessage));
-                this.cachedCommands.Add(cmd, entryString);
-                this.displayToCommand[entryString.PlainDisplay] = cmd;
-            }
+                this.cachedCommands.Add(cmd, entryString = new EntryStrings(cmd));
 
             uiModule->CompletionModule.AddCompletionEntry(
                 GroupNumber,
@@ -297,15 +153,10 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
         if (ret != -2 || outputString == null)
             return;
 
-        // Strip out the color payloads and the trailing help message that we added to the string.
+        // Strip out color payloads that we added to the string.
         var txt = outputString->StringPtr.ExtractText();
-        if (!this.displayToCommand.TryGetValue(txt, out var command))
-        {
-            if (!this.cachedCommands.ContainsKey(txt))
-                return;
-
-            command = txt;
-        }
+        if (!this.cachedCommands.ContainsKey(txt))
+            return;
 
         if (!this.TryGetActiveTextInput(out _, out _))
         {
@@ -317,7 +168,7 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
             return;
         }
 
-        outputString->SetString(command + ' ');
+        outputString->SetString(txt + ' ');
     }
 
     private bool TryGetActiveTextInput(out AtkComponentTextInput* component, out AtkUnitBase* addon)
@@ -396,39 +247,19 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
         }
 
         this.cachedCommands.Clear();
-        this.displayToCommand.Clear();
     }
 
     private class EntryStrings : IDisposable
     {
         public EntryStrings(string command)
-            : this(command, string.Empty)
-        {
-        }
-
-        public EntryStrings(string command, string help)
         {
             var rssb = SeStringBuilder.SharedPool.Get();
 
-            rssb.PushColorType(CommandColorType)
+            this.Display = Utf8String.FromSequence(rssb
+                .PushColorType(539)
                 .Append(command)
-                .PopColorType();
-
-            if (help.Length > 0)
-            {
-                rssb.Append("  ")
-                    .PushColorType(HelpColorType)
-                    .Append(help)
-                    .PopColorType();
-
-                this.PlainDisplay = command + "  " + help;
-            }
-            else
-            {
-                this.PlainDisplay = command;
-            }
-
-            this.Display = Utf8String.FromSequence(rssb.GetViewAsSpan());
+                .PopColorType()
+                .GetViewAsSpan());
 
             SeStringBuilder.SharedPool.Return(rssb);
 
@@ -438,12 +269,6 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
         public Utf8String* Display { get; }
 
         public Utf8String* Match { get; }
-
-        /// <summary>
-        /// Gets the payload-stripped form of <see cref="Display"/>, i.e. what
-        /// <c>ExtractText()</c> will hand back when the game echoes this entry.
-        /// </summary>
-        public string PlainDisplay { get; }
 
         public void Dispose()
         {

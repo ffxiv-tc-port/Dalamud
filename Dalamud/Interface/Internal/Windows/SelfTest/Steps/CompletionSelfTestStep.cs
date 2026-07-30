@@ -87,6 +87,6 @@ internal class CompletionSelfTestStep : ISelfTestStep
     /// <inheritdoc/>
     public void CleanUp()
     {
-        Service<CommandManager>.Get().RemoveHandler("/xlselftestcompletion");
+        Service<CommandManager>.Get().RemoveHandler("/completionselftest");
     }
 }
