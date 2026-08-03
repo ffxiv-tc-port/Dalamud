@@ -24,4 +24,4 @@
 	url = https://github.com/goatcorp/Hexa.NET.ImGui.git
 [submodule "lib/Lumina"]
 	path = lib/Lumina
-	url = https://github.com/Lother/Lumina.git
+	url = https://github.com/ffxiv-tc-port/Lumina.git
