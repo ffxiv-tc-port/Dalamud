@@ -1,4 +1,5 @@
-﻿#include <array>
+﻿#include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -470,6 +471,71 @@ void open_folder_and_select_items(HWND hwndOpener, const std::wstring& path) {
         ILFree(piid);
 }
 
+// Dalamud's own log rolls *forward* once it hits its size limit: dalamud.log -> dalamud_001.log ->
+// dalamud_002.log -> ..., and Serilog's retention eventually deletes dalamud.log itself. So during a
+// very long session the freshest data - the part that actually matters for a crash - is NOT in the
+// file literally named "dalamud.log". Resolve each source name to whichever of its rolled siblings
+// was written to most recently.
+//
+// The accepted shapes are exactly "<stem><ext>" and "<stem>_<digits><ext>". This must stay strict:
+// dalamud.boot.log, dalamud.injector.log, the archived dalamud.<timestamp>.old.log and the crash
+// handler's own dalamud_appcrash_<stamp>_<pid>.log all begin with "dalamud" and end with ".log".
+std::filesystem::path resolve_newest_log_file(const std::filesystem::path& logDir, const char* pcszLogFileName) {
+    const std::filesystem::path nominal = logDir / pcszLogFileName;
+    if (logDir.empty())
+        return nominal;
+
+    const std::wstring stem = nominal.stem().wstring();
+    const std::wstring ext = nominal.extension().wstring();
+    if (stem.empty() || ext.empty())
+        return nominal;
+
+    std::filesystem::path best;
+    std::filesystem::file_time_type bestTime{};
+
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(logDir, ec)) {
+        if (ec)
+            break;
+
+        if (!entry.is_regular_file(ec) || ec) {
+            ec.clear();
+            continue;
+        }
+
+        const std::wstring fn = entry.path().filename().wstring();
+        if (fn.size() < stem.size() + ext.size())
+            continue;
+        if (fn.compare(0, stem.size(), stem) != 0)
+            continue;
+        if (fn.compare(fn.size() - ext.size(), ext.size(), ext) != 0)
+            continue;
+
+        const std::wstring middle = fn.substr(stem.size(), fn.size() - stem.size() - ext.size());
+        if (!middle.empty()) {
+            // Serilog always pads the sequence to at least three digits, so require that too
+            // rather than accepting any "_<digits>" a plugin or the user might have left behind.
+            if (middle.size() < 4 || middle[0] != L'_')
+                continue;
+            if (!std::all_of(middle.begin() + 1, middle.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; }))
+                continue;
+        }
+
+        const auto writeTime = std::filesystem::last_write_time(entry, ec);
+        if (ec) {
+            ec.clear();
+            continue;
+        }
+
+        if (best.empty() || writeTime > bestTime) {
+            best = entry.path();
+            bestTime = writeTime;
+        }
+    }
+
+    return best.empty() ? nominal : best;
+}
+
 void export_tspack(HWND hWndParent, const std::filesystem::path& logDir, const std::string& crashLog, const std::string& troubleshootingPackData) {
     static const char* SourceLogFiles[] = {
         "output.log", // XIVLauncher for Windows
@@ -564,7 +630,9 @@ void export_tspack(HWND hWndParent, const std::filesystem::path& logDir, const s
                 return read;
         };
         for (const auto& pcszLogFileName : SourceLogFiles) {
-            const auto logFilePath = logDir / pcszLogFileName;
+            // Entry name in the pack stays the nominal one (e.g. "dalamud.log") so existing
+            // tooling keeps working; only the source we read from is resolved to the newest roll.
+            const auto logFilePath = resolve_newest_log_file(logDir, pcszLogFileName);
             if (!exists(logFilePath)) {
                 logExportLog += std::format("File does not exist: {}\n", ws_to_u8(logFilePath.wstring()));
                 continue;

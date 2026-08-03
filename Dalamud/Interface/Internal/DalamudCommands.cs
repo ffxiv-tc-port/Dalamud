@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 using CheapLoc;
 using Dalamud.Configuration.Internal;
@@ -383,10 +384,27 @@ internal class DalamudCommands : IServiceType
     private void OnCopyLogCommand(string command, string arguments)
     {
         var chatGui = Service<ChatGui>.Get();
-        var logPath = Path.Join(
+        var logDir = Service<Dalamud>.Get().StartInfo.LogPath ?? Path.Join(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "XIVLauncherTC",
-            "dalamud.log");
+            "XIVLauncherTC");
+
+        // The live log rolls forward into dalamud_001.log, dalamud_002.log, ... once it exceeds its
+        // size limit, so the newest data is not necessarily in the file named "dalamud.log".
+        var logPath = Path.Join(logDir, "dalamud.log");
+        try
+        {
+            var newest = new DirectoryInfo(logDir)
+                         .GetFiles("dalamud*.log")
+                         .Where(x => Regex.IsMatch(x.Name, @"^dalamud(_[0-9]{3,})?\.log$", RegexOptions.IgnoreCase))
+                         .MaxBy(x => x.LastWriteTimeUtc);
+            if (newest is not null)
+                logPath = newest.FullName;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not resolve the newest log file, falling back to {Path}", logPath);
+        }
+
         var message = Util.CopyFilesToClipboard([logPath])
                           ? Loc.Localize("DalamudLogCopySuccess", "Log file copied to clipboard.")
                           : Loc.Localize("DalamudLogCopyFailure", "Could not copy log file to clipboard.");
