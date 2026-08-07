@@ -35,10 +35,37 @@ internal class DalamudChangelogManager
     /// <summary>
     /// Reload the changelog list.
     /// </summary>
+    /// <remarks>
+    /// The upstream implementation fetched per-version history from the official
+    /// plugin API and skipped anything third-party (<c>!plugin.IsThirdParty</c>).
+    /// Neither half works here: this fork has no official API to talk to, and every
+    /// plugin we ship comes from a third-party repository - so that page was
+    /// structurally guaranteed to stay empty, which is exactly what users saw.
+    ///
+    /// The manifest already carries everything the entry needs, and Dalamud already
+    /// ships a constructor that reads it, so build the list locally instead. No
+    /// network call means this cannot fail or hang; the task stays async-shaped
+    /// only to keep the call site unchanged.
+    /// </remarks>
     /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
     public Task ReloadChangelogAsync()
     {
-        this.Changelogs = [];
+        try
+        {
+            this.Changelogs = this.manager.InstalledPlugins
+                                  .Where(plugin => !plugin.Manifest.Changelog.IsNullOrEmpty())
+                                  .Select(plugin => new PluginChangelogEntry(plugin))
+                                  .Cast<IChangelogEntry>()
+                                  .ToList();
+        }
+        catch (Exception ex)
+        {
+            // Never leave Changelogs null on failure - the window treats null as
+            // "still loading" and would sit on the spinner forever.
+            Log.Error(ex, "Failed to build the plugin changelog list.");
+            this.Changelogs = [];
+        }
+
         return Task.CompletedTask;
     }
 
