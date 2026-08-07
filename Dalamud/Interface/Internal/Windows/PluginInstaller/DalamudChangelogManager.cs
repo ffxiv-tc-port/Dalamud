@@ -98,16 +98,23 @@ internal class DalamudChangelogManager
     private static DateTime ResolvePublishedAt(
         LocalPlugin plugin, IReadOnlyDictionary<string, RemotePluginManifest> remoteByName)
     {
+        // Every branch below must return LOCAL time: the window renders this through
+        // DateTimeSpanExtensions, which computes `DateTime.Now - when`. Returning
+        // DateTimeOffset.DateTime hands back the UTC value, so the difference is inflated by
+        // the machine's UTC offset - eight hours on a TC client, which made this morning's
+        // releases read as "13 hours ago". LastWriteTime below is already local, which is
+        // why only the LastUpdate branches were wrong.
+
         // Written into the manifest at install time - accurate, but absent on anything
         // installed before the repository started emitting the field.
         if (plugin.Manifest.LastUpdate > 0)
-            return DateTimeOffset.FromUnixTimeSeconds(plugin.Manifest.LastUpdate).DateTime;
+            return DateTimeOffset.FromUnixTimeSeconds(plugin.Manifest.LastUpdate).LocalDateTime;
 
         // The repository listing is refreshed on every startup, so this covers installs
         // that predate the field without waiting for the user to update the plugin.
         if (remoteByName.TryGetValue(plugin.Manifest.InternalName, out var remote) &&
             remote.LastUpdate > 0)
-            return DateTimeOffset.FromUnixTimeSeconds(remote.LastUpdate).DateTime;
+            return DateTimeOffset.FromUnixTimeSeconds(remote.LastUpdate).LocalDateTime;
 
         // Last resort for dev plugins and third-party repositories that publish no
         // timestamp at all. This is when the file arrived rather than when it was
@@ -120,7 +127,7 @@ internal class DalamudChangelogManager
         catch (Exception ex)
         {
             Log.Warning(ex, "Could not read plugin file time: {PluginName}", plugin.Manifest.Name);
-            return DateTimeOffset.FromUnixTimeSeconds(0).DateTime;
+            return DateTimeOffset.FromUnixTimeSeconds(0).LocalDateTime;
         }
     }
 
