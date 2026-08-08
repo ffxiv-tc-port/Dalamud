@@ -1212,25 +1212,29 @@ internal class PluginInstallerWindow : Window, IDisposable
             return;
         }
 
+        // Kick off a build whenever no result is pending. This deliberately sits outside the
+        // "Changelogs == null" check below: the plugin-list change handlers clear the task to
+        // mark the list stale, and gating the rebuild on a null result would mean a repository
+        // refresh never reached this page for the rest of the session. Leaving the previous
+        // result in place while the new one is built also avoids flashing the loading text.
+        if (this.dalamudChangelogManager != null &&
+            this.dalamudChangelogRefreshTask == null)
+        {
+            this.dalamudChangelogRefreshTaskCts = new CancellationTokenSource();
+            this.dalamudChangelogRefreshTask =
+                Task.Run(this.dalamudChangelogManager.ReloadChangelogAsync, this.dalamudChangelogRefreshTaskCts.Token)
+                    .ContinueWith(t =>
+                    {
+                        if (!t.IsCompletedSuccessfully)
+                        {
+                            Log.Error(t.Exception, "Failed to load changelogs.");
+                        }
+                    });
+        }
+
         if (this.dalamudChangelogManager?.Changelogs == null)
         {
             ImGui.TextColored(ImGuiColors.DalamudGrey, Locs.TabBody_LoadingPlugins);
-
-            if (this.dalamudChangelogManager != null &&
-                this.dalamudChangelogRefreshTask == null)
-            {
-                this.dalamudChangelogRefreshTaskCts = new CancellationTokenSource();
-                this.dalamudChangelogRefreshTask =
-                    Task.Run(this.dalamudChangelogManager.ReloadChangelogAsync, this.dalamudChangelogRefreshTaskCts.Token)
-                        .ContinueWith(t =>
-                        {
-                            if (!t.IsCompletedSuccessfully)
-                            {
-                                Log.Error(t.Exception, "Failed to load changelogs.");
-                            }
-                        });
-            }
-
             return;
         }
 
@@ -2498,6 +2502,15 @@ internal class PluginInstallerWindow : Window, IDisposable
         ImGui.SameLine();
         var cursor = ImGui.GetCursorPos();
         ImGui.Text(log.Title);
+
+        // This version is on the repository but is not what the user is running. That is
+        // scan-at-a-glance information, so it goes on the row rather than into a tooltip -
+        // and it reuses the marker the installed-plugin list already uses for the same fact.
+        if (log is PluginChangelogEntry { IsAvailableUpdate: true })
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(ImGuiColors.DalamudOrange, Locs.PluginTitleMod_HasUpdate);
+        }
 
         ImGui.SameLine();
         ImGui.TextColored(ImGuiColors.DalamudGrey3, $" v{log.Version}");
@@ -3941,6 +3954,10 @@ internal class PluginInstallerWindow : Window, IDisposable
             this.ResortPlugins();
         }
 
+        // The changelog list is derived from the lists we just replaced, so it is now stale.
+        // Dropping the task marks it for rebuild on the next frame that draws the page.
+        this.dalamudChangelogRefreshTask = null;
+
         this.hasHiddenPlugins = this.pluginListAvailable.Any(x => configuration.HiddenPluginInternalName.Contains(x.InternalName));
 
         this.UpdateCategoriesOnPluginsChange();
@@ -3958,6 +3975,9 @@ internal class PluginInstallerWindow : Window, IDisposable
             this.hasDevPlugins = this.pluginListInstalled.Any(plugin => plugin.IsDev);
             this.ResortPlugins();
         }
+
+        // Same as above: an install/update/removal invalidates the changelog list.
+        this.dalamudChangelogRefreshTask = null;
 
         this.UpdateCategoriesOnPluginsChange();
     }
