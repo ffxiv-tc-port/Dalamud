@@ -267,7 +267,20 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
     /// Resets the current background music.
     /// </summary>
     /// <param name="sceneId">The BGM scene index.</param>
-    internal void ResetBgm(uint sceneId = 2) => BGMSystem.Instance()->ResetBGM(sceneId);
+    internal void ResetBgm(uint sceneId = 2)
+    {
+        // BGMSystem.Instance() resolves a [StaticAddress(..., isPointer: true)] slot, so the
+        // address holds a pointer that is null until the game has built the BGM system. ResetBGM
+        // is a [MemberFunction], so a null "this" is handed straight to native code and raises an
+        // AccessViolationException - a corrupted-state exception that no try/catch can recover
+        // from. Nothing can observe whether this ran (the method returns void and both callers
+        // ignore it), so skipping quietly is the correct no-op.
+        var bgmSystem = BGMSystem.Instance();
+        if (bgmSystem == null)
+            return;
+
+        bgmSystem->ResetBGM(sceneId);
+    }
 
     /// <summary>
     /// Reset the stored "UI hide" state.

@@ -338,7 +338,23 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             this.MenuCallbackIds.Clear();
             this.SelectedAgent = agent;
             var unitManager = RaptureAtkUnitManager.Instance();
-            this.SelectedParentAddon = unitManager->GetAddonById(unitManager->GetAddonByName(addonName)->ContextMenuParentId);
+
+            // Both halves of this lookup can legitimately be null: RaptureAtkUnitManager.Instance()
+            // returns null while RaptureAtkModule is not up, and GetAddonByName is a
+            // [MemberFunction] that returns null whenever the addon is not currently open.
+            // Reading ContextMenuParentId through either of them raises an AccessViolationException,
+            // which is a corrupted-state exception that cannot be caught - and this runs inside a
+            // native detour. Leaving SelectedParentAddon null is not a new state for plugins:
+            // GetAddonById can already return null, so MenuOpenedArgs/MenuItemClickedArgs have
+            // always been able to carry a null parent addon.
+            this.SelectedParentAddon = null;
+            if (unitManager != null)
+            {
+                var contextAddon = unitManager->GetAddonByName(addonName);
+                if (contextAddon != null)
+                    this.SelectedParentAddon = unitManager->GetAddonById(contextAddon->ContextMenuParentId);
+            }
+
             this.SelectedEventInterfaces.Clear();
             if (this.SelectedAgent == AgentInventoryContext.Instance())
             {
@@ -374,6 +390,24 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
                         var handlers = menu->EventHandlers;
                         var ids = menu->EventIds;
                         var count = (int)values[0].UInt;
+
+                        // EventHandlers and EventIds are both FixedSizeArray32 and the first 7
+                        // slots belong to the game, so at most 25 entries are readable here.
+                        // count is whatever the game wrote into the AtkValue array; nothing has
+                        // validated it on our side, and because values[0] is a uint the cast to
+                        // int can even go negative. Either way Span.Slice would throw
+                        // ArgumentOutOfRangeException, and a managed exception thrown here would
+                        // unwind out of a native detour, which the game has no way to handle.
+                        // Clamp to what is actually readable instead: an over-long count still
+                        // yields every entry we are able to read, and the tail call to Original
+                        // below is unaffected either way.
+                        var maxCount = Math.Max(0, Math.Min(handlers.Length, ids.Length) - 7);
+                        if (count < 0 || count > maxCount)
+                        {
+                            Log.Warning($"Context menu reported {count} items, but only {maxCount} are readable; clamping.");
+                            count = Math.Clamp(count, 0, maxCount);
+                        }
+
                         handlers = handlers.Slice(7, count);
                         ids = ids.Slice(7, count);
                         for (var i = 0; i < count; ++i)
