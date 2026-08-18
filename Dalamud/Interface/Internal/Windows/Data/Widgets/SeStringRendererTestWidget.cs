@@ -13,7 +13,6 @@ using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Internal;
 using Dalamud.Storage.Assets;
 using Dalamud.Utility;
-using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 using Lumina.Text;
 using Lumina.Text.Parse;
@@ -116,7 +115,7 @@ internal unsafe class SeStringRendererTestWidget : IDataWindowWidget
             this.style.Shadow = t;
 
         ImGui.SameLine();
-        var t4 = this.style.ThemeIndex ?? AtkStage.Instance()->AtkUIColorHolder->ActiveColorThemeType;
+        var t4 = this.style.ThemeIndex ?? SeStringDrawState.GetGameThemeIndex();
         ImGui.PushItemWidth(ImGui.CalcTextSize("WWWWWWWWWWWWWW"u8).X);
         if (ImGui.Combo("##theme", ref t4, ThemeNames))
             this.style.ThemeIndex = t4;
@@ -278,7 +277,7 @@ internal unsafe class SeStringRendererTestWidget : IDataWindowWidget
                             Font = ImGui.GetFont(),
                             FontSize = ImGui.GetFontSize(),
                             WrapWidth = ImGui.GetContentRegionAvail().X,
-                            ThemeIndex = AtkStage.Instance()->AtkUIColorHolder->ActiveColorThemeType,
+                            ThemeIndex = SeStringDrawState.GetGameThemeIndex(),
                         })));
         }
 

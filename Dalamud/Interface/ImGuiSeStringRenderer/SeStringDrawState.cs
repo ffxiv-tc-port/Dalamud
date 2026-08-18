@@ -59,7 +59,7 @@ public unsafe ref struct SeStringDrawState : IDisposable
             this.Color = ssdp.Color ?? ImGui.GetColorU32(ImGuiCol.Text);
             this.LinkHoverBackColor = ssdp.LinkHoverBackColor ?? ImGui.GetColorU32(ImGuiCol.ButtonHovered);
             this.LinkActiveBackColor = ssdp.LinkActiveBackColor ?? ImGui.GetColorU32(ImGuiCol.ButtonActive);
-            this.ThemeIndex = ssdp.ThemeIndex ?? AtkStage.Instance()->AtkUIColorHolder->ActiveColorThemeType;
+            this.ThemeIndex = ssdp.ThemeIndex ?? GetGameThemeIndex();
         }
         else
         {
@@ -266,6 +266,27 @@ public unsafe ref struct SeStringDrawState : IDisposable
             new(uv1.X, uv1.Y),
             new(uv1.X, uv0.Y),
             color);
+    }
+
+    /// <summary>Gets the color theme index currently set in the game configuration.</summary>
+    /// <returns>The active color theme index, or <c>0</c> (the dark theme) if the game's color holder is not
+    /// available yet.</returns>
+    /// <remarks>
+    /// <para><c>AtkStage.Instance()</c> is resolved from a static address that <em>holds a pointer</em>. It throws
+    /// only when the signature itself fails to resolve; the value it returns is a dereference of that global, so it
+    /// can still be null before the client has constructed the stage. <c>AtkUIColorHolder</c> is in turn a plain
+    /// pointer field on the stage and may likewise be null.</para>
+    /// <para>Both are therefore checked before use: this runs on the per-frame SeString drawing path that every
+    /// caller of the rendering API goes through, and an access violation here would not be catchable.</para>
+    /// </remarks>
+    internal static int GetGameThemeIndex()
+    {
+        var stage = AtkStage.Instance();
+        if (stage is null)
+            return 0;
+
+        var colorHolder = stage->AtkUIColorHolder;
+        return colorHolder is null ? 0 : colorHolder->ActiveColorThemeType;
     }
 
     /// <summary>Draws a single glyph using current styling configurations.</summary>
