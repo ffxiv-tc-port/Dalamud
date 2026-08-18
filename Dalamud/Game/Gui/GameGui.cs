@@ -120,7 +120,24 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
         // Read current ViewProjectionMatrix plus game window size
         var windowPos = ImGuiHelpers.MainViewport.Pos;
         var viewProjectionMatrix = Control.Instance()->ViewProjectionMatrix;
+
+        // Device.Instance() resolves a [StaticAddress(..., isPointer: true)] slot - its signature
+        // starts with "48 8B 0D" (a mov), so the static address holds a pointer, and that pointer is
+        // null until the graphics device has been created. Reading Width/Height through it raises an
+        // AccessViolationException, a corrupted-state exception that no try/catch can recover from.
+        // Bail out through the same failure path the degenerate-W case below already uses.
+        // Control.Instance() above deliberately gets no such check: its signature starts with
+        // "4C 8D 35" (a lea) and carries no isPointer, so the static address *is* the struct. The
+        // generated accessor can only fail by throwing on signature mismatch, never by returning
+        // null, which would make a null check here unreachable dead code.
         var device = Device.Instance();
+        if (device == null)
+        {
+            screenPos = Vector2.Zero;
+            inView = false;
+            return false;
+        }
+
         float width = device->Width;
         float height = device->Height;
 
@@ -162,7 +179,21 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
             return false;
         }
 
-        var camera = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance()->CurrentCamera;
+        // CameraManager.Instance() resolves a [StaticAddress(..., isPointer: true)] slot - its
+        // signature starts with "48 8B 05" (a mov), so the static address holds a pointer, and that
+        // pointer is null until the scene camera manager has been built. The camera == null check
+        // below is too late to help: evaluating CurrentCamera already dereferences the manager,
+        // raising an AccessViolationException, a corrupted-state exception that no try/catch can
+        // recover from. Take the manager out first and fail through the exact same path the
+        // null-camera case already uses, so no observable behaviour changes.
+        var cameraManager = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
+        if (cameraManager == null)
+        {
+            worldPos = Vector3.Zero;
+            return false;
+        }
+
+        var camera = cameraManager->CurrentCamera;
         if (camera == null)
         {
             worldPos = Vector3.Zero;
