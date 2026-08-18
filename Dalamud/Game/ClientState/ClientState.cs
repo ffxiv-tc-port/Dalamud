@@ -53,7 +53,7 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
     [ServiceManager.ServiceDependency]
     private readonly ObjectTable objectTable = Service<ObjectTable>.Get();
 
-    private Hook<LogoutCallbackInterface.Delegates.OnLogout> onLogoutHook;
+    private Hook<LogoutCallbackInterface.Delegates.OnLogout>? onLogoutHook;
     private bool initialized;
     private ushort territoryTypeId;
     private bool isPvP;
@@ -273,7 +273,11 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
     {
         this.handleZoneInitPacketHook.Dispose();
         this.uiModuleHandlePacketHook.Dispose();
-        this.onLogoutHook.Dispose();
+        // Created in Setup(), which is deferred to a framework tick. An unload that lands before
+        // that tick (aborted boot) or a Setup() that threw leaves this null; the resulting NRE was
+        // swallowed by Service<T>.Unset and skipped the rest of this method, so setCurrentInstanceHook
+        // stayed enabled and the event handlers below stayed subscribed.
+        this.onLogoutHook?.Dispose();
         this.setCurrentInstanceHook.Dispose();
 
         this.framework.Update -= this.OnFrameworkUpdate;
