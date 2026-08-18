@@ -346,19 +346,43 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             }
             else if (this.SelectedAgent == AgentContext.Instance())
             {
-                this.SelectedMenuType = ContextMenuType.Default;
-
-                var menu = AgentContext.Instance()->CurrentContextMenu;
-                var handlers = menu->EventHandlers;
-                var ids = menu->EventIds;
-                var count = (int)values[0].UInt;
-                handlers = handlers.Slice(7, count);
-                ids = ids.Slice(7, count);
-                for (var i = 0; i < count; ++i)
+                // AgentContext+0xD18 is a real pointer that the game repoints and clears, not an
+                // inline struct, so it can be null here. Dereferencing it unguarded inside a native
+                // detour raises an AccessViolationException, which is a corrupted-state exception no
+                // try/catch can recover from. When it is not readable, fall through to the same state
+                // as an unrecognized agent (no menu type, so no Dalamud items are injected). The tail
+                // call to Original at the end of this detour stays unconditional either way, so the
+                // game's own menu is never affected by this check.
+                var contextAgent = AgentContext.Instance();
+                if (contextAgent == null)
                 {
-                    if (ids[i] <= 106)
-                        continue;
-                    this.SelectedEventInterfaces.Add((nint)handlers[i].Value);
+                    Log.Warning("AgentContext.Instance() was null while opening a context menu; skipping menu item injection for this menu.");
+                    this.SelectedMenuType = null;
+                }
+                else
+                {
+                    var menu = contextAgent->CurrentContextMenu;
+                    if (menu == null)
+                    {
+                        Log.Warning("AgentContext.CurrentContextMenu was null while opening the default context menu; skipping menu item injection for this menu.");
+                        this.SelectedMenuType = null;
+                    }
+                    else
+                    {
+                        this.SelectedMenuType = ContextMenuType.Default;
+
+                        var handlers = menu->EventHandlers;
+                        var ids = menu->EventIds;
+                        var count = (int)values[0].UInt;
+                        handlers = handlers.Slice(7, count);
+                        ids = ids.Slice(7, count);
+                        for (var i = 0; i < count; ++i)
+                        {
+                            if (ids[i] <= 106)
+                                continue;
+                            this.SelectedEventInterfaces.Add((nint)handlers[i].Value);
+                        }
+                    }
                 }
             }
             else
