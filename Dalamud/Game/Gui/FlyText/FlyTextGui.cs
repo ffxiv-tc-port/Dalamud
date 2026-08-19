@@ -72,8 +72,16 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
         if (stage == null)
             return;
 
-        var numArray = stage->GetNumberArrayData(NumberArrayType.FlyText);
-        var strArray = stage->GetStringArrayData(StringArrayType.FlyText);
+        // GetNumberArrayData(type)/GetStringArrayData(type) are convenience overloads that expand to
+        // GetXArrayData()[(int)type] - the table pointer itself is dereferenced before the null check
+        // below could run, so resolve the tables first and check them in their own right.
+        var numArrayTable = stage->GetNumberArrayData();
+        var strArrayTable = stage->GetStringArrayData();
+        if (numArrayTable == null || strArrayTable == null)
+            return;
+
+        var numArray = numArrayTable[(int)NumberArrayType.FlyText];
+        var strArray = strArrayTable[(int)StringArrayType.FlyText];
         if (numArray == null || strArray == null)
             return;
 
