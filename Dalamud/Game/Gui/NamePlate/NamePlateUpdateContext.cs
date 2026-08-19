@@ -167,8 +167,18 @@ internal unsafe class NamePlateUpdateContext : INamePlateUpdateContext
         if (stage == null || this.RaptureAtkModule == null || this.Ui3DModule == null || addon == null)
             return;
 
-        var numberData = stage->GetNumberArrayData(NumberArrayType.NamePlate);
-        var stringData = stage->GetStringArrayData(StringArrayType.NamePlate);
+        // GetNumberArrayData(NumberArrayType)/GetStringArrayData(StringArrayType) are just
+        // GetNumberArrayData()[(int)type] and GetStringArrayData()[(int)type], i.e. they dereference
+        // the table pointer before indexing it. Both table getters are [MemberFunction]s returning
+        // T**, so the table itself can be null and that dereference is unguarded. Splitting the two
+        // steps costs no extra call and removes it, matching NamePlateGui.RequestRedraw.
+        var numberArrays = stage->GetNumberArrayData();
+        var stringArrays = stage->GetStringArrayData();
+        if (numberArrays == null || stringArrays == null)
+            return;
+
+        var numberData = numberArrays[(int)NumberArrayType.NamePlate];
+        var stringData = stringArrays[(int)StringArrayType.NamePlate];
         if (numberData == null || stringData == null || numberData->IntArray == null)
             return;
 
