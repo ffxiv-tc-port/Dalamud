@@ -503,14 +503,28 @@ internal class SeStringEvaluator : IServiceType, ISeStringEvaluator
         {
             context.Builder.Append((ReadOnlySeStringSpan)characterInfo.Name.AsSpan());
 
-            if (characterInfo.HomeWorldId != AgentLobby.Instance()->LobbyData.HomeWorldId &&
-                WorldHelper.Instance()->AllWorlds.TryGetValue((ushort)characterInfo.HomeWorldId, out var world, false))
+            // AgentLobby.Instance() is generated from [Agent(...)] as
+            // "agentModule == null ? null : ..." and WorldHelper.Instance() is a hand-written wrapper
+            // over UIModule, so both legitimately return null before those modules exist. The name
+            // itself has already been appended above, so when either is missing just skip the
+            // cross-world decoration instead of dereferencing null. (NameCache.Instance() above is
+            // deliberately left unchecked: it is a [StaticAddress] without isPointer, so it returns
+            // the static address itself and can only fail by throwing, never by returning null.)
+            // The nesting preserves the original short-circuit order, so WorldHelper is still only
+            // resolved when the home worlds actually differ.
+            var agentLobby = AgentLobby.Instance();
+            if (agentLobby != null && characterInfo.HomeWorldId != agentLobby->LobbyData.HomeWorldId)
             {
-                context.Builder.AppendIcon(88);
+                var worldHelper = WorldHelper.Instance();
+                if (worldHelper != null &&
+                    worldHelper->AllWorlds.TryGetValue((ushort)characterInfo.HomeWorldId, out var world, false))
+                {
+                    context.Builder.AppendIcon(88);
 
-                if (this.gameConfig.UiConfig.TryGetUInt("LogCrossWorldName", out var logCrossWorldName) &&
-                    logCrossWorldName == 1)
-                    context.Builder.Append(new ReadOnlySeStringSpan(world.Name.GetPointer(0)));
+                    if (this.gameConfig.UiConfig.TryGetUInt("LogCrossWorldName", out var logCrossWorldName) &&
+                        logCrossWorldName == 1)
+                        context.Builder.Append(new ReadOnlySeStringSpan(world.Name.GetPointer(0)));
+                }
             }
 
             return true;
@@ -1226,8 +1240,12 @@ internal class SeStringEvaluator : IServiceType, ISeStringEvaluator
 
         if (UIGlobals.IsValidPlayerCharacterName(playerName.ExtractText()))
         {
+            // InfoModule.Instance() is a hand-written wrapper over UIModule and legitimately returns
+            // null before that module exists. Treat "cannot tell" as "not in a cross-world duty",
+            // which is the same flag value this produces whenever the check simply returns false.
             var flags = 0u;
-            if (InfoModule.Instance()->IsInCrossWorldDuty())
+            var infoModule = InfoModule.Instance();
+            if (infoModule != null && infoModule->IsInCrossWorldDuty())
                 flags |= 0x10;
 
             context.Builder.PushLink(LinkMacroPayloadType.Character, flags, worldId, 0u, playerName);
@@ -1239,7 +1257,11 @@ internal class SeStringEvaluator : IServiceType, ISeStringEvaluator
             context.Builder.Append(playerName);
         }
 
-        if (worldId == AgentLobby.Instance()->LobbyData.HomeWorldId)
+        // AgentLobby.Instance() is generated from [Agent(...)] as "agentModule == null ? null : ..."
+        // and legitimately returns null before the agent module exists. Without it the home world is
+        // unknown, so fall through and let the world row decide whether to append the suffix.
+        var lobbyAgent = AgentLobby.Instance();
+        if (lobbyAgent != null && worldId == lobbyAgent->LobbyData.HomeWorldId)
             return true;
 
         if (!this.dataManager.GetExcelSheet<World>(context.Language).TryGetRow(worldId, out var worldRow))

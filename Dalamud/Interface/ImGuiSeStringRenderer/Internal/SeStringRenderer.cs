@@ -600,7 +600,15 @@ internal class SeStringRenderer : IServiceType
             // Apply gamepad key mapping to icons.
             case MacroCode.Icon2
                 when payload.TryGetExpression(out var icon) && icon.TryGetInt(out var iconId):
-                ref var iconMapping = ref RaptureAtkModule.Instance()->AtkFontManager.Icon2RemapTable;
+                // RaptureAtkModule.Instance() is a hand-written wrapper over
+                // Framework -> UIModule -> GetRaptureAtkModule() and legitimately returns null before
+                // the UI module exists. Fall back to the unmapped icon, which is exactly what the
+                // loop below yields when no remapping entry matches.
+                var raptureAtkModule = RaptureAtkModule.Instance();
+                if (raptureAtkModule is null)
+                    return (BitmapFontIcon)iconId;
+
+                ref var iconMapping = ref raptureAtkModule->AtkFontManager.Icon2RemapTable;
                 for (var i = 0; i < 30; i++)
                 {
                     if (iconMapping[i].IconId == iconId)

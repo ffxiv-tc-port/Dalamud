@@ -106,6 +106,11 @@ internal unsafe class AtkArrayDataBrowserWidget : IDataWindowWidget
             }
             else if (inUse && arrays[arrayIndex]->SubscribedAddonsCount > 0)
             {
+                // RaptureAtkUnitManager.Instance() is a hand-written wrapper over
+                // RaptureAtkModule.Instance() and returns null whenever that module does not exist
+                // yet; GetAddonById can also return null for an id that is no longer live. This is a
+                // debug widget that can be open at the title screen, so leave the cell blank rather
+                // than dereferencing null.
                 var raptureAtkUnitManager = RaptureAtkUnitManager.Instance();
 
                 for (var j = 0; j < arrays[arrayIndex]->SubscribedAddonsCount; j++)
@@ -113,8 +118,14 @@ internal unsafe class AtkArrayDataBrowserWidget : IDataWindowWidget
                     if (arrays[arrayIndex]->SubscribedAddons[j] == 0)
                         continue;
 
+                    var addon = raptureAtkUnitManager == null
+                                    ? null
+                                    : raptureAtkUnitManager->GetAddonById(arrays[arrayIndex]->SubscribedAddons[j]);
+                    if (addon == null)
+                        continue;
+
                     using (ImRaii.PushColor(ImGuiCol.Text, 0xFF00FFFF))
-                        ImGui.Text(raptureAtkUnitManager->GetAddonById(arrays[arrayIndex]->SubscribedAddons[j])->NameString);
+                        ImGui.Text(addon->NameString);
                     break;
                 }
             }
@@ -155,6 +166,8 @@ internal unsafe class AtkArrayDataBrowserWidget : IDataWindowWidget
                 using var tooltip = ImRaii.Tooltip();
                 if (tooltip)
                 {
+                    // See DrawArrayList: neither the manager nor the resolved addon is guaranteed to
+                    // be non-null, so skip the entries that cannot be resolved.
                     var raptureAtkUnitManager = RaptureAtkUnitManager.Instance();
 
                     for (var j = 0; j < array->SubscribedAddonsCount; j++)
@@ -162,7 +175,13 @@ internal unsafe class AtkArrayDataBrowserWidget : IDataWindowWidget
                         if (array->SubscribedAddons[j] == 0)
                             continue;
 
-                        ImGui.Text(raptureAtkUnitManager->GetAddonById(array->SubscribedAddons[j])->NameString);
+                        var addon = raptureAtkUnitManager == null
+                                        ? null
+                                        : raptureAtkUnitManager->GetAddonById(array->SubscribedAddons[j]);
+                        if (addon == null)
+                            continue;
+
+                        ImGui.Text(addon->NameString);
                     }
                 }
             }
@@ -171,10 +190,21 @@ internal unsafe class AtkArrayDataBrowserWidget : IDataWindowWidget
 
     private void DrawNumberArrayTab()
     {
-        var atkArrayDataHolder = RaptureAtkModule.Instance()->AtkArrayDataHolder;
-
         using var tab = ImRaii.TabItem("Number Arrays"u8);
         if (!tab) return;
+
+        // RaptureAtkModule.Instance() is a hand-written wrapper over
+        // Framework -> UIModule -> GetRaptureAtkModule() and legitimately returns null before the UI
+        // module exists. Fetching the holder is moved below the tab check (matching the string and
+        // extend tabs) so the message below is drawn inside the tab rather than over the tab bar.
+        var raptureAtkModule = RaptureAtkModule.Instance();
+        if (raptureAtkModule == null)
+        {
+            ImGui.Text("RaptureAtkModule is not available.");
+            return;
+        }
+
+        var atkArrayDataHolder = raptureAtkModule->AtkArrayDataHolder;
 
         this.DrawArrayList(
             this.numberType,
@@ -240,7 +270,15 @@ internal unsafe class AtkArrayDataBrowserWidget : IDataWindowWidget
         using var tab = ImRaii.TabItem("String Arrays"u8);
         if (!tab) return;
 
-        var atkArrayDataHolder = RaptureAtkModule.Instance()->AtkArrayDataHolder;
+        // See DrawNumberArrayTab for why Instance() can be null here.
+        var raptureAtkModule = RaptureAtkModule.Instance();
+        if (raptureAtkModule == null)
+        {
+            ImGui.Text("RaptureAtkModule is not available.");
+            return;
+        }
+
+        var atkArrayDataHolder = raptureAtkModule->AtkArrayDataHolder;
 
         using (var sidebarchild = ImRaii.Child("StringArraySidebar"u8, new Vector2(300, -1), false, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoSavedSettings))
         {
@@ -344,7 +382,15 @@ internal unsafe class AtkArrayDataBrowserWidget : IDataWindowWidget
         using var tab = ImRaii.TabItem("Extend Arrays"u8);
         if (!tab) return;
 
-        var atkArrayDataHolder = RaptureAtkModule.Instance()->AtkArrayDataHolder;
+        // See DrawNumberArrayTab for why Instance() can be null here.
+        var raptureAtkModule = RaptureAtkModule.Instance();
+        if (raptureAtkModule == null)
+        {
+            ImGui.Text("RaptureAtkModule is not available.");
+            return;
+        }
+
+        var atkArrayDataHolder = raptureAtkModule->AtkArrayDataHolder;
 
         this.DrawArrayList(
             this.extendType,

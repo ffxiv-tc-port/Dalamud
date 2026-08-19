@@ -217,9 +217,16 @@ internal unsafe class UiDebug
                     ImGui.SameLine();
                     if (ImGui.Button($"Encode##{(ulong)textNode:X}"))
                     {
-                        using var tmp = new Utf8String();
-                        RaptureTextModule.Instance()->MacroEncoder.EncodeString(&tmp, textNode->NodeText.StringPtr);
-                        textNode->NodeText.Copy(&tmp);
+                        // RaptureTextModule.Instance() is a hand-written wrapper over UIModule and
+                        // legitimately returns null before that module exists; without it there is
+                        // nothing to encode with, so leave the text untouched.
+                        var raptureTextModule = RaptureTextModule.Instance();
+                        if (raptureTextModule != null)
+                        {
+                            using var tmp = new Utf8String();
+                            raptureTextModule->MacroEncoder.EncodeString(&tmp, textNode->NodeText.StringPtr);
+                            textNode->NodeText.Copy(&tmp);
+                        }
                     }
 
                     ImGui.SameLine();
@@ -521,7 +528,17 @@ internal unsafe class UiDebug
     {
         var foundSelected = false;
         var noResults = true;
+
+        // AtkStage.Instance() resolves a [StaticAddress(..., isPointer: true)] slot, so the static
+        // address holds a pointer that is null until the stage has been created. This is a debug
+        // window that can be opened at any time, including at the title screen, so show that the
+        // data is unavailable rather than dereferencing null.
         var stage = AtkStage.Instance();
+        if (stage == null || stage->RaptureAtkUnitManager == null)
+        {
+            ImGui.Text("AtkStage is not available.");
+            return;
+        }
 
         var unitManagers = &stage->RaptureAtkUnitManager->AtkUnitManager.DepthLayerOneList;
 

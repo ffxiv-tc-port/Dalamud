@@ -271,7 +271,18 @@ internal class SeStringCreatorWidget : IDataWindowWidget
         ImGui.TableSetupScrollFreeze(5, 1);
         ImGui.TableHeadersRow();
 
-        var deque = RaptureTextModule.Instance()->GlobalParameters;
+        // RaptureTextModule.Instance() is a hand-written wrapper over UIModule and legitimately
+        // returns null before that module exists. Show an empty table rather than dereferencing null.
+        var raptureTextModule = RaptureTextModule.Instance();
+        if (raptureTextModule == null)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.Text("RaptureTextModule is not available."u8);
+            return;
+        }
+
+        var deque = raptureTextModule->GlobalParameters;
         for (var i = 0u; i < deque.MySize; i++)
         {
             var item = deque[i];
@@ -433,6 +444,13 @@ internal class SeStringCreatorWidget : IDataWindowWidget
 
         if (ImGui.Button("Print"u8))
         {
+            // These three are all hand-written wrappers over UIModule and legitimately return null
+            // before that module exists. Resolve them once here and skip the individual steps that
+            // need a missing one, so the temporaries below are still destructed on every path.
+            var raptureTextModule = RaptureTextModule.Instance();
+            var pronounModule = PronounModule.Instance();
+            var raptureLogModule = RaptureLogModule.Instance();
+
             var output = Utf8String.CreateEmpty();
             var temp = Utf8String.CreateEmpty();
             var temp2 = Utf8String.CreateEmpty();
@@ -446,25 +464,32 @@ internal class SeStringCreatorWidget : IDataWindowWidget
                         break;
 
                     case TextEntryType.Macro:
+                        if (raptureTextModule == null)
+                            break;
+
                         temp->Clear();
-                        RaptureTextModule.Instance()->MacroEncoder.EncodeString(temp, entry.Message);
+                        raptureTextModule->MacroEncoder.EncodeString(temp, entry.Message);
                         output->Append(temp);
                         break;
 
                     case TextEntryType.Fixed:
+                        if (raptureTextModule == null || pronounModule == null)
+                            break;
+
                         temp->SetString(entry.Message);
                         temp2->Clear();
 
-                        RaptureTextModule.Instance()->TextModule.ProcessMacroCode(temp2, temp->StringPtr);
-                        var out1 = PronounModule.Instance()->ProcessString(temp2, true);
-                        var out2 = PronounModule.Instance()->ProcessString(out1, false);
+                        raptureTextModule->TextModule.ProcessMacroCode(temp2, temp->StringPtr);
+                        var out1 = pronounModule->ProcessString(temp2, true);
+                        var out2 = pronounModule->ProcessString(out1, false);
 
                         output->Append(out2);
                         break;
                 }
             }
 
-            RaptureLogModule.Instance()->PrintString(output->StringPtr);
+            if (raptureLogModule != null)
+                raptureLogModule->PrintString(output->StringPtr);
             temp2->Dtor(true);
             temp->Dtor(true);
             output->Dtor(true);
@@ -496,7 +521,10 @@ internal class SeStringCreatorWidget : IDataWindowWidget
                 this.localParameters,
                 this.language);
 
-            RaptureLogModule.Instance()->PrintString(evaluated);
+            // Hand-written wrapper over UIModule; null before that module exists.
+            var logModule = RaptureLogModule.Instance();
+            if (logModule != null)
+                logModule->PrintString(evaluated);
         }
 
         if (this.entries.Count != 0)
@@ -987,13 +1015,21 @@ internal class SeStringCreatorWidget : IDataWindowWidget
 
                 if (macroCode == MacroCode.Icon2)
                 {
-                    var iconMapping = RaptureAtkModule.Instance()->AtkFontManager.Icon2RemapTable;
-                    for (var i = 0; i < 30; i++)
+                    // RaptureAtkModule.Instance() is a hand-written wrapper over
+                    // Framework -> UIModule -> GetRaptureAtkModule() and legitimately returns null
+                    // before the UI module exists. Leave iconId unmapped in that case, which is what
+                    // the loop already produces when no remapping entry matches.
+                    var raptureAtkModule = RaptureAtkModule.Instance();
+                    if (raptureAtkModule != null)
                     {
-                        if (iconMapping[i].IconId == iconId)
+                        var iconMapping = raptureAtkModule->AtkFontManager.Icon2RemapTable;
+                        for (var i = 0; i < 30; i++)
                         {
-                            iconId = iconMapping[i].RemappedIconId;
-                            break;
+                            if (iconMapping[i].IconId == iconId)
+                            {
+                                iconId = iconMapping[i].RemappedIconId;
+                                break;
+                            }
                         }
                     }
                 }

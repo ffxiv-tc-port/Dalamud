@@ -53,13 +53,29 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
         var numOffset = 161u;
         var strOffset = 28u;
 
-        var flytext = (AddonFlyText*)RaptureAtkUnitManager.Instance()->GetAddonByName("_FlyText");
+        // RaptureAtkUnitManager.Instance() is a hand-written wrapper over RaptureAtkModule.Instance()
+        // and returns null whenever that module does not exist yet.
+        var atkUnitManager = RaptureAtkUnitManager.Instance();
+        if (atkUnitManager == null)
+            return;
+
+        var flytext = (AddonFlyText*)atkUnitManager->GetAddonByName("_FlyText");
         if (flytext == null)
             return;
 
-        // Get the number and string arrays we need
-        var numArray = AtkStage.Instance()->GetNumberArrayData(NumberArrayType.FlyText);
-        var strArray = AtkStage.Instance()->GetStringArrayData(StringArrayType.FlyText);
+        // Get the number and string arrays we need.
+        // AtkStage.Instance() resolves a [StaticAddress(..., isPointer: true)] slot, so the static
+        // address holds a pointer that is null until the stage has been created, and the array
+        // getters can return null in their own right. Dereferencing either raises an
+        // AccessViolationException, a corrupted-state exception no try/catch can recover from.
+        var stage = AtkStage.Instance();
+        if (stage == null)
+            return;
+
+        var numArray = stage->GetNumberArrayData(NumberArrayType.FlyText);
+        var strArray = stage->GetStringArrayData(StringArrayType.FlyText);
+        if (numArray == null || strArray == null)
+            return;
 
         // Write the values to the arrays using a known valid flytext region
         numArray->IntArray[numOffset + 0] = 1; // Some kind of "Enabled" flag for this section

@@ -108,7 +108,18 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
     /// <inheritdoc/>
     public bool OpenMapWithMapLink(MapLinkPayload mapLink)
-        => RaptureAtkModule.Instance()->OpenMapWithMapLink(mapLink.DataString);
+    {
+        // RaptureAtkModule.Instance() is a hand-written wrapper that walks
+        // Framework -> UIModule -> GetRaptureAtkModule(), returning null at each step if the previous
+        // one is null. It therefore legitimately returns null before the UI module exists. Reading
+        // through it raises an AccessViolationException, a corrupted-state exception that no
+        // try/catch can recover from, so bail out and report failure instead.
+        var raptureAtkModule = RaptureAtkModule.Instance();
+        if (raptureAtkModule == null)
+            return false;
+
+        return raptureAtkModule->OpenMapWithMapLink(mapLink.DataString);
+    }
 
     /// <inheritdoc/>
     public bool WorldToScreen(Vector3 worldPos, out Vector2 screenPos)
@@ -285,7 +296,17 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
     /// Indicates if the game is in the lobby scene (title screen, chara select, chara make, aesthetician etc.).
     /// </summary>
     /// <returns>A value indicating whether the game is in the lobby scene.</returns>
-    internal bool IsInLobby() => RaptureAtkModule.Instance()->CurrentUIScene.StartsWith("LobbyMain"u8);
+    internal bool IsInLobby()
+    {
+        // See OpenMapWithMapLink for why Instance() can be null here. If the module does not exist
+        // yet the game has not even reached the lobby, so report true: every caller uses this to
+        // gate rendering of character data that is equally unavailable in that state.
+        var raptureAtkModule = RaptureAtkModule.Instance();
+        if (raptureAtkModule == null)
+            return true;
+
+        return raptureAtkModule->CurrentUIScene.StartsWith("LobbyMain"u8);
+    }
 
     /// <summary>
     /// Sets the current background music.
@@ -382,7 +403,14 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
     {
         this.setUiVisibilityHook.Original(thisPtr, uiVisible);
 
-        this.GameUiHidden = !RaptureAtkModule.Instance()->IsUiVisible;
+        // See OpenMapWithMapLink for why Instance() can be null here. Leave GameUiHidden at its
+        // previous value and skip the event rather than dereferencing null; the next toggle will
+        // resynchronise it.
+        var raptureAtkModule = RaptureAtkModule.Instance();
+        if (raptureAtkModule == null)
+            return;
+
+        this.GameUiHidden = !raptureAtkModule->IsUiVisible;
         this.UiHideToggled?.InvokeSafely(this, this.GameUiHidden);
 
         Log.Debug("GameUiHidden: {0}", this.GameUiHidden);

@@ -75,18 +75,21 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
 
     private IReadOnlyList<IMenuItem>? SubmenuItems { get; set; }
 
-    private uint AddonContextSubNameId
+    /// <summary>
+    /// Gets the addon name id of "AddonContextSub", resolving and caching it on first use.
+    /// </summary>
+    /// <param name="module">A non-null RaptureAtkModule, supplied by the caller so that this does not
+    /// have to re-resolve (and re-null-check) the module it has already validated.</param>
+    /// <returns>The addon name id.</returns>
+    private uint GetAddonContextSubNameId(RaptureAtkModule* module)
     {
-        get
+        if (this.addonContextSubNameId is not uint id)
         {
-            if (this.addonContextSubNameId is not uint id)
-            {
-                id = checked((uint)RaptureAtkModule.Instance()->AddonNames.FindIndex(s => s.EqualToString("AddonContextSub")));
-                this.addonContextSubNameId = id;
-            }
-
-            return id;
+            id = checked((uint)module->AddonNames.FindIndex(s => s.EqualToString("AddonContextSub")));
+            this.addonContextSubNameId = id;
         }
+
+        return id;
     }
 
     /// <inheritdoc/>
@@ -501,7 +504,18 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
 
         this.SubmenuItems = submenuItems;
 
+        // RaptureAtkModule.Instance() is a hand-written wrapper over
+        // Framework -> UIModule -> GetRaptureAtkModule() and legitimately returns null before the UI
+        // module exists. Bail out before allocating the array below so there is nothing to free, and
+        // never dereference it: an AccessViolationException here is a corrupted-state exception that
+        // no try/catch can recover from.
         var module = RaptureAtkModule.Instance();
+        if (module == null)
+        {
+            Log.Warning("RaptureAtkModule unavailable, cannot open submenu");
+            return;
+        }
+
         var values = this.CreateEmptySubmenuContextMenuArray(name, posX, posY, out var valueCount);
 
         switch (this.SelectedMenuType)
@@ -509,14 +523,14 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             case ContextMenuType.Default:
                 {
                     var ownerAddonId = ((AgentContext*)this.SelectedAgent)->OwnerAddon;
-                    module->OpenAddon(this.AddonContextSubNameId, (uint)valueCount, values, &this.SelectedAgent->AtkEventInterface, 71, checked((ushort)ownerAddonId), 4);
+                    module->OpenAddon(this.GetAddonContextSubNameId(module), (uint)valueCount, values, &this.SelectedAgent->AtkEventInterface, 71, checked((ushort)ownerAddonId), 4);
                     break;
                 }
 
             case ContextMenuType.Inventory:
                 {
                     var ownerAddonId = ((AgentInventoryContext*)this.SelectedAgent)->OwnerAddonId;
-                    module->OpenAddon(this.AddonContextSubNameId, (uint)valueCount, values, &this.SelectedAgent->AtkEventInterface, 0, checked((ushort)ownerAddonId), 4);
+                    module->OpenAddon(this.GetAddonContextSubNameId(module), (uint)valueCount, values, &this.SelectedAgent->AtkEventInterface, 0, checked((ushort)ownerAddonId), 4);
                     break;
                 }
 
