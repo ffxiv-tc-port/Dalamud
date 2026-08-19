@@ -23,9 +23,12 @@ using Dalamud.Plugin.Services;
 using Dalamud.Storage.Assets;
 using Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using InteropGenerator.Runtime;
 using Lumina.Text.ReadOnly;
 using Serilog;
 
+// 不能直接用 ValueType：與 System.ValueType 同名，未取別名會是 CS0104 模稜兩可。
+using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
 using LSeStringBuilder = Lumina.Text.SeStringBuilder;
 
 namespace Dalamud.Interface.Internal.Windows;
@@ -490,10 +493,17 @@ internal class TitleScreenMenuWindow : Window, IDisposable
         textNode->AlignmentType = AlignmentType.TopLeft;
 
         var containsDalamudVersionString = textNode->OriginalTextPointer.Value == textNode->NodeText.StringPtr.Value;
+
+        // 🔴 AtkValues 是動態配置的陣列：指標本身可能是 null、長度不保證有索引 1，
+        // 型別也不保證是字串（非字串型別的那 8 bytes 被當成 char* 讀＝從隨機位址開始掃）。
+        // 下面兩處都直接把它當 C 字串用（SetText／ReadOnlySeStringSpan），取不到就安靜跳過本影格。
+        if (!TryGetGameVersionString(addon, out var gameVersionString))
+            return;
+
         if (!this.configuration.ShowTsm || !this.showTsm.Value)
         {
             if (containsDalamudVersionString)
-                textNode->SetText(addon->AtkValues[1].String);
+                textNode->SetText(gameVersionString);
             this.lastLoadedPluginCount = -1;
             return;
         }
@@ -507,7 +517,7 @@ internal class TitleScreenMenuWindow : Window, IDisposable
         this.lastLoadedPluginCount = count;
 
         var lssb = LSeStringBuilder.SharedPool.Get();
-        lssb.Append(new ReadOnlySeStringSpan(addon->AtkValues[1].String.Value)).Append("\n\n");
+        lssb.Append(new ReadOnlySeStringSpan(gameVersionString.Value)).Append("\n\n");
         lssb.PushEdgeColorType(701).PushColorType(539)
             .Append(SeIconChar.BoxedLetterD.ToIconChar())
             .PopColorType().PopEdgeColorType();
@@ -520,6 +530,29 @@ internal class TitleScreenMenuWindow : Window, IDisposable
 
         textNode->SetText(lssb.GetViewAsSpan());
         LSeStringBuilder.SharedPool.Return(lssb);
+    }
+
+    /// <summary>
+    /// 從 _TitleRevision 的 AtkValue 陣列取出遊戲自己的版本字串（索引 1）。
+    /// 陣列指標、長度、值型別三者任一不成立就回 false，呼叫端據此跳過本影格。
+    /// 型別放行的三種來自 <see cref="Dalamud.Game.NativeWrapper.AtkValuePtr"/> 對字串的同一組判定。
+    /// </summary>
+    /// <param name="addon">_TitleRevision 的 addon。</param>
+    /// <param name="versionString">取到的版本字串，取不到時為 default。</param>
+    /// <returns>索引 1 確實是非空的字串值時回 true。</returns>
+    private static unsafe bool TryGetGameVersionString(AtkUnitBase* addon, out CStringPointer versionString)
+    {
+        versionString = default;
+
+        if (addon->AtkValues == null || addon->AtkValuesCount <= 1)
+            return false;
+
+        var value = addon->AtkValues[1];
+        if (value.Type is not (AtkValueType.String or AtkValueType.String8 or AtkValueType.ManagedString))
+            return false;
+
+        versionString = value.String;
+        return versionString.HasValue;
     }
 
     private void TitleScreenMenuEntryListChange() => this.privateAtlas.BuildFontsAsync();

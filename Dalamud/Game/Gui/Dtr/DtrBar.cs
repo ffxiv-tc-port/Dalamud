@@ -438,6 +438,11 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
         for (var index = 0; index < addon->UldManager.NodeListCount; index++)
         {
             var node = addon->UldManager.NodeList[index];
+
+            // NodeListCount only bounds the array; individual slots may still be null.
+            // Dereferencing one is an AccessViolation, which cannot be caught.
+            if (node == null) continue;
+
             if (node->IsVisible())
             {
                 var nodeId = node->NodeId;
@@ -491,7 +496,12 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
     {
         for (var i = 0; i < dtr->UldManager.NodeListCount; i++)
         {
-            if (dtr->UldManager.NodeList[i]->NodeId > 1000)
+            var node = dtr->UldManager.NodeList[i];
+
+            // NodeListCount only bounds the array; individual slots may still be null.
+            if (node == null) continue;
+
+            if (node->NodeId > 1000)
                 return true;
         }
 
