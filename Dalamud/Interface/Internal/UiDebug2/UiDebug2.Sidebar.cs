@@ -48,8 +48,17 @@ internal unsafe partial class UiDebug2
     /// <summary>
     /// Gets the base address for all unit lists.
     /// </summary>
-    /// <returns>The address, if found.</returns>
-    internal static AtkUnitList* GetUnitListBaseAddr() => &RaptureAtkUnitManager.Instance()->DepthLayerOneList;
+    /// <returns>The address, or null if the unit manager is not available.</returns>
+    internal static AtkUnitList* GetUnitListBaseAddr()
+    {
+        // RaptureAtkUnitManager.Instance() is hand-written and legally returns null (it forwards
+        // RaptureAtkModule.Instance()). Taking &manager->DepthLayerOneList on a null manager does not
+        // fault here: DepthLayerOneList sits at offset 0x30, so it silently yields the poison pointer
+        // 0x30, which faults later inside the caller's loop and misattributes the crash site. Callers
+        // already test the result for null, so return a genuine null instead.
+        var unitManager = RaptureAtkUnitManager.Instance();
+        return unitManager is null ? null : &unitManager->DepthLayerOneList;
+    }
 
     private void DrawSidebar()
     {
@@ -97,6 +106,10 @@ internal unsafe partial class UiDebug2
         if (ch.Success)
         {
             var unitListBaseAddr = GetUnitListBaseAddr();
+            if (unitListBaseAddr == null)
+            {
+                return;
+            }
 
             foreach (var unit in UnitListOptions)
             {

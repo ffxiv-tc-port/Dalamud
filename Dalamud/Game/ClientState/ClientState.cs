@@ -286,11 +286,31 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
 
     private unsafe void Setup()
     {
-        this.onLogoutHook = Hook<LogoutCallbackInterface.Delegates.OnLogout>.FromAddress((nint)AgentLobby.Instance()->LogoutCallbackInterface.VirtualTable->OnLogout, this.OnLogoutDetour);
-        this.onLogoutHook.Enable();
+        // AgentLobby is an [Agent]-family type: Instance() legally returns null whenever the agent
+        // module is not up yet, and the vtable pointer behind it is a second, independent null hop.
+        // Dereferencing either would be an AccessViolationException, which is a corrupted-state
+        // exception that try/catch cannot contain -- so both hops are checked before the hook is
+        // built. Failing to install the hook only costs the Logout event; the rest of Setup, and in
+        // particular the framework subscription below, must still run.
+        var agentLobby = AgentLobby.Instance();
+        var logoutVirtualTable = agentLobby is null ? null : agentLobby->LogoutCallbackInterface.VirtualTable;
+        if (logoutVirtualTable is not null)
+        {
+            this.onLogoutHook = Hook<LogoutCallbackInterface.Delegates.OnLogout>.FromAddress((nint)logoutVirtualTable->OnLogout, this.OnLogoutDetour);
+            this.onLogoutHook.Enable();
+        }
+        else
+        {
+            Log.Information("Could not resolve the logout callback vtable during Setup (AgentLobby was not available); the Logout event will not fire this session.");
+        }
 
         this.TerritoryType = (ushort)GameMain.Instance()->CurrentTerritoryTypeId;
-        this.MapId = AgentMap.Instance()->CurrentMapId;
+
+        // AgentMap is likewise [Agent]-family; leave MapId at its previous value if it is not up yet.
+        var agentMap = AgentMap.Instance();
+        if (agentMap is not null)
+            this.MapId = agentMap->CurrentMapId;
+
         this.Instance = CSUIState.Instance()->PublicInstance.InstanceId;
 
         this.initialized = true;
@@ -371,7 +391,13 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
 
     private unsafe void OnFrameworkUpdate(IFramework framework)
     {
-        this.MapId = AgentMap.Instance()->CurrentMapId;
+        // Runs every frame. AgentMap is [Agent]-family and legally returns null between zones and
+        // while logged out, so this cannot be an unchecked dereference. Keep the previous MapId when
+        // the agent is unavailable rather than reporting a bogus 0, and deliberately do not log here
+        // -- a per-frame log line would flood the file.
+        var agentMap = AgentMap.Instance();
+        if (agentMap is not null)
+            this.MapId = agentMap->CurrentMapId;
 
         var condition = Service<Conditions.Condition>.GetNullable();
         var gameGui = Service<GameGui>.GetNullable();

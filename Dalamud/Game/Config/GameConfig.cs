@@ -39,7 +39,17 @@ internal sealed class GameConfig : IInternalDisposableService, IGameConfig
             try
             {
                 Log.Verbose("[GameConfig] Initializing");
+
+                // Framework is declared [StaticAddress(..., isPointer: true)], so Instance() reads the
+                // contents of a static slot and legally returns null; the generated throw only covers a
+                // failed signature scan, not a null slot. Taking &csFramework->SystemConfig... would not
+                // fault here -- it would hand a poison pointer to the sections below and fault much
+                // later, far from the cause. Throwing instead surfaces it through the TCS handling
+                // already in place at the bottom of this method.
                 var csFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance();
+                if (csFramework == null)
+                    throw new InvalidOperationException("The game Framework instance was null while initializing GameConfig.");
+
                 var commonConfig = &csFramework->SystemConfig.SystemConfigBase;
                 this.tcsSystem.SetResult(new("System", framework, &commonConfig->ConfigBase));
                 this.tcsUiConfig.SetResult(new("UiConfig", framework, &commonConfig->UiConfig));
