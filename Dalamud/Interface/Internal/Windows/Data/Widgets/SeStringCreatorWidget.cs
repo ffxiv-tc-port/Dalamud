@@ -447,7 +447,7 @@ internal class SeStringCreatorWidget : IDataWindowWidget
             // These three are all hand-written wrappers over UIModule and legitimately return null
             // before that module exists. Resolve them once here and skip the individual steps that
             // need a missing one, so the temporaries below are still destructed on every path.
-            var raptureTextModule = RaptureTextModule.Instance();
+            var textModule = RaptureTextModule.Instance();
             var pronounModule = PronounModule.Instance();
             var raptureLogModule = RaptureLogModule.Instance();
 
@@ -464,22 +464,22 @@ internal class SeStringCreatorWidget : IDataWindowWidget
                         break;
 
                     case TextEntryType.Macro:
-                        if (raptureTextModule == null)
+                        if (textModule == null)
                             break;
 
                         temp->Clear();
-                        raptureTextModule->MacroEncoder.EncodeString(temp, entry.Message);
+                        textModule->MacroEncoder.EncodeString(temp, entry.Message);
                         output->Append(temp);
                         break;
 
                     case TextEntryType.Fixed:
-                        if (raptureTextModule == null || pronounModule == null)
+                        if (textModule == null || pronounModule == null)
                             break;
 
                         temp->SetString(entry.Message);
                         temp2->Clear();
 
-                        raptureTextModule->TextModule.ProcessMacroCode(temp2, temp->StringPtr);
+                        textModule->TextModule.ProcessMacroCode(temp2, temp->StringPtr);
                         var out1 = pronounModule->ProcessString(temp2, true);
                         var out2 = pronounModule->ProcessString(out1, false);
 
@@ -562,8 +562,10 @@ internal class SeStringCreatorWidget : IDataWindowWidget
             }
         }
 
+        // Hand-written wrapper over UIModule; null before that module exists. With no module there
+        // is no encoder error to report, so simply skip the message.
         var raptureTextModule = RaptureTextModule.Instance();
-        if (!raptureTextModule->MacroEncoder.EncoderError.IsEmpty)
+        if (raptureTextModule != null && !raptureTextModule->MacroEncoder.EncoderError.IsEmpty)
         {
             ImGui.SameLine();
             ImGui.Text(raptureTextModule->MacroEncoder.EncoderError.ToString()); // TODO: EncoderError doesn't clear

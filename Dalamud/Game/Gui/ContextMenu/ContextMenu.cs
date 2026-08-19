@@ -75,23 +75,6 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
 
     private IReadOnlyList<IMenuItem>? SubmenuItems { get; set; }
 
-    /// <summary>
-    /// Gets the addon name id of "AddonContextSub", resolving and caching it on first use.
-    /// </summary>
-    /// <param name="module">A non-null RaptureAtkModule, supplied by the caller so that this does not
-    /// have to re-resolve (and re-null-check) the module it has already validated.</param>
-    /// <returns>The addon name id.</returns>
-    private uint GetAddonContextSubNameId(RaptureAtkModule* module)
-    {
-        if (this.addonContextSubNameId is not uint id)
-        {
-            id = checked((uint)module->AddonNames.FindIndex(s => s.EqualToString("AddonContextSub")));
-            this.addonContextSubNameId = id;
-        }
-
-        return id;
-    }
-
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
     {
@@ -147,6 +130,23 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
               .Append(menuItem.Name)
               .Build()
             : menuItem.Name;
+
+    /// <summary>
+    /// Gets the addon name id of "AddonContextSub", resolving and caching it on first use.
+    /// </summary>
+    /// <param name="module">A non-null RaptureAtkModule, supplied by the caller so that this does not
+    /// have to re-resolve (and re-null-check) the module it has already validated.</param>
+    /// <returns>The addon name id.</returns>
+    private uint GetAddonContextSubNameId(RaptureAtkModule* module)
+    {
+        if (this.addonContextSubNameId is not uint id)
+        {
+            id = checked((uint)module->AddonNames.FindIndex(s => s.EqualToString("AddonContextSub")));
+            this.addonContextSubNameId = id;
+        }
+
+        return id;
+    }
 
     private AtkValue* ExpandContextMenuArray(Span<AtkValue> oldValues, int newSize)
     {
