@@ -474,8 +474,16 @@ internal class TitleScreenMenuWindow : Window, IDisposable
     {
         if (args is not AddonDrawArgs drawArgs) return;
 
+        // 🔴 兩層都可為 null：AddonArgs.Addon 本身可能是空指標（Clear() 之後、或 addon 已釋放），
+        // GetTextNodeById 找不到 id 3 的文字節點時也回 null。
+        // 下面第一個動作就是寫 textNode->TextFlags＝寫入位址 0 附近，這是 AccessViolation
+        // （corrupted-state exception，try/catch 攔不到）。
+        // 這是每影格的 PostDraw 事件路徑，取不到就安靜跳過本影格，不寫 log。
+        if (drawArgs.Addon.IsNull) return;
+
         var addon = drawArgs.Addon.Struct;
         var textNode = addon->GetTextNodeById(3);
+        if (textNode is null) return;
 
         // look and feel init. should be harmless to set.
         textNode->TextFlags |= TextFlags.MultiLine;
