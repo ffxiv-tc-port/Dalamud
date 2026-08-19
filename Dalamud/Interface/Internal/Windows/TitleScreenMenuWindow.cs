@@ -513,7 +513,7 @@ internal class TitleScreenMenuWindow : Window, IDisposable
             .PopColorType().PopEdgeColorType();
         lssb.Append($" Dalamud: {Util.GetScmVersion()}");
 
-        lssb.Append($" - 已加载 {count} 个插件");
+        lssb.Append($" - 已載入 {count} 個外掛");
 
         if (pm?.SafeMode is true)
             lssb.PushColorType(17).Append(" [安全模式]").PopColorType();
