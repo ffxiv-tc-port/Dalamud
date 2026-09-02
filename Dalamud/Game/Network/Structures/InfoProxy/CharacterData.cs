@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 
 using Dalamud.Data;
+using Dalamud.Utility;
 
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
 
@@ -183,12 +184,12 @@ public unsafe class CharacterData
     /// <summary>
     /// Gets the name of the character.
     /// </summary>
-    public string Name => this.Struct->NameString;
+    public string Name => NativeStringUtil.ReadFixedBuffer(this.Struct->Name);
 
     /// <summary>
     /// Gets the free company tag of the character.
     /// </summary>
-    public string FCTag => this.Struct->FCTagString;
+    public string FCTag => NativeStringUtil.ReadFixedBuffer(this.Struct->FCTag);
 
     /// <summary>
     /// Gets the underlying <see cref="InfoProxyCommonList.CharacterData"/> struct.

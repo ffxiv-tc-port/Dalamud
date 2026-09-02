@@ -48,7 +48,7 @@ internal unsafe class PluginEventController : IDisposable
 
         var eventHandle = new AddonEventHandle
         {
-            AddonName = addon->NameString,
+            AddonName = NativeStringUtil.GetAddonName(addon),
             ParamKey = eventId,
             EventType = atkEventType,
             EventGuid = eventGuid,

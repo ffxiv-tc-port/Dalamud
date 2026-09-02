@@ -26,7 +26,7 @@ internal unsafe class AddonEventEntry
     /// <summary>
     /// Gets the name of the addon this args referrers to.
     /// </summary>
-    public string AddonName => this.Addon == nint.Zero ? InvalidAddonName : this.addonName ??= ((AtkUnitBase*)this.Addon)->NameString;
+    public string AddonName => this.Addon == nint.Zero ? InvalidAddonName : this.addonName ??= NativeStringUtil.GetAddonName((AtkUnitBase*)this.Addon);
 
     /// <summary>
     /// Gets the pointer to the event source.

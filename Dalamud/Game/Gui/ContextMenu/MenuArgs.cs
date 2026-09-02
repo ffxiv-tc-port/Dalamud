@@ -2,6 +2,7 @@ using System.Collections.Generic;
 
 using Dalamud.Memory;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
 
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -65,7 +66,7 @@ internal abstract unsafe class MenuArgs : IMenuArgs
     /// <param name="eventInterfaces">List of AtkEventInterfaces associated with the context menu.</param>
     protected internal MenuArgs(AtkUnitBase* addon, AgentInterface* agent, ContextMenuType type, IReadOnlySet<nint>? eventInterfaces)
     {
-        this.AddonName = addon != null ? addon->NameString : null;
+        this.AddonName = addon != null ? NativeStringUtil.GetAddonName(addon) : null;
         this.AddonPtr = (nint)addon;
         this.AgentPtr = (nint)agent;
         this.MenuType = type;

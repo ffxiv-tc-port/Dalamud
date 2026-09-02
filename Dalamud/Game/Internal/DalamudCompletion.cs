@@ -560,7 +560,7 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
         if (addon == null)
             addon = RaptureAtkUnitManager.Instance()->GetAddonByNode((AtkResNode*)component->OwnerNode);
 
-        return addon != null && addon->NameString == "ChatLog";
+        return addon != null && NativeStringUtil.GetAddonName(addon) == "ChatLog";
     }
 
     private bool HasDalamudCategory()
