@@ -9,6 +9,7 @@ using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
 
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -180,7 +181,7 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
     {
         // Hook the addon's ReceiveEvent function here, but only enable the hook if we have an active listener.
         // Disallows hooking the core internal event handler.
-        var addonName = addon->NameString;
+        var addonName = NativeStringUtil.GetAddonName(addon);
         var receiveEventAddress = (nint)addon->VirtualTable->ReceiveEvent;
         if (receiveEventAddress != this.disallowedReceiveEventAddress)
         {
@@ -262,7 +263,7 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
     {
         try
         {
-            var addonName = atkUnitBase[0]->NameString;
+            var addonName = NativeStringUtil.GetAddonName(atkUnitBase[0]);
             this.UnregisterReceiveEventHook(addonName);
         }
         catch (Exception e)
