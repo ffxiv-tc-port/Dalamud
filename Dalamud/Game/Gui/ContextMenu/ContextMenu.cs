@@ -85,14 +85,16 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
         if (manager == null)
             return;
 
+        // 各判各的,不要寫成聯合早退:AddonContextSub 只有在子選單開著時才存在,
+        // 而「開著右鍵選單、沒開子選單」才是常態。上游 f3d7c6f2ea81 為了避開空指標,
+        // 把兩者併成一個 `menu == null || submenu == null` 就整段 return —— 結果在
+        // 最常見的情況下連 ContextMenu 都不會被關掉,整段清理形同不存在。
         var menu = manager->GetAddonByName("ContextMenu");
         var submenu = manager->GetAddonByName("AddonContextSub");
-        if (menu == null || submenu == null)
-            return;
 
-        if (menu->IsVisible)
+        if (menu != null && menu->IsVisible)
             menu->FireCallbackInt(-1);
-        if (submenu->IsVisible)
+        if (submenu != null && submenu->IsVisible)
             submenu->FireCallbackInt(-1);
     }
 
