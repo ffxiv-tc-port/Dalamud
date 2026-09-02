@@ -4,6 +4,7 @@ using Dalamud.Data;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
 
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -33,7 +34,19 @@ internal unsafe class PlayerState : IServiceType, IPlayerState
     public bool IsLoaded => CSPlayerState.Instance()->IsLoaded;
 
     /// <inheritdoc/>
-    public string CharacterName => this.IsLoaded ? CSPlayerState.Instance()->CharacterNameString : string.Empty;
+    public string CharacterName
+    {
+        get
+        {
+            if (!this.IsLoaded)
+                return string.Empty;
+
+            // 夾在 CS 的 FixedSizeArray64 緩衝區內再解碼：CharacterNameString 走的是
+            // CreateReadOnlySpanFromNullTerminated，沒有長度上限，緩衝區裡剛好沒有 NUL
+            // 時會一路往後掃出界（與 AddonArgs.AddonName／AddonEventEntry.AddonName 同一類）。
+            return NativeStringUtil.ReadFixedBuffer(CSPlayerState.Instance()->CharacterName);
+        }
+    }
 
     /// <inheritdoc/>
     public uint EntityId => this.IsLoaded ? CSPlayerState.Instance()->EntityId : default;
