@@ -78,6 +78,20 @@ public unsafe class CharacterData
     /// <summary>
     /// Gets the address of the <see cref="InfoProxyCommonList.CharacterData"/> in memory.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a snapshot of the address taken when this instance was constructed; it is never
+    /// re-resolved. Use it only for as long as the call that handed you this instance is on the
+    /// stack, and never store it across frames: the entry it points at lives inside an info
+    /// proxy's array, which the game rewrites and reallocates as the underlying list changes.
+    /// Dereferencing a stale address raises an AccessViolationException, a corrupted-state
+    /// exception that no managed <c>try</c>/<c>catch</c> can contain.
+    /// </para>
+    /// <para>
+    /// To hold on to a character, store its <see cref="ContentId"/> and look the entry up again
+    /// from the info proxy on each frame you need it.
+    /// </para>
+    /// </remarks>
     public nint Address { get; }
 
     /// <summary>

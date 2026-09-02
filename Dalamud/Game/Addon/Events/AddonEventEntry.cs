@@ -21,6 +21,15 @@ internal unsafe class AddonEventEntry
     /// <summary>
     /// Gets the pointer to the addons AtkUnitBase.
     /// </summary>
+    /// <remarks>
+    /// This is a snapshot of the address taken when the event was registered; it is never
+    /// re-resolved. The addon's memory is released by <c>AtkUnitManager::FinalizeAddon</c> from
+    /// the per-frame unit manager update, so on any later frame this address may point at memory
+    /// that has already been freed and reused, and dereferencing it then raises an
+    /// AccessViolationException - a corrupted-state exception that no managed <c>try</c>/
+    /// <c>catch</c> can contain. Treat it as an identity key, and re-resolve the addon by name
+    /// via <c>RaptureAtkUnitManager.GetAddonByName</c> before dereferencing.
+    /// </remarks>
     public required nint Addon { get; init; }
 
     /// <summary>

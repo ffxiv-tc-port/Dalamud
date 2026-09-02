@@ -30,6 +30,24 @@ public interface IMenuArgs
     /// <summary>
     /// Gets the memory pointer of the addon that opened the context menu.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a snapshot of the address taken when the context menu was opened; it is never
+    /// re-resolved. It is safe for the duration of the callback that received these args, and
+    /// must not be stored and used on a later frame: an addon's memory is released by
+    /// <c>AtkUnitManager::FinalizeAddon</c> from the per-frame unit manager update, so once a
+    /// frame boundary has passed this address may point at memory that has already been freed
+    /// and reused. Dereferencing it then raises an AccessViolationException, a corrupted-state
+    /// exception that no managed <c>try</c>/<c>catch</c> can contain.
+    /// </para>
+    /// <para>
+    /// To hold on to the addon, store <see cref="AddonName"/> and re-resolve it on each frame
+    /// via <c>RaptureAtkUnitManager.GetAddonByName</c>. An address that still resolves that way
+    /// has not been finalized, so it is safe to dereference within that same call; note that it
+    /// does not prove the addon is still open, because closing an addon does not remove it from
+    /// the list that lookup searches.
+    /// </para>
+    /// </remarks>
     public nint AddonPtr { get; }
 
     /// <summary>
