@@ -66,6 +66,7 @@ public abstract class Window
     private Exception? lastError;
     private DateTime lastErrorAt = DateTime.MinValue;
     private bool autoRetrySuppressed = false;
+    private bool drawConditionsFailed = false;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Window"/> class.
@@ -389,7 +390,15 @@ public abstract class Window
     /// <param name="persistence">Handler for window persistence data.</param>
     internal void DrawInternal(WindowDrawFlags internalDrawFlags, WindowSystemPersistence? persistence)
     {
-        this.PreOpenCheck();
+        try
+        {
+            this.PreOpenCheck();
+        }
+        catch (Exception ex)
+        {
+            this.SetError(ex, nameof(this.PreOpenCheck));
+        }
+
         var doFades = !internalDrawFlags.HasFlag(WindowDrawFlags.IsReducedMotion) && !this.DisableFadeInFadeOut;
 
         if (!this.IsOpen)
@@ -397,7 +406,15 @@ public abstract class Window
             if (this.internalIsOpen != this.internalLastIsOpen)
             {
                 this.internalLastIsOpen = this.internalIsOpen;
-                this.OnClose();
+
+                try
+                {
+                    this.OnClose();
+                }
+                catch (Exception ex)
+                {
+                    this.SetError(ex, nameof(this.OnClose));
+                }
 
                 this.IsFocused = false;
 
@@ -412,7 +429,15 @@ public abstract class Window
                 {
                     this.fadeOutTexture.Dispose();
                     this.fadeOutTexture = null;
-                    this.OnSafeToRemove();
+
+                    try
+                    {
+                        this.OnSafeToRemove();
+                    }
+                    catch (Exception ex)
+                    {
+                        this.SetError(ex, nameof(this.OnSafeToRemove));
+                    }
                 }
                 else
                 {
@@ -428,9 +453,36 @@ public abstract class Window
         if (this.fadeInTimer > FadeInOutTime)
             this.fadeInTimer = FadeInOutTime;
 
-        this.Update();
-        if (!this.DrawConditions())
-            return;
+        try
+        {
+            this.Update();
+        }
+        catch (Exception ex)
+        {
+            this.SetError(ex, nameof(this.Update));
+        }
+
+        // While DrawConditions() itself is what threw, stop asking the window whether it wants
+        // to be drawn - otherwise the error panel could never be reached and the window would
+        // just silently disappear. The flag is cleared together with the error state.
+        if (!this.drawConditionsFailed)
+        {
+            bool shouldDraw;
+            try
+            {
+                shouldDraw = this.DrawConditions();
+            }
+            catch (Exception ex)
+            {
+                // Conservative default for a throwing condition: do not draw this frame.
+                this.SetError(ex, nameof(this.DrawConditions));
+                this.drawConditionsFailed = true;
+                shouldDraw = false;
+            }
+
+            if (!shouldDraw)
+                return;
+        }
 
         var hasNamespace = !string.IsNullOrEmpty(this.Namespace);
 
@@ -442,22 +494,52 @@ public abstract class Window
         if (this.internalLastIsOpen != this.internalIsOpen && this.internalIsOpen)
         {
             this.internalLastIsOpen = this.internalIsOpen;
-            this.OnOpen();
+
+            try
+            {
+                this.OnOpen();
+            }
+            catch (Exception ex)
+            {
+                this.SetError(ex, nameof(this.OnOpen));
+            }
 
             if (internalDrawFlags.HasFlag(WindowDrawFlags.UseSoundEffects) && !this.DisableWindowSounds)
                 UIGlobals.PlaySoundEffect(this.OnOpenSfxId);
         }
 
         var isErrorStylePushed = false;
+        var preDrawCompleted = false;
         if (!this.hasError)
         {
-            this.PreDraw();
-            this.ApplyConditionals();
+            var preDrawStyleDepths = this.CaptureStyleStackDepths();
+            try
+            {
+                this.PreDraw();
+                preDrawCompleted = true;
+            }
+            catch (Exception ex)
+            {
+                // PreDraw() may have pushed style vars, colors or fonts before it threw. Running
+                // PostDraw() afterwards would pop an unknown - possibly larger - number of them
+                // and underflow ImGui's stacks, so unwind exactly what PreDraw() pushed instead
+                // and skip PostDraw() entirely. Nothing else would clean these up: this build of
+                // ImGui has its own ErrorCheckEndFrameRecover() disabled, and the per-window
+                // check in End() deliberately tolerates leaked pushes.
+                this.RestoreStyleStackDepths(preDrawStyleDepths);
+                this.didPushInternalAlpha = false;
+                this.SetError(ex, nameof(this.PreDraw));
+            }
         }
-        else
+
+        if (this.hasError)
         {
             Style.StyleModelV1.DalamudStandard.Push();
             isErrorStylePushed = true;
+        }
+        else
+        {
+            this.ApplyConditionals();
         }
 
         if (this.ForceMainWindow)
@@ -520,22 +602,17 @@ public abstract class Window
             else
             {
                 // Draw the actual window contents
+                var drawStyleDepths = this.CaptureStyleStackDepths();
                 try
                 {
                     this.Draw();
                 }
                 catch (Exception ex)
                 {
-                    Log.Error(ex, "Error during Draw(): {WindowName}", this.WindowName);
-
-                    // Retry automatically once after a short delay; if this
-                    // window errored again shortly after a previous error,
-                    // stop auto-retrying and fall back to the manual button
-                    // so we never enter an endless error/retry loop.
-                    this.autoRetrySuppressed = DateTime.UtcNow - this.lastErrorAt < DrawErrorAutoRetrySuppressWindow;
-                    this.lastErrorAt = DateTime.UtcNow;
-                    this.hasError = true;
-                    this.lastError = ex;
+                    // Unwind whatever Draw() pushed before it threw, so that the rest of this
+                    // frame is not rendered with the window's half-applied style.
+                    this.RestoreStyleStackDepths(drawStyleDepths);
+                    this.SetError(ex, nameof(this.Draw));
                 }
             }
         }
@@ -687,9 +764,21 @@ public abstract class Window
         {
             Style.StyleModelV1.DalamudStandard.Pop();
         }
-        else
+        else if (preDrawCompleted)
         {
-            this.PostDraw();
+            var postDrawStyleDepths = this.CaptureStyleStackDepths();
+            try
+            {
+                this.PostDraw();
+            }
+            catch (Exception ex)
+            {
+                // Unwind what PostDraw() pushed before throwing, then undo the push the default
+                // PreDraw() made if PostDraw() did not get as far as popping it itself.
+                this.RestoreStyleStackDepths(postDrawStyleDepths);
+                this.UndoInternalAlphaPush();
+                this.SetError(ex, nameof(this.PostDraw));
+            }
         }
 
         this.PostHandlePreset(persistence);
@@ -860,7 +949,20 @@ public abstract class Window
             drawList.AddText(InterfaceManager.IconFont, (float)(fontSize * 0.8), new Vector2(bb.Min.X + offset.X, bb.Min.Y + offset.Y), textCol, button.Icon.ToIconString());
 
             if (hovered)
-                button.ShowTooltip?.Invoke();
+            {
+                var showTooltip = button.ShowTooltip;
+                if (showTooltip != null)
+                {
+                    try
+                    {
+                        showTooltip();
+                    }
+                    catch (Exception ex)
+                    {
+                        this.SetError(ex, nameof(TitleBarButton.ShowTooltip));
+                    }
+                }
+            }
 
             // Switch to moving the window after mouse is moved beyond the initial drag threshold
             if (ImGui.IsItemActive() && ImGui.IsMouseDragging(ImGuiMouseButton.Left) && !this.internalIsClickthrough)
@@ -878,7 +980,20 @@ public abstract class Window
             padR += buttonSize + style.ItemInnerSpacing.X;
 
             if (DrawButton(button, position))
-                button.Click?.Invoke(ImGuiMouseButton.Left);
+            {
+                var click = button.Click;
+                if (click != null)
+                {
+                    try
+                    {
+                        click(ImGuiMouseButton.Left);
+                    }
+                    catch (Exception ex)
+                    {
+                        this.SetError(ex, nameof(TitleBarButton.Click));
+                    }
+                }
+            }
         }
 
         ImGui.PopClipRect();
@@ -913,6 +1028,95 @@ public abstract class Window
         ImGui.End();
     }
 
+    /// <summary>
+    /// Put this window into the error state after one of its overridable methods threw, so that
+    /// the window shows the error panel instead of the plugin's own content.
+    /// </summary>
+    /// <param name="ex">The exception that was thrown.</param>
+    /// <param name="stage">Name of the overridable method that threw.</param>
+    private void SetError(Exception ex, string stage)
+    {
+        var now = DateTime.UtcNow;
+
+        // Overrides that keep being called while the window is already showing the error panel
+        // (Update(), for example) would otherwise write one line per frame - only log again once
+        // the window has left the error state, or after the suppression window has passed.
+        if (!this.hasError || now - this.lastErrorAt >= DrawErrorAutoRetrySuppressWindow)
+            Log.Error(ex, "Error during {Stage}(): {WindowName}", stage, this.WindowName);
+
+        // Retry automatically once after a short delay; if this
+        // window errored again shortly after a previous error,
+        // stop auto-retrying and fall back to the manual button
+        // so we never enter an endless error/retry loop.
+        this.autoRetrySuppressed = now - this.lastErrorAt < DrawErrorAutoRetrySuppressWindow;
+        this.lastErrorAt = now;
+        this.hasError = true;
+        this.lastError = ex;
+    }
+
+    /// <summary>
+    /// Leave the error state, so that the window draws its own content again.
+    /// </summary>
+    private void ClearError()
+    {
+        this.hasError = false;
+        this.lastError = null;
+        this.drawConditionsFailed = false;
+    }
+
+    /// <summary>
+    /// Read the current depth of ImGui's global style stacks, so that code which throws part-way
+    /// through can be unwound back to the depth it started at.
+    /// </summary>
+    /// <returns>The current depths, or all -1 if there is no current ImGui context.</returns>
+    private (int Color, int StyleVar, int Font) CaptureStyleStackDepths()
+    {
+        var context = ImGui.GetCurrentContext();
+        if (context.IsNull)
+            return (-1, -1, -1);
+
+        return (context.ColorStack.Size, context.StyleVarStack.Size, context.FontStack.Size);
+    }
+
+    /// <summary>
+    /// Pop everything that was pushed onto ImGui's global style stacks since
+    /// <see cref="CaptureStyleStackDepths"/> was called. Never pops below the captured depth, so
+    /// this cannot underflow. This mirrors what ImGui's own ErrorCheckEndWindowRecover() does,
+    /// which is not enabled in this build.
+    /// </summary>
+    /// <param name="depths">Depths previously returned by <see cref="CaptureStyleStackDepths"/>.</param>
+    private void RestoreStyleStackDepths((int Color, int StyleVar, int Font) depths)
+    {
+        if (depths.Color < 0)
+            return;
+
+        var context = ImGui.GetCurrentContext();
+        if (context.IsNull)
+            return;
+
+        while (context.ColorStack.Size > depths.Color)
+            ImGui.PopStyleColor();
+
+        while (context.StyleVarStack.Size > depths.StyleVar)
+            ImGui.PopStyleVar();
+
+        while (context.FontStack.Size > depths.Font)
+            ImGui.PopFont();
+    }
+
+    /// <summary>
+    /// Undo the style var pushed by the default <see cref="PreDraw"/> implementation when the
+    /// matching pop in <see cref="PostDraw"/> is not going to run because one of them threw.
+    /// </summary>
+    private void UndoInternalAlphaPush()
+    {
+        if (!this.didPushInternalAlpha)
+            return;
+
+        ImGui.PopStyleVar();
+        this.didPushInternalAlpha = false;
+    }
+
     private void DrawErrorMessage()
     {
         // First error in a while: retry automatically after a short delay
@@ -922,8 +1126,7 @@ public abstract class Window
         {
             if (DateTime.UtcNow - this.lastErrorAt >= DrawErrorAutoRetryDelay)
             {
-                this.hasError = false;
-                this.lastError = null;
+                this.ClearError();
                 return;
             }
 
@@ -939,8 +1142,7 @@ public abstract class Window
 
         if (ImGui.Button(Loc.Localize("WindowSystemErrorRecoverButton", "Attempt to retry")))
         {
-            this.hasError = false;
-            this.lastError = null;
+            this.ClearError();
         }
 
         ImGui.SameLine();
@@ -948,8 +1150,7 @@ public abstract class Window
         if (ImGui.Button(Loc.Localize("WindowSystemErrorClose", "Close Window")))
         {
             this.IsOpen = false;
-            this.hasError = false;
-            this.lastError = null;
+            this.ClearError();
         }
 
         ImGuiHelpers.ScaledDummy(10);
