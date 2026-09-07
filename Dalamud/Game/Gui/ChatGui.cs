@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -40,7 +41,7 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
 {
     private static readonly ModuleLog Log = new("ChatGui");
 
-    private readonly Queue<XivChatEntry> chatQueue = new();
+    private readonly ConcurrentQueue<XivChatEntry> chatQueue = new();
     private readonly Dictionary<(string PluginName, uint CommandId), Action<uint, SeString>> dalamudLinkHandlers = new();
 
     private readonly Hook<PrintMessageDelegate> printMessageHook;
@@ -204,7 +205,7 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
     /// </summary>
     public void UpdateQueue()
     {
-        if (this.chatQueue.Count == 0)
+        if (this.chatQueue.IsEmpty)
             return;
 
         var sb = LSeStringBuilder.SharedPool.Get();
