@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
 
@@ -22,9 +23,9 @@ internal sealed partial class ToastGui : IInternalDisposableService, IToastGui
 {
     private const uint QuestToastCheckmarkMagic = 60081;
 
-    private readonly Queue<(byte[] Message, ToastOptions Options)> normalQueue = new();
-    private readonly Queue<(byte[] Message, QuestToastOptions Options)> questQueue = new();
-    private readonly Queue<byte[]> errorQueue = new();
+    private readonly ConcurrentQueue<(byte[] Message, ToastOptions Options)> normalQueue = new();
+    private readonly ConcurrentQueue<(byte[] Message, QuestToastOptions Options)> questQueue = new();
+    private readonly ConcurrentQueue<byte[]> errorQueue = new();
 
     private readonly Hook<ShowNormalToastDelegate> showNormalToastHook;
     private readonly Hook<ShowQuestToastDelegate> showQuestToastHook;
@@ -83,22 +84,19 @@ internal sealed partial class ToastGui : IInternalDisposableService, IToastGui
     /// </summary>
     internal void UpdateQueue()
     {
-        while (this.normalQueue.Count > 0)
+        while (this.normalQueue.TryDequeue(out var normal))
         {
-            var (message, options) = this.normalQueue.Dequeue();
-            this.ShowNormal(message, options);
+            this.ShowNormal(normal.Message, normal.Options);
         }
 
-        while (this.questQueue.Count > 0)
+        while (this.questQueue.TryDequeue(out var quest))
         {
-            var (message, options) = this.questQueue.Dequeue();
-            this.ShowQuest(message, options);
+            this.ShowQuest(quest.Message, quest.Options);
         }
 
-        while (this.errorQueue.Count > 0)
+        while (this.errorQueue.TryDequeue(out var error))
         {
-            var message = this.errorQueue.Dequeue();
-            this.ShowError(message);
+            this.ShowError(error);
         }
     }
 }
