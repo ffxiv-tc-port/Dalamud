@@ -1,4 +1,5 @@
 ﻿using Dalamud.Plugin.Services;
+using Dalamud.Utility.Internal;
 
 namespace Dalamud.Game.Addon.Lifecycle;
 
@@ -40,4 +41,9 @@ internal class AddonLifecycleEventListener
     /// Gets the delegate this listener invokes.
     /// </summary>
     public IAddonLifecycle.AddonEventDelegate FunctionDelegate { get; init; }
+
+    /// <summary>
+    /// Gets the meter that counts what the owning plugin's listeners allocate, or null for Dalamud's own listeners.
+    /// </summary>
+    internal PluginAllocationMeter? AllocationMeter { get; init; }
 }

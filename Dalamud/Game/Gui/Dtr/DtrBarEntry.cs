@@ -185,6 +185,12 @@ internal sealed unsafe class DtrBarEntry : IDisposable, IDtrBarEntry
     internal bool Dirty { get; set; }
 
     /// <summary>
+    /// Gets or sets the encoded text, null terminator included, that <see cref="TextNode"/> currently shows.
+    /// Null when the node has not been given this entry's text, which forces the next write.
+    /// </summary>
+    internal byte[]? AppliedText { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether this entry has just been added.
     /// </summary>
     internal bool Added { get; set; }
@@ -207,5 +213,46 @@ internal sealed unsafe class DtrBarEntry : IDisposable, IDtrBarEntry
     public void Dispose()
     {
         this.Remove();
+    }
+
+    /// <summary>
+    /// Checks whether <paramref name="text"/> encodes to exactly <paramref name="applied"/>, without building the encoding.
+    /// </summary>
+    /// <param name="text">The text to check.</param>
+    /// <param name="applied">An encoding with its null terminator, as written to the node.</param>
+    /// <returns>Whether writing <paramref name="text"/> would write the same bytes again.</returns>
+    internal static bool EncodesTo(SeString text, ReadOnlySpan<byte> applied)
+    {
+        if (applied.IsEmpty || applied[^1] != 0)
+            return false;
+
+        var body = applied[..^1];
+        var offset = 0;
+        foreach (var payload in text.Payloads)
+        {
+            var bytes = payload.Encode();
+            if (bytes.Length > body.Length - offset || !body.Slice(offset, bytes.Length).SequenceEqual(bytes))
+                return false;
+
+            offset += bytes.Length;
+        }
+
+        return offset == body.Length;
+    }
+
+    /// <summary>
+    /// Encodes <paramref name="text"/> for the node, unless the node already shows exactly that.
+    /// </summary>
+    /// <param name="text">The text to show.</param>
+    /// <returns>The encoding to write, null terminator included, or null when nothing needs writing.</returns>
+    /// <remarks>
+    /// Compares bytes, not instances: a plugin may change the payloads of the instance it set and set it again.
+    /// </remarks>
+    internal byte[]? EncodeIfChanged(SeString text)
+    {
+        if (this.AppliedText is { } applied && EncodesTo(text, applied))
+            return null;
+
+        return text.EncodeWithNullTerminator();
     }
 }

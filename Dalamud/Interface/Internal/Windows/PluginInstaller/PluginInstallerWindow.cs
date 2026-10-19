@@ -6,6 +6,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -43,6 +44,13 @@ internal class PluginInstallerWindow : Window, IDisposable
 {
     private static readonly ModuleLog Log = new("PLUGINW");
 
+    // The sort menu, top to bottom; labels come from GetSortLabel so the header builds no array per frame.
+    private static readonly PluginSortKind[] SortMenuOrder =
+    [
+        PluginSortKind.SearchScore, PluginSortKind.Alphabetical, PluginSortKind.DownloadCount, PluginSortKind.LastUpdate,
+        PluginSortKind.NewOrNot, PluginSortKind.NotInstalled, PluginSortKind.EnabledDisabled, PluginSortKind.ProfileOrNot,
+    ];
+
     private readonly Vector4 changelogBgColor   = new(0.114f, 0.584f, 0.192f, 0.678f);
     private readonly Vector4 changelogTextColor = new(0.812f, 1.000f, 0.816f, 1.000f);
 
@@ -50,6 +58,14 @@ internal class PluginInstallerWindow : Window, IDisposable
     private readonly PluginCategoryManager categoryManager = new();
 
     private readonly List<int> openPluginCollapsibles = [];
+
+    // Draw thread only; filled and emptied within one call of DrawInstalledPluginList.
+    private readonly List<LocalPlugin> installedListBuffer = [];
+    private readonly StableStringKeySorter<LocalPlugin> installedListSorter = new();
+
+    private readonly PluginRowTextCache rowText;
+    private readonly ConditionalWeakTable<LocalPlugin, PluginCommandList> commandLists = new();
+    private readonly TextBuffer failedReposText = new();
 
     private readonly DateTime timeLoaded;
 
@@ -66,6 +82,8 @@ internal class PluginInstallerWindow : Window, IDisposable
     };
 
     private DalamudChangelogManager? dalamudChangelogManager;
+    private PluginRowTextCache.SharedText newTagText;
+
     private Task?                    dalamudChangelogRefreshTask;
     private CancellationTokenSource? dalamudChangelogRefreshTaskCts;
 
@@ -112,6 +130,12 @@ internal class PluginInstallerWindow : Window, IDisposable
 
     private int                       updatePluginCount;
     private List<PluginUpdateStatus>? updatedPlugins;
+
+    // Set on the draw thread when "update all" starts, cleared by its continuation on a pool thread.
+    private volatile PluginUpdateBatchProgress? updateAllBatch;
+
+    // Draw thread only; lives for one continuous stretch of the loading overlay.
+    private PluginUpdateProgressDisplay? operationProgress;
 
     [SuppressMessage("StyleCop.CSharp.OrderingRules", "SA1201:Elements should appear in the correct order",
                      Justification = "Makes sense like this")]
@@ -185,6 +209,109 @@ internal class PluginInstallerWindow : Window, IDisposable
         this.timeLoaded = DateTime.Now;
 
         this.profileManagerWidget = new(this);
+
+        var localization = Service<Localization>.GetNullable();
+        this.rowText = new PluginRowTextCache(cacheLocalized: localization != null);
+        if (localization != null)
+            localization.LocalizationChanged += this.OnLocalizationChanged;
+    }
+
+    /// <summary>
+    /// The answer to <see cref="TryStartUpdateAll"/>.
+    /// </summary>
+    public enum UpdateAllRequestResult
+    {
+        /// <summary>
+        /// The update started.
+        /// </summary>
+        Started,
+
+        /// <summary>
+        /// Dalamud runs in safe mode, where plugins cannot be updated.
+        /// </summary>
+        SafeMode,
+
+        /// <summary>
+        /// Plugins or repositories are still loading.
+        /// </summary>
+        NotReady,
+
+        /// <summary>
+        /// An install or update is already running.
+        /// </summary>
+        Busy,
+
+        /// <summary>
+        /// No enabled plugin has an update.
+        /// </summary>
+        NothingToUpdate,
+    }
+
+    /// <summary>The modifiers appended to an installed plugin's name, in this order.</summary>
+    [Flags]
+    internal enum InstalledTitleMods
+    {
+        /// <summary>The name alone.</summary>
+        None = 0,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_TestingVersion"/>.</summary>
+        TestingVersion = 1 << 0,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_TestingAvailable"/>.</summary>
+        TestingAvailable = 1 << 1,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_Installed"/>.</summary>
+        Installed = 1 << 2,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_Disabled"/>.</summary>
+        Disabled = 1 << 3,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_LoadError"/>.</summary>
+        LoadError = 1 << 4,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_UnloadError"/>.</summary>
+        UnloadError = 1 << 5,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_HasUpdate"/>.</summary>
+        HasUpdate = 1 << 6,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_Updated"/>.</summary>
+        Updated = 1 << 7,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_UpdateFailed"/>.</summary>
+        UpdateFailed = 1 << 8,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_OutdatedError"/>.</summary>
+        OutdatedError = 1 << 9,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_BannedError"/>.</summary>
+        BannedError = 1 << 10,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_NoService"/>.</summary>
+        NoService = 1 << 11,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_ScheduledForDeletion"/>.</summary>
+        ScheduledForDeletion = 1 << 12,
+    }
+
+    /// <summary>The modifiers appended to an installable plugin's name, in this order.</summary>
+    [Flags]
+    internal enum AvailableTitleMods
+    {
+        /// <summary>The name alone.</summary>
+        None = 0,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_TestingVersion"/>.</summary>
+        TestingVersion = 1 << 0,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_TestingExclusive"/>.</summary>
+        TestingExclusive = 1 << 1,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_TestingAvailable"/>.</summary>
+        TestingAvailable = 1 << 2,
+
+        /// <summary>Appends <see cref="Locs.PluginTitleMod_Incompatible"/>.</summary>
+        Incompatible = 1 << 3,
     }
 
     private enum OperationStatus
@@ -249,6 +376,10 @@ internal class PluginInstallerWindow : Window, IDisposable
     public void Dispose()
     {
         this.dalamudChangelogRefreshTaskCts?.Cancel();
+
+        var localization = Service<Localization>.GetNullable();
+        if (localization != null)
+            localization.LocalizationChanged -= this.OnLocalizationChanged;
 
         var pluginManager = Service<PluginManager>.GetNullable();
         if (pluginManager != null)
@@ -399,21 +530,30 @@ internal class PluginInstallerWindow : Window, IDisposable
         this.installStatus = OperationStatus.InProgress;
         this.loadingIndicatorKind = LoadingIndicatorKind.Installing;
 
-        Task.Run(() => pluginManager.InstallPluginAsync(manifest, useTesting || manifest.IsTestingExclusive, PluginLoadReason.Installer))
-            .ContinueWith(task =>
+        var operation = Task.Run(() => pluginManager.InstallPluginAsync(manifest, useTesting || manifest.IsTestingExclusive, PluginLoadReason.Installer));
+        var progress = this.NewOperationNotification(
+            Locs.Notifications_InstallingTitle, Locs.Notifications_Installing(manifest.Name), null, manifest.InternalName);
+
+        progress.FollowAsync(operation)
+            .ContinueWith(_ =>
             {
+                var task = operation;
+
                 // There is no need to set as Complete for an individual plugin installation
                 this.installStatus = OperationStatus.Idle;
+                var outcomeShown = progress.TryFinish(() => DescribeInstallOutcome(task, manifest));
                 if (this.DisplayErrorContinuation(task, Locs.ErrorModal_InstallFail(manifest.Name)))
                 {
                     // Fine as long as we aren't in an error state
                     if (task.Result.State is PluginState.Loaded or PluginState.Unloaded)
                     {
-                        notifications.AddNotification(Locs.Notifications_PluginInstalled(manifest.Name), Locs.Notifications_PluginInstalledTitle, NotificationType.Success);
+                        if (!outcomeShown)
+                            notifications.AddNotification(Locs.Notifications_PluginInstalled(manifest.Name), Locs.Notifications_PluginInstalledTitle, NotificationType.Success);
                     }
                     else
                     {
-                        notifications.AddNotification(Locs.Notifications_PluginNotInstalled(manifest.Name), Locs.Notifications_PluginNotInstalledTitle, NotificationType.Error);
+                        if (!outcomeShown)
+                            notifications.AddNotification(Locs.Notifications_PluginNotInstalled(manifest.Name), Locs.Notifications_PluginNotInstalledTitle, NotificationType.Error);
                         this.ShowErrorModal(Locs.ErrorModal_InstallFail(manifest.Name));
                     }
                 }
@@ -464,6 +604,50 @@ internal class PluginInstallerWindow : Window, IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Starts "update all" for a caller outside the window, such as the /xlupdate command: the same gates as the
+    /// footer button, the same plugins, and the same progress, notifications and chat lines.
+    /// </summary>
+    /// <param name="onFinished">Called once on a pool thread after the button's own completion handling.</param>
+    /// <param name="count">How many plugins the update was started for.</param>
+    /// <returns>Whether the update started, or why not.</returns>
+    public UpdateAllRequestResult TryStartUpdateAll(Action<Task<IEnumerable<PluginUpdateStatus>>> onFinished, out int count)
+    {
+        var pluginManager = Service<PluginManager>.Get();
+        count = 0;
+
+        if (pluginManager.SafeMode)
+            return UpdateAllRequestResult.SafeMode;
+
+        if (!pluginManager.PluginsReady || !pluginManager.ReposReady)
+            return UpdateAllRequestResult.NotReady;
+
+        if (this.updateStatus == OperationStatus.InProgress || this.installStatus == OperationStatus.InProgress ||
+            pluginManager.IsAnyPluginOperationInFlight)
+            return UpdateAllRequestResult.Busy;
+
+        List<AvailablePluginUpdate> toUpdate;
+        lock (this.listLock)
+            toUpdate = this.SelectUpdateAllTargets();
+
+        if (toUpdate.Count == 0)
+            return UpdateAllRequestResult.NothingToUpdate;
+
+        count = toUpdate.Count;
+        this.StartUpdateAll(toUpdate, onFinished);
+        return UpdateAllRequestResult.Started;
+    }
+
+    /// <summary>
+    /// Whether an update result is a real failure; a plugin that was already up to date is not.
+    /// </summary>
+    /// <param name="status">The result of one plugin.</param>
+    /// <returns>Whether that plugin failed to update.</returns>
+    internal static bool IsUpdateFailure(PluginUpdateStatus status)
+        => status.Status is PluginUpdateStatus.StatusKind.FailedDownload
+                            or PluginUpdateStatus.StatusKind.FailedUnload
+                            or PluginUpdateStatus.StatusKind.FailedLoad;
+
     private static void EnsureHaveTestingOptIn(IPluginManifest manifest)
     {
         var configuration = Service<DalamudConfiguration>.Get();
@@ -474,6 +658,19 @@ internal class PluginInstallerWindow : Window, IDisposable
         configuration.PluginTestingOptIns.Add(new PluginTestingOptIn(manifest.InternalName));
         configuration.QueueSave();
     }
+
+    private static string GetSortLabel(PluginSortKind kind) => kind switch
+    {
+        PluginSortKind.SearchScore => Locs.SortBy_SearchScore,
+        PluginSortKind.Alphabetical => Locs.SortBy_Alphabetical,
+        PluginSortKind.DownloadCount => Locs.SortBy_DownloadCounts,
+        PluginSortKind.LastUpdate => Locs.SortBy_LastUpdate,
+        PluginSortKind.NewOrNot => Locs.SortBy_NewOrNot,
+        PluginSortKind.NotInstalled => Locs.SortBy_NotInstalled,
+        PluginSortKind.EnabledDisabled => Locs.SortBy_EnabledDisabled,
+        PluginSortKind.ProfileOrNot => Locs.SortBy_ProfileOrNot,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
 
     private static void DrawProgressBar<T>(IEnumerable<T> items, Func<T, bool> pendingFunc, Func<T, bool> totalFunc, Action<T> renderPending)
     {
@@ -504,6 +701,66 @@ internal class PluginInstallerWindow : Window, IDisposable
             ImGui.ProgressBar(numLoaded / (float)total, new Vector2(windowSize.X / 3, 50), $"{numLoaded}/{total}");
         }
     }
+
+    private static InstallerOperationNotification.Outcome DescribeInstallOutcome(Task<LocalPlugin> task, RemotePluginManifest manifest)
+        => task.IsCompletedSuccessfully && task.Result.State is PluginState.Loaded or PluginState.Unloaded
+               ? new(Locs.Notifications_PluginInstalledTitle, Locs.Notifications_PluginInstalled(manifest.Name), NotificationType.Success)
+               : new(Locs.Notifications_PluginNotInstalledTitle, Locs.Notifications_PluginNotInstalled(manifest.Name), NotificationType.Error);
+
+    private static InstallerOperationNotification.Outcome DescribeSingleUpdateOutcome(Task<PluginUpdateStatus> task, AvailablePluginUpdate update)
+    {
+        if (task.IsCompletedSuccessfully && task.Result.Status == PluginUpdateStatus.StatusKind.Success)
+            return new(Locs.Notifications_UpdatesInstalledTitle, Locs.Notifications_UpdatesInstalled([task.Result]), NotificationType.Success);
+
+        // Same as FinishUpdateAll: already up to date (e.g. another update got there first) is not a failure.
+        if (task.IsCompletedSuccessfully && task.Result.Status == PluginUpdateStatus.StatusKind.AlreadyUpToDate)
+            return new(Locs.Notifications_NoUpdatesFoundTitle, Locs.Notifications_PluginAlreadyUpToDate(update.UpdateManifest.Name), NotificationType.Info);
+
+        var reason = task.IsCompletedSuccessfully ? $" ({PluginUpdateStatus.LocalizeUpdateStatusKind(task.Result.Status)})" : string.Empty;
+        return new(Locs.Notifications_UpdatesFailedTitle, Locs.Notifications_FailedPlugins([update.UpdateManifest.Name + reason]), NotificationType.Error);
+    }
+
+    // Only a real failure counts as failed, the same way as in FinishUpdateAll: a plugin that was already up to date
+    // is neither updated nor failed. No success and no failure means nothing needed updating.
+    private static InstallerOperationNotification.Outcome DescribeUpdateAllOutcome(Task<IEnumerable<PluginUpdateStatus>> task)
+    {
+        if (!task.IsCompletedSuccessfully)
+            return new(Locs.Notifications_UpdatesFailedTitle, Locs.ErrorModal_UpdaterFatal, NotificationType.Error);
+
+        var results = task.Result.ToList();
+        var failed = results.Where(IsUpdateFailure).ToList();
+        var updated = results.Where(x => x.Status == PluginUpdateStatus.StatusKind.Success).ToList();
+        if (updated.Count == 0 && failed.Count == 0)
+            return new(Locs.Notifications_NoUpdatesFoundTitle, Locs.Notifications_NoUpdatesFound, NotificationType.Info);
+
+        if (failed.Count > 0)
+        {
+            var names = failed.Select(x => $"{x.Name} ({PluginUpdateStatus.LocalizeUpdateStatusKind(x.Status)})");
+            if (updated.Count > 0)
+            {
+                return new(
+                    Locs.Notifications_UpdatesPartialTitle,
+                    Locs.Notifications_UpdatesInstalled(updated) + "\n" + Locs.Notifications_FailedPlugins(names),
+                    NotificationType.Warning);
+            }
+
+            return new(
+                Locs.Notifications_UpdatesFailedTitle,
+                Locs.Notifications_UpdatesFailed + "\n" + Locs.Notifications_FailedPlugins(names),
+                NotificationType.Error);
+        }
+
+        return new(Locs.Notifications_UpdatesInstalledTitle, Locs.Notifications_UpdatesInstalled(updated), NotificationType.Success);
+    }
+
+    private static Notification ToNotification(InstallerOperationNotification.Outcome outcome)
+        => new()
+        {
+            Title = outcome.Title,
+            Content = outcome.Content,
+            Type = outcome.Type,
+            Icon = INotificationIcon.From(FontAwesomeIcon.Download),
+        };
 
     private void SetOpenPage(PluginInstallerOpenKind kind)
     {
@@ -556,13 +813,17 @@ internal class PluginInstallerWindow : Window, IDisposable
         var isLoading = this.AnyOperationInProgress ||
                         isWaitingManager || isWaitingProfiles;
 
-        if (isWaitingManager)
-            this.loadingIndicatorKind = LoadingIndicatorKind.Manager;
-        else if (isWaitingProfiles)
-            this.loadingIndicatorKind = LoadingIndicatorKind.ProfilesLoading;
+        // Decided per frame: storing Manager in the field hid a running install or update for the rest of it,
+        // because reopening the installer reloads the repos.
+        var kind = isWaitingManager ? LoadingIndicatorKind.Manager
+                   : isWaitingProfiles ? LoadingIndicatorKind.ProfilesLoading
+                   : this.loadingIndicatorKind;
 
         if (!isLoading)
+        {
+            this.operationProgress = null;
             return;
+        }
 
         ImGui.SetCursorPos(Vector2.Zero);
 
@@ -583,7 +844,7 @@ internal class PluginInstallerWindow : Window, IDisposable
 
             ImGui.SetCursorPosY(windowSize.Y / 2);
 
-            switch (this.loadingIndicatorKind)
+            switch (kind)
             {
                 case LoadingIndicatorKind.Unknown:
                     ImGuiHelpers.CenteredText("總之在做點什麼，但不知道在做什麼！");
@@ -596,12 +857,15 @@ internal class PluginInstallerWindow : Window, IDisposable
                     break;
                 case LoadingIndicatorKind.UpdatingSingle:
                     ImGuiHelpers.CenteredText("更新插件中...");
+                    this.DrawOperationProgress(pluginManager, null);
                     break;
                 case LoadingIndicatorKind.UpdatingAll:
                     ImGuiHelpers.CenteredText("批量更新插件中...");
+                    this.DrawOperationProgress(pluginManager, this.updateAllBatch);
                     break;
                 case LoadingIndicatorKind.Installing:
                     ImGuiHelpers.CenteredText("安裝插件中...");
+                    this.DrawOperationProgress(pluginManager, null);
                     break;
                 case LoadingIndicatorKind.Manager:
                     {
@@ -665,6 +929,43 @@ internal class PluginInstallerWindow : Window, IDisposable
         }
     }
 
+    private void DrawOperationProgress(PluginManager pluginManager, PluginUpdateBatchProgress? batch)
+    {
+        if (this.operationProgress is null || this.operationProgress.Batch != batch)
+            this.operationProgress = new PluginUpdateProgressDisplay(batch);
+
+        this.operationProgress.Refresh(pluginManager.ActiveDownloads);
+        if (this.operationProgress.Lines.Count == 0)
+            return;
+
+        ImGuiHelpers.ScaledDummy(5);
+        foreach (var line in this.operationProgress.Lines)
+            ImGuiHelpers.CenteredText(line);
+
+        if (this.operationProgress.Fraction is not { } fraction)
+            return;
+
+        ImGuiHelpers.ScaledDummy(5);
+        var width = ImGui.GetWindowSize().X;
+        ImGui.SetCursorPosX(width / 3);
+        ImGui.ProgressBar(fraction, new Vector2(width / 3, 20 * ImGuiHelpers.GlobalScale), $"{(int)(fraction * 100)}%");
+    }
+
+    private InstallerOperationNotification NewOperationNotification(
+        string title, string idleText, PluginUpdateBatchProgress? batch, string? pluginInternalName)
+    {
+        var notifications = Service<NotificationManager>.Get();
+        var pluginManager = Service<PluginManager>.Get();
+        return new InstallerOperationNotification(
+            title,
+            idleText,
+            batch,
+            pluginInternalName,
+            notifications.AddNotification,
+            () => pluginManager.ActiveDownloads,
+            () => this.IsOpen);
+    }
+
     private void DrawHeader()
     {
         var style = ImGui.GetStyle();
@@ -673,18 +974,14 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         var searchClearButtonWidth = 25 * ImGuiHelpers.GlobalScale;
 
-        var sortSelectables = new (string Localization, PluginSortKind SortKind)[]
+        var longestSelectableWidth = ImGui.CalcTextSize(GetSortLabel(SortMenuOrder[0])).X;
+        for (var i = 1; i < SortMenuOrder.Length; i++)
         {
-            (Locs.SortBy_SearchScore, PluginSortKind.SearchScore),
-            (Locs.SortBy_Alphabetical, PluginSortKind.Alphabetical),
-            (Locs.SortBy_DownloadCounts, PluginSortKind.DownloadCount),
-            (Locs.SortBy_LastUpdate, PluginSortKind.LastUpdate),
-            (Locs.SortBy_NewOrNot, PluginSortKind.NewOrNot),
-            (Locs.SortBy_NotInstalled, PluginSortKind.NotInstalled),
-            (Locs.SortBy_EnabledDisabled, PluginSortKind.EnabledDisabled),
-            (Locs.SortBy_ProfileOrNot, PluginSortKind.ProfileOrNot),
-        };
-        var longestSelectableWidth = sortSelectables.Select(t => ImGui.CalcTextSize(t.Localization).X).Max();
+            var width = ImGui.CalcTextSize(GetSortLabel(SortMenuOrder[i])).X;
+            if (width > longestSelectableWidth)
+                longestSelectableWidth = width;
+        }
+
         var selectableWidth = longestSelectableWidth + (style.FramePadding.X * 2);  // This does not include the label
 
         var isProfileManager =
@@ -746,15 +1043,16 @@ internal class PluginInstallerWindow : Window, IDisposable
             ImGui.SetNextItemWidth(selectableWidth);
             if (ImGui.BeginCombo("###SortBy", this.filterText, ImGuiComboFlags.NoArrowButton))
             {
-                foreach (var selectable in sortSelectables)
+                foreach (var selectableKind in SortMenuOrder)
                 {
-                    if (selectable.SortKind == PluginSortKind.SearchScore && string.IsNullOrWhiteSpace(this.searchText))
+                    if (selectableKind == PluginSortKind.SearchScore && string.IsNullOrWhiteSpace(this.searchText))
                         continue;
 
-                    if (ImGui.Selectable(selectable.Localization))
+                    var selectableLabel = GetSortLabel(selectableKind);
+                    if (ImGui.Selectable(selectableLabel))
                     {
-                        this.sortKind = selectable.SortKind;
-                        this.filterText = selectable.Localization;
+                        this.sortKind = selectableKind;
+                        this.filterText = selectableLabel;
                         this.adaptiveSort = false;
 
                         lock (this.listLock)
@@ -813,7 +1111,6 @@ internal class PluginInstallerWindow : Window, IDisposable
     private void DrawUpdatePluginsButton()
     {
         var pluginManager = Service<PluginManager>.Get();
-        var notifications = Service<NotificationManager>.Get();
 
         var ready = pluginManager.PluginsReady && pluginManager.ReposReady;
 
@@ -831,69 +1128,128 @@ internal class PluginInstallerWindow : Window, IDisposable
                              ? Locs.FooterButton_UpdateComplete(this.updatePluginCount)
                              : Locs.FooterButton_NoUpdates);
         }
+        else if (pluginManager.IsAnyPluginOperationInFlight)
+        {
+            // Started outside the installer, e.g. the auto-update after login; a second round would only queue behind it.
+            ImGuiComponents.DisabledButton(Locs.FooterButton_UpdatePlugins);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("已有插件正在安裝或更新（例如登入後的自動更新），等它完成後再按。");
+        }
         else
         {
             if (ImGui.Button(Locs.FooterButton_UpdatePlugins))
+                this.StartUpdateAll(this.SelectUpdateAllTargets(), null);
+        }
+    }
+
+    // Caller holds listLock.
+    private List<AvailablePluginUpdate> SelectUpdateAllTargets()
+        => this.pluginListUpdatable
+               .Where(x => x.InstalledPlugin.IsWantedByAnyProfile)
+               .ToList();
+
+    private void StartUpdateAll(List<AvailablePluginUpdate> toUpdate, Action<Task<IEnumerable<PluginUpdateStatus>>>? onFinished)
+    {
+        var pluginManager = Service<PluginManager>.Get();
+        var notifications = Service<NotificationManager>.Get();
+
+        this.updateStatus = OperationStatus.InProgress;
+        this.loadingIndicatorKind = LoadingIndicatorKind.UpdatingAll;
+
+        var batch = new PluginUpdateBatchProgress(toUpdate);
+        this.updateAllBatch = batch;
+
+        var operation = Task.Run(() => pluginManager.UpdatePluginsAsync(toUpdate, false, false, batch));
+        var progress = this.NewOperationNotification(
+            Locs.Notifications_UpdatingTitle, Locs.Notifications_UpdatingTitle, batch, null);
+
+        progress.FollowAsync(operation)
+            .ContinueWith(_ =>
             {
-                this.updateStatus = OperationStatus.InProgress;
-                this.loadingIndicatorKind = LoadingIndicatorKind.UpdatingAll;
+                try
+                {
+                    this.FinishUpdateAll(
+                        operation,
+                        progress,
+                        notifications,
+                        updated => pluginManager.PrintUpdatedPlugins(updated, Locs.PluginUpdateHeader_Chatbox));
+                }
+                finally
+                {
+                    onFinished?.Invoke(operation);
+                }
+            });
+    }
 
-                var toUpdate = this.pluginListUpdatable
-                                   .Where(x => x.InstalledPlugin.IsWantedByAnyProfile)
-                                   .ToList();
+    private void FinishUpdateAll(
+        Task<IEnumerable<PluginUpdateStatus>> task,
+        InstallerOperationNotification progress,
+        NotificationManager notifications,
+        Action<List<PluginUpdateStatus>> printUpdated)
+    {
+        this.updateAllBatch = null;
+        this.updateStatus = OperationStatus.Complete;
+        var outcomeShown = progress.TryFinish(() => DescribeUpdateAllOutcome(task));
 
-                Task.Run(() => pluginManager.UpdatePluginsAsync(toUpdate, false))
-                    .ContinueWith(task =>
+        if (task.IsFaulted)
+        {
+            this.updatePluginCount = 0;
+            this.updatedPlugins = null;
+            this.DisplayErrorContinuation(task, Locs.ErrorModal_UpdaterFatal);
+        }
+        else
+        {
+            this.updatedPlugins = task.Result.Where(res => res.Status == PluginUpdateStatus.StatusKind.Success).ToList();
+            this.updatePluginCount = this.updatedPlugins.Count;
+
+            // A plugin that was already up to date was not updated, but it did not fail either.
+            var errorPlugins = task.Result.Where(IsUpdateFailure).ToList();
+            var errorPluginCount = errorPlugins.Count;
+
+            if (errorPluginCount > 0)
+            {
+                var errorMessage = this.updatePluginCount > 0
+                                       ? Locs.ErrorModal_UpdaterFailPartial(this.updatePluginCount, errorPluginCount)
+                                       : Locs.ErrorModal_UpdaterFail(errorPluginCount);
+
+                var hintInsert = errorPlugins
+                                 .Aggregate(string.Empty, (current, pluginUpdateStatus) => $"{current}* {pluginUpdateStatus.InternalName} ({PluginUpdateStatus.LocalizeUpdateStatusKind(pluginUpdateStatus.Status)})\n")
+                                 .TrimEnd();
+                errorMessage += Locs.ErrorModal_HintBlame(hintInsert);
+
+                // DisplayErrorContinuation only shows faulted tasks, and a failed update runs to completion.
+                // When the outcome notification already lists the failures, the modal would repeat them later.
+                if (!outcomeShown)
+                    this.ShowErrorModal(errorMessage);
+            }
+
+            if (this.updatePluginCount > 0)
+            {
+                printUpdated(this.updatedPlugins);
+                if (!outcomeShown && errorPluginCount > 0)
+                {
+                    notifications.AddNotification(ToNotification(DescribeUpdateAllOutcome(task)));
+                }
+                else if (!outcomeShown)
+                {
+                    notifications.AddNotification(new Notification
                     {
-                        this.updateStatus = OperationStatus.Complete;
-
-                        if (task.IsFaulted)
-                        {
-                            this.updatePluginCount = 0;
-                            this.updatedPlugins = null;
-                            this.DisplayErrorContinuation(task, Locs.ErrorModal_UpdaterFatal);
-                        }
-                        else
-                        {
-                            this.updatedPlugins = task.Result.Where(res => res.Status == PluginUpdateStatus.StatusKind.Success).ToList();
-                            this.updatePluginCount = this.updatedPlugins.Count;
-
-                            var errorPlugins = task.Result.Where(res => res.Status != PluginUpdateStatus.StatusKind.Success).ToList();
-                            var errorPluginCount = errorPlugins.Count;
-
-                            if (errorPluginCount > 0)
-                            {
-                                var errorMessage = this.updatePluginCount > 0
-                                                       ? Locs.ErrorModal_UpdaterFailPartial(this.updatePluginCount, errorPluginCount)
-                                                       : Locs.ErrorModal_UpdaterFail(errorPluginCount);
-
-                                var hintInsert = errorPlugins
-                                                 .Aggregate(string.Empty, (current, pluginUpdateStatus) => $"{current}* {pluginUpdateStatus.InternalName} ({PluginUpdateStatus.LocalizeUpdateStatusKind(pluginUpdateStatus.Status)})\n")
-                                                 .TrimEnd();
-                                errorMessage += Locs.ErrorModal_HintBlame(hintInsert);
-
-                                this.DisplayErrorContinuation(task, errorMessage);
-                            }
-
-                            if (this.updatePluginCount > 0)
-                            {
-                                Service<PluginManager>.Get().PrintUpdatedPlugins(this.updatedPlugins, Locs.PluginUpdateHeader_Chatbox);
-                                notifications.AddNotification(new Notification
-                                {
-                                    Title = Locs.Notifications_UpdatesInstalledTitle,
-                                    Content = Locs.Notifications_UpdatesInstalled(this.updatedPlugins),
-                                    Type = NotificationType.Success,
-                                    Icon = INotificationIcon.From(FontAwesomeIcon.Download),
-                                });
-
-                                this.categoryManager.CurrentGroupKind = PluginCategoryManager.GroupKind.Installed;
-                            }
-                            else if (this.updatePluginCount == 0)
-                            {
-                                notifications.AddNotification(Locs.Notifications_NoUpdatesFound, Locs.Notifications_NoUpdatesFoundTitle, NotificationType.Info);
-                            }
-                        }
+                        Title = Locs.Notifications_UpdatesInstalledTitle,
+                        Content = Locs.Notifications_UpdatesInstalled(this.updatedPlugins),
+                        Type = NotificationType.Success,
+                        Icon = INotificationIcon.From(FontAwesomeIcon.Download),
                     });
+                }
+
+                this.categoryManager.CurrentGroupKind = PluginCategoryManager.GroupKind.Installed;
+            }
+            else if (errorPluginCount > 0 && !outcomeShown)
+            {
+                notifications.AddNotification(ToNotification(DescribeUpdateAllOutcome(task)));
+            }
+            else if (this.updatePluginCount == 0 && !outcomeShown)
+            {
+                notifications.AddNotification(Locs.Notifications_NoUpdatesFound, Locs.Notifications_NoUpdatesFoundTitle, NotificationType.Info);
             }
         }
     }
@@ -1212,25 +1568,29 @@ internal class PluginInstallerWindow : Window, IDisposable
             return;
         }
 
+        // Kick off a build whenever no result is pending. This deliberately sits outside the
+        // "Changelogs == null" check below: the plugin-list change handlers clear the task to
+        // mark the list stale, and gating the rebuild on a null result would mean a repository
+        // refresh never reached this page for the rest of the session. Leaving the previous
+        // result in place while the new one is built also avoids flashing the loading text.
+        if (this.dalamudChangelogManager != null &&
+            this.dalamudChangelogRefreshTask == null)
+        {
+            this.dalamudChangelogRefreshTaskCts = new CancellationTokenSource();
+            this.dalamudChangelogRefreshTask =
+                Task.Run(this.dalamudChangelogManager.ReloadChangelogAsync, this.dalamudChangelogRefreshTaskCts.Token)
+                    .ContinueWith(t =>
+                    {
+                        if (!t.IsCompletedSuccessfully)
+                        {
+                            Log.Error(t.Exception, "Failed to load changelogs.");
+                        }
+                    });
+        }
+
         if (this.dalamudChangelogManager?.Changelogs == null)
         {
             ImGui.TextColored(ImGuiColors.DalamudGrey, Locs.TabBody_LoadingPlugins);
-
-            if (this.dalamudChangelogManager != null &&
-                this.dalamudChangelogRefreshTask == null)
-            {
-                this.dalamudChangelogRefreshTaskCts = new CancellationTokenSource();
-                this.dalamudChangelogRefreshTask =
-                    Task.Run(this.dalamudChangelogManager.ReloadChangelogAsync, this.dalamudChangelogRefreshTaskCts.Token)
-                        .ContinueWith(t =>
-                        {
-                            if (!t.IsCompletedSuccessfully)
-                            {
-                                Log.Error(t.Exception, "Failed to load changelogs.");
-                            }
-                        });
-            }
-
             return;
         }
 
@@ -1296,10 +1656,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         // Go through all AVAILABLE manifests, associate them with a NON-DEV local plugin, if one is available, and remove it from the pile
         foreach (var availableManifest in this.categoryManager.GetCurrentCategoryContent(filteredAvailableManifests).Cast<RemotePluginManifest>())
         {
-            var plugin = this.pluginListInstalled
-                             .FirstOrDefault(plugin => plugin.Manifest.InternalName == availableManifest.InternalName &&
-                                                       plugin.Manifest.RepoUrl == availableManifest.RepoUrl &&
-                                                       !plugin.IsDev);
+            var plugin = PluginInstallerLookup.FindInstalledNonDev(this.pluginListInstalled, availableManifest);
 
             // We "consumed" this plugin from the pile and remove it.
             if (plugin != null)
@@ -1414,7 +1771,7 @@ internal class PluginInstallerWindow : Window, IDisposable
                 
                 if (proxy.LocalPlugin != null)
                 {
-                    var update = this.pluginListUpdatable.FirstOrDefault(up => up.InstalledPlugin == proxy.LocalPlugin);
+                    var update = PluginInstallerLookup.FindUpdate(this.pluginListUpdatable, proxy.LocalPlugin);
                     this.DrawInstalledPlugin(proxy.LocalPlugin, i++, proxy.RemoteManifest, update);
                 }
                 else if (proxy.RemoteManifest != null)
@@ -1474,7 +1831,7 @@ internal class PluginInstallerWindow : Window, IDisposable
 
             if (proxy.LocalPlugin != null)
             {
-                var update = this.pluginListUpdatable.FirstOrDefault(up => up.InstalledPlugin == proxy.LocalPlugin);
+                var update = PluginInstallerLookup.FindUpdate(this.pluginListUpdatable, proxy.LocalPlugin);
                 this.DrawInstalledPlugin(proxy.LocalPlugin, i++, proxy.RemoteManifest, update);
             }
             else if (proxy.RemoteManifest != null)
@@ -1521,11 +1878,26 @@ internal class PluginInstallerWindow : Window, IDisposable
             return;
         }
 
-        var filteredList = pluginList
-                           .Where(plugin => !this.IsManifestFiltered(plugin.Manifest))
-                           .OrderBy(x => !x.IsDev ? x.Manifest.InstalledFromUrl : string.Empty)
-                           .ToList();
+        var filteredList = this.installedListBuffer;
+        try
+        {
+            foreach (var plugin in pluginList)
+            {
+                if (!this.IsManifestFiltered(plugin.Manifest))
+                    filteredList.Add(plugin);
+            }
 
+            this.installedListSorter.Sort(filteredList, static x => !x.IsDev ? x.Manifest.InstalledFromUrl : string.Empty);
+            this.DrawFilteredInstalledPluginList(filteredList, filter, manager);
+        }
+        finally
+        {
+            filteredList.Clear();
+        }
+    }
+
+    private void DrawFilteredInstalledPluginList(List<LocalPlugin> filteredList, InstalledPluginListFilter filter, PluginManager manager)
+    {
         if (filteredList.Count == 0)
         {
             DrawMutedBodyText(Locs.TabBody_SearchNoMatching, 60, 20);
@@ -1546,14 +1918,12 @@ internal class PluginInstallerWindow : Window, IDisposable
 
             if (filter != InstalledPluginListFilter.Dev)
             {
-                update = this.pluginListUpdatable.FirstOrDefault(up => up.InstalledPlugin == plugin);
+                update = PluginInstallerLookup.FindUpdate(this.pluginListUpdatable, plugin);
                 if (filter == InstalledPluginListFilter.Updateable && update == null)
                     continue;
 
                 // Find the applicable remote manifest
-                remoteManifest = this.pluginListAvailable
-                                         .FirstOrDefault(rm => rm.InternalName == plugin.Manifest.InternalName &&
-                                                               rm.RepoUrl == plugin.Manifest.RepoUrl);
+                remoteManifest = PluginInstallerLookup.FindManifest(this.pluginListAvailable, plugin.Manifest.InternalName, plugin.Manifest.RepoUrl);
             }
             else if (!plugin.IsDev)
             {
@@ -1682,7 +2052,7 @@ internal class PluginInstallerWindow : Window, IDisposable
                 var categoryItemSize = new Vector2(ImGui.GetContentRegionAvail().X - (5 * ImGuiHelpers.GlobalScale), ImGui.GetTextLineHeight());
                 foreach (var categoryKind in groupInfo.Categories)
                 {
-                    var categoryInfo = this.categoryManager.CategoryList.First(x => x.CategoryKind == categoryKind);
+                    var categoryInfo = PluginInstallerLookup.FindCategory(this.categoryManager.CategoryList, categoryKind);
 
                     switch (categoryInfo.Condition)
                     {
@@ -2152,24 +2522,44 @@ internal class PluginInstallerWindow : Window, IDisposable
             ImGui.TextColored(ImGuiColors.DalamudGrey, Locs.TabBody_LoadingPlugins);
         }
 
-        var failedRepos = pluginManager.Repos
-                                       .Where(repo => repo.State == PluginRepositoryState.Fail)
-                                       .ToArray();
-
-        if (failedRepos.Length > 0)
+        var repos = pluginManager.Repos;
+        foreach (var repo in repos)
         {
-            var failText = Locs.TabBody_DownloadFailed;
-            var aggFailText = failedRepos
-                              .Select(repo => $"{failText} ({repo.PluginMasterUrl})")
-                              .Aggregate((s1, s2) => $"{s1}\n{s2}");
-
-            ImGui.TextColored(ImGuiColors.DalamudRed, aggFailText);
+            if (repo.State == PluginRepositoryState.Fail)
+            {
+                this.DrawFailedRepos(repos);
+                break;
+            }
         }
 
         return ready;
     }
 
-    private bool DrawPluginCollapsingHeader(string label, LocalPlugin? plugin, IPluginManifest manifest, PluginHeaderFlags flags, Action drawContextMenuAction, int index)
+    // One line per failed repository, joined with \n into one text, as the LINQ Aggregate built it.
+    private void DrawFailedRepos(List<PluginRepository> repos)
+    {
+        var failText = Locs.TabBody_DownloadFailed;
+        var text = this.failedReposText.Clear();
+        var first = true;
+        foreach (var repo in repos)
+        {
+            if (repo.State != PluginRepositoryState.Fail)
+                continue;
+
+            if (!first)
+                text.Append("\n");
+            text.Append(failText).Append(" (").Append(repo.PluginMasterUrl).Append(")");
+            first = false;
+        }
+
+        if (!first)
+            ImGui.TextColored(ImGuiColors.DalamudRed, text.Text);
+    }
+
+    // The context menu is the installed plugin's when plugin is set, else availableManifest's; no delegate, so no allocation per row.
+    private bool DrawPluginCollapsingHeader(
+        string label, LocalPlugin? plugin, IPluginManifest manifest, PluginHeaderFlags flags,
+        PluginTestingOptIn? testingOptIn, RemotePluginManifest? availableManifest, int index)
     {
         var isOpen = this.openPluginCollapsibles.Contains(index);
 
@@ -2177,10 +2567,13 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         ImGui.Separator();
 
-        var childId = $"plugin_child_{label}_{plugin?.EffectiveWorkingPluginId}_{manifest.InternalName}";
         const ImGuiWindowFlags childFlags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
+        var childSize = new Vector2(ImGui.GetContentRegionAvail().X, sectionSize);
 
-        using var pluginChild = ImRaii.Child(childId, new Vector2(ImGui.GetContentRegionAvail().X, sectionSize), false, childFlags);
+        // Same id text as before; a null Guid? used to format as nothing.
+        using var pluginChild = plugin != null
+                                    ? ImRaii.Child($"plugin_child_{label}_{plugin.EffectiveWorkingPluginId}_{manifest.InternalName}", childSize, false, childFlags)
+                                    : ImRaii.Child($"plugin_child_{label}__{manifest.InternalName}", childSize, false, childFlags);
         if (!pluginChild)
         {
             return isOpen;
@@ -2246,7 +2639,10 @@ internal class PluginInstallerWindow : Window, IDisposable
             isOpen = !isOpen;
         }
 
-        drawContextMenuAction?.Invoke();
+        if (plugin != null)
+            this.DrawInstalledPluginContextMenu(plugin, testingOptIn);
+        else if (availableManifest != null)
+            this.DrawAvailablePluginContextMenu(availableManifest);
 
         ImGui.PopStyleVar();
 
@@ -2348,9 +2744,13 @@ internal class PluginInstallerWindow : Window, IDisposable
         }
 
         // Download count
-        var downloadCountText = manifest.DownloadCount > 0
-                                    ? Locs.PluginBody_AuthorWithDownloadCount(manifest.Author, manifest.DownloadCount)
-                                    : Locs.PluginBody_AuthorWithDownloadCountUnavailable(manifest.Author);
+        var downloadCountText = this.rowText.GetAuthorLine(
+            (object?)plugin ?? manifest,
+            manifest.Author,
+            manifest.DownloadCount,
+            static (author, count) => count > 0
+                                          ? Locs.PluginBody_AuthorWithDownloadCount(author, count)
+                                          : Locs.PluginBody_AuthorWithDownloadCountUnavailable(author));
 
         ImGui.SameLine();
         ImGui.TextColored(ImGuiColors.DalamudGrey3, downloadCountText);
@@ -2358,7 +2758,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         if (flags.HasFlag(PluginHeaderFlags.IsNew))
         {
             ImGui.SameLine();
-            ImGui.TextColored(ImGuiColors.TankBlue, Locs.PluginTitleMod_New);
+            ImGui.TextColored(ImGuiColors.TankBlue, this.rowText.GetShared(ref this.newTagText, static () => Locs.PluginTitleMod_New));
         }
 
         cursor.Y += ImGui.GetTextLineHeightWithSpacing();
@@ -2444,11 +2844,7 @@ internal class PluginInstallerWindow : Window, IDisposable
             else if (!string.IsNullOrWhiteSpace(manifest.Description))
             {
                 const int punchlineLen = 200;
-                var firstLine = manifest.Description.Split(new[] { '\r', '\n' })[0];
-
-                ImGui.TextWrapped(firstLine.Length < punchlineLen
-                                                 ? firstLine
-                                                 : firstLine[..punchlineLen]);
+                ImGui.TextWrapped(PluginRowTextCache.FirstLine(manifest.Description, punchlineLen));
             }
         }
 
@@ -2498,6 +2894,15 @@ internal class PluginInstallerWindow : Window, IDisposable
         ImGui.SameLine();
         var cursor = ImGui.GetCursorPos();
         ImGui.Text(log.Title);
+
+        // This version is on the repository but is not what the user is running. That is
+        // scan-at-a-glance information, so it goes on the row rather than into a tooltip -
+        // and it reuses the marker the installed-plugin list already uses for the same fact.
+        if (log is PluginChangelogEntry { IsAvailableUpdate: true })
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(ImGuiColors.DalamudOrange, Locs.PluginTitleMod_HasUpdate);
+        }
 
         ImGui.SameLine();
         ImGui.TextColored(ImGuiColors.DalamudGrey3, $" v{log.Version}");
@@ -2559,27 +2964,21 @@ internal class PluginInstallerWindow : Window, IDisposable
             return;
         }
 
-        // Name
-        var label = manifest.Name;
+        // Title modifiers, in the order they are appended to the name
+        var mods = AvailableTitleMods.None;
 
         // Testing
         if (useTesting)
-        {
-            label += Locs.PluginTitleMod_TestingVersion;
-        }
+            mods |= AvailableTitleMods.TestingVersion;
         else if (manifest.IsTestingExclusive)
-        {
-            label += Locs.PluginTitleMod_TestingExclusive;
-        }
+            mods |= AvailableTitleMods.TestingExclusive;
         else if (canUseTesting)
-        {
-            label += Locs.PluginTitleMod_TestingAvailable;
-        }
+            mods |= AvailableTitleMods.TestingAvailable;
 
         if (isIncompatible)
-        {
-            label += Locs.PluginTitleMod_Incompatible;
-        }
+            mods |= AvailableTitleMods.Incompatible;
+
+        var label = this.rowText.GetLabel(manifest, manifest.Name, (int)mods, static (name, m) => BuildAvailableTitle(name, (AvailableTitleMods)m));
 
         var isThirdParty = manifest.SourceRepo.IsThirdParty;
 
@@ -2597,7 +2996,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         if (isIncompatible)
             flags |= PluginHeaderFlags.IsIncompatible;
 
-        if (this.DrawPluginCollapsingHeader(label, null, manifest, flags, () => this.DrawAvailablePluginContextMenu(manifest), index))
+        if (this.DrawPluginCollapsingHeader(label, null, manifest, flags, null, manifest, index))
         {
             if (!wasSeen)
                 configuration.SeenPluginInternalName.Add(manifest.InternalName);
@@ -2669,79 +3068,84 @@ internal class PluginInstallerWindow : Window, IDisposable
         ImGui.PopID();
     }
 
+    // Runs for every row, every frame; the menu body has lambdas capturing the manifest, so it lives in its own method.
     private void DrawAvailablePluginContextMenu(RemotePluginManifest manifest)
+    {
+        if (ImGui.BeginPopupContextItem("ItemContextMenu"u8))
+        {
+            this.DrawAvailablePluginContextMenuItems(manifest);
+            ImGui.EndPopup();
+        }
+    }
+
+    private void DrawAvailablePluginContextMenuItems(RemotePluginManifest manifest)
     {
         var configuration = Service<DalamudConfiguration>.Get();
         var pluginManager = Service<PluginManager>.Get();
 
         var hasTestingVersionAvailable = configuration.DoPluginTest && manifest.IsAvailableForTesting;
 
-        if (ImGui.BeginPopupContextItem("ItemContextMenu"u8))
+        if (hasTestingVersionAvailable)
         {
-            if (hasTestingVersionAvailable)
+            if (ImGui.Selectable(Locs.PluginContext_InstallTestingVersion))
             {
-                if (ImGui.Selectable(Locs.PluginContext_InstallTestingVersion))
-                {
-                    EnsureHaveTestingOptIn(manifest);
-                    this.StartInstall(manifest, true);
-                }
-
-                ImGui.Separator();
+                EnsureHaveTestingOptIn(manifest);
+                this.StartInstall(manifest, true);
             }
 
-            if (ImGui.Selectable(Locs.PluginContext_MarkAllSeen))
-            {
-                configuration.SeenPluginInternalName.AddRange(this.pluginListAvailable.Select(x => x.InternalName));
+            ImGui.Separator();
+        }
+
+        if (ImGui.Selectable(Locs.PluginContext_MarkAllSeen))
+        {
+            configuration.SeenPluginInternalName.AddRange(this.pluginListAvailable.Select(x => x.InternalName));
+            configuration.QueueSave();
+            pluginManager.RefilterPluginMasters();
+        }
+
+        var isHidden = configuration.HiddenPluginInternalName.Contains(manifest.InternalName);
+        switch (isHidden)
+        {
+            case false when ImGui.Selectable(Locs.PluginContext_HidePlugin):
+                configuration.HiddenPluginInternalName.Add(manifest.InternalName);
                 configuration.QueueSave();
                 pluginManager.RefilterPluginMasters();
-            }
+                break;
+            case true when ImGui.Selectable(Locs.PluginContext_UnhidePlugin):
+                configuration.HiddenPluginInternalName.Remove(manifest.InternalName);
+                configuration.QueueSave();
+                pluginManager.RefilterPluginMasters();
+                break;
+        }
 
-            var isHidden = configuration.HiddenPluginInternalName.Contains(manifest.InternalName);
-            switch (isHidden)
+        if (ImGui.Selectable(Locs.PluginContext_DeletePluginConfig))
+        {
+            this.ShowDeletePluginConfigWarningModal(manifest.Name).ContinueWith(t =>
             {
-                case false when ImGui.Selectable(Locs.PluginContext_HidePlugin):
-                    configuration.HiddenPluginInternalName.Add(manifest.InternalName);
-                    configuration.QueueSave();
-                    pluginManager.RefilterPluginMasters();
-                    break;
-                case true when ImGui.Selectable(Locs.PluginContext_UnhidePlugin):
-                    configuration.HiddenPluginInternalName.Remove(manifest.InternalName);
-                    configuration.QueueSave();
-                    pluginManager.RefilterPluginMasters();
-                    break;
-            }
+                var shouldDelete = t.Result;
 
-            if (ImGui.Selectable(Locs.PluginContext_DeletePluginConfig))
-            {
-                this.ShowDeletePluginConfigWarningModal(manifest.Name).ContinueWith(t =>
+                if (shouldDelete)
                 {
-                    var shouldDelete = t.Result;
+                    Log.Debug($"Deleting config for {manifest.InternalName}");
 
-                    if (shouldDelete)
-                    {
-                        Log.Debug($"Deleting config for {manifest.InternalName}");
+                    this.installStatus = OperationStatus.InProgress;
 
-                        this.installStatus = OperationStatus.InProgress;
+                    Task.Run(() =>
+                        {
+                            pluginManager.PluginConfigs.Delete(manifest.InternalName);
+                            var dir = pluginManager.PluginConfigs.GetDirectory(manifest.InternalName);
 
-                        Task.Run(() =>
-                            {
-                                pluginManager.PluginConfigs.Delete(manifest.InternalName);
-                                var dir = pluginManager.PluginConfigs.GetDirectory(manifest.InternalName);
+                            if (Directory.Exists(dir))
+                                Directory.Delete(dir, true);
+                        })
+                        .ContinueWith(task =>
+                        {
+                            this.installStatus = OperationStatus.Idle;
 
-                                if (Directory.Exists(dir))
-                                    Directory.Delete(dir, true);
-                            })
-                            .ContinueWith(task =>
-                            {
-                                this.installStatus = OperationStatus.Idle;
-
-                                this.DisplayErrorContinuation(task, Locs.ErrorModal_DeleteConfigFail(manifest.InternalName));
-                            });
-                    }
-                });
-            }
-
-            ImGui.EndPopup();
+                            this.DisplayErrorContinuation(task, Locs.ErrorModal_DeleteConfigFail(manifest.InternalName));
+                        });
+                }
+            });
         }
     }
 
@@ -2750,35 +3154,28 @@ internal class PluginInstallerWindow : Window, IDisposable
         var configuration = Service<DalamudConfiguration>.Get();
         var commandManager = Service<CommandManager>.Get();
 
-        var testingOptIn =
-            configuration.PluginTestingOptIns?.FirstOrDefault(x => x.InternalName == plugin.Manifest.InternalName);
+        var testingOptIn = PluginInstallerLookup.FindTestingOptIn(configuration.PluginTestingOptIns, plugin.Manifest.InternalName);
         var trouble = false;
 
-        // Name
-        var label = plugin.Manifest.Name;
+        // Title modifiers, in the order they are appended to the name
+        var mods = InstalledTitleMods.None;
 
         // Testing
         if (plugin.IsTesting)
-        {
-            label += Locs.PluginTitleMod_TestingVersion;
-        }
+            mods |= InstalledTitleMods.TestingVersion;
 
-        var hasTestingAvailable = this.pluginListAvailable.Any(x => x.InternalName == plugin.InternalName && x.IsAvailableForTesting);
+        var hasTestingAvailable = PluginInstallerLookup.HasTestingAvailable(this.pluginListAvailable, plugin.InternalName);
         if (hasTestingAvailable && configuration.DoPluginTest && testingOptIn == null)
-        {
-            label += Locs.PluginTitleMod_TestingAvailable;
-        }
+            mods |= InstalledTitleMods.TestingAvailable;
 
         // Freshly installed
         if (showInstalled)
-        {
-            label += Locs.PluginTitleMod_Installed;
-        }
+            mods |= InstalledTitleMods.Installed;
 
         // Disabled
         if (!plugin.IsWantedByAnyProfile || !plugin.CheckPolicy())
         {
-            label += Locs.PluginTitleMod_Disabled;
+            mods |= InstalledTitleMods.Disabled;
             trouble = true;
         }
 
@@ -2786,14 +3183,14 @@ internal class PluginInstallerWindow : Window, IDisposable
         if (plugin.State is PluginState.LoadError or PluginState.DependencyResolutionFailed && plugin.CheckPolicy()
             && !plugin.IsOutdated && !plugin.IsBanned && !plugin.IsOrphaned)
         {
-            label += Locs.PluginTitleMod_LoadError;
+            mods |= InstalledTitleMods.LoadError;
             trouble = true;
         }
 
         // Unload error
         if (plugin.State == PluginState.UnloadError)
         {
-            label += Locs.PluginTitleMod_UnloadError;
+            mods |= InstalledTitleMods.UnloadError;
             trouble = true;
         }
 
@@ -2803,25 +3200,23 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         // Update available
         if (availablePluginUpdate != null)
-        {
-            label += Locs.PluginTitleMod_HasUpdate;
-        }
+            mods |= InstalledTitleMods.HasUpdate;
 
         // Freshly updated
         var thisWasUpdated = false;
         if (this.updatedPlugins != null && !plugin.IsDev)
         {
-            var update = this.updatedPlugins.FirstOrDefault(update => update.InternalName == plugin.Manifest.InternalName);
+            var update = PluginInstallerLookup.FindUpdateStatus(this.updatedPlugins, plugin.Manifest.InternalName);
             if (update != null)
             {
                 if (update.Status == PluginUpdateStatus.StatusKind.Success)
                 {
                     thisWasUpdated = true;
-                    label += Locs.PluginTitleMod_Updated;
+                    mods |= InstalledTitleMods.Updated;
                 }
                 else
                 {
-                    label += Locs.PluginTitleMod_UpdateFailed;
+                    mods |= InstalledTitleMods.UpdateFailed;
                 }
             }
         }
@@ -2829,29 +3224,29 @@ internal class PluginInstallerWindow : Window, IDisposable
         // Outdated API level
         if (plugin.IsOutdated)
         {
-            label += Locs.PluginTitleMod_OutdatedError;
+            mods |= InstalledTitleMods.OutdatedError;
             trouble = true;
         }
 
         // Banned
         if (plugin.IsBanned)
         {
-            label += Locs.PluginTitleMod_BannedError;
+            mods |= InstalledTitleMods.BannedError;
             trouble = true;
         }
 
         // Out of service
         if (plugin.IsDecommissioned && !plugin.IsOrphaned)
         {
-            label += Locs.PluginTitleMod_NoService;
+            mods |= InstalledTitleMods.NoService;
             trouble = true;
         }
 
         // Scheduled for deletion
         if (plugin.Manifest.ScheduledForDeletion)
-        {
-            label += Locs.PluginTitleMod_ScheduledForDeletion;
-        }
+            mods |= InstalledTitleMods.ScheduledForDeletion;
+
+        var label = this.rowText.GetLabel(plugin, plugin.Manifest.Name, (int)mods, static (name, m) => BuildInstalledTitle(name, (InstalledTitleMods)m));
 
         ImGui.PushID($"installed{index}{plugin.Manifest.InternalName}");
 
@@ -2888,7 +3283,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         if (plugin.IsTesting)
             flags |= PluginHeaderFlags.IsTesting;
 
-        if (this.DrawPluginCollapsingHeader(label, plugin, plugin.Manifest, flags, () => this.DrawInstalledPluginContextMenu(plugin, testingOptIn), index))
+        if (this.DrawPluginCollapsingHeader(label, plugin, plugin.Manifest, flags, testingOptIn, null, index))
         {
             if (!this.WasPluginSeen(plugin.Manifest.InternalName))
                 configuration.SeenPluginInternalName.Add(plugin.Manifest.InternalName);
@@ -2941,25 +3336,7 @@ internal class PluginInstallerWindow : Window, IDisposable
 
             // Available commands (if loaded)
             if (plugin.IsLoaded)
-            {
-                var commands = commandManager.Commands
-                                             .Where(cInfo =>
-                                                        cInfo.Value is { ShowInHelp: true } &&
-                                                        commandManager.GetHandlerAssemblyName(cInfo.Key, cInfo.Value) == plugin.Manifest.InternalName);
-
-                if (commands.Any())
-                {
-                    ImGui.Dummy(ImGuiHelpers.ScaledVector2(10f, 10f));
-                    foreach (var command in commands
-                        .OrderBy(cInfo => cInfo.Value.DisplayOrder)
-                        .ThenBy(cInfo => cInfo.Key))
-                    {
-                        ImGui.TextWrapped($"{command.Key} → {command.Value.HelpMessage}");
-                    }
-
-                    ImGuiHelpers.ScaledDummy(3);
-                }
-            }
+                this.DrawInstalledPluginCommands(plugin, commandManager);
 
             if (plugin is LocalDevPlugin devPlugin)
             {
@@ -3024,6 +3401,86 @@ internal class PluginInstallerWindow : Window, IDisposable
         ImGui.PopID();
     }
 
+    private void DrawInstalledPluginCommands(LocalPlugin plugin, CommandManager commandManager)
+    {
+        var commands = this.commandLists.GetOrCreateValue(plugin).Get(commandManager, plugin.Manifest.InternalName);
+
+        var any = false;
+        foreach (var command in commands)
+        {
+            if (!command.Info.ShowInHelp)
+                continue;
+
+            if (!any)
+                ImGui.Dummy(ImGuiHelpers.ScaledVector2(10f, 10f));
+            any = true;
+            ImGui.TextWrapped($"{command.Command} → {command.Info.HelpMessage}");
+        }
+
+        if (any)
+            ImGuiHelpers.ScaledDummy(3);
+    }
+
+    /// <summary>An installed plugin's title: its name and the modifiers, appended in the order the installer always used.</summary>
+    /// <param name="name">The name.</param>
+    /// <param name="mods">The modifiers.</param>
+    /// <returns>The title.</returns>
+#pragma warning disable SA1202, SA1204
+    internal static string BuildInstalledTitle(string name, InstalledTitleMods mods)
+#pragma warning restore SA1202, SA1204
+    {
+        var label = name;
+        if (mods.HasFlag(InstalledTitleMods.TestingVersion))
+            label += Locs.PluginTitleMod_TestingVersion;
+        if (mods.HasFlag(InstalledTitleMods.TestingAvailable))
+            label += Locs.PluginTitleMod_TestingAvailable;
+        if (mods.HasFlag(InstalledTitleMods.Installed))
+            label += Locs.PluginTitleMod_Installed;
+        if (mods.HasFlag(InstalledTitleMods.Disabled))
+            label += Locs.PluginTitleMod_Disabled;
+        if (mods.HasFlag(InstalledTitleMods.LoadError))
+            label += Locs.PluginTitleMod_LoadError;
+        if (mods.HasFlag(InstalledTitleMods.UnloadError))
+            label += Locs.PluginTitleMod_UnloadError;
+        if (mods.HasFlag(InstalledTitleMods.HasUpdate))
+            label += Locs.PluginTitleMod_HasUpdate;
+        if (mods.HasFlag(InstalledTitleMods.Updated))
+            label += Locs.PluginTitleMod_Updated;
+        if (mods.HasFlag(InstalledTitleMods.UpdateFailed))
+            label += Locs.PluginTitleMod_UpdateFailed;
+        if (mods.HasFlag(InstalledTitleMods.OutdatedError))
+            label += Locs.PluginTitleMod_OutdatedError;
+        if (mods.HasFlag(InstalledTitleMods.BannedError))
+            label += Locs.PluginTitleMod_BannedError;
+        if (mods.HasFlag(InstalledTitleMods.NoService))
+            label += Locs.PluginTitleMod_NoService;
+        if (mods.HasFlag(InstalledTitleMods.ScheduledForDeletion))
+            label += Locs.PluginTitleMod_ScheduledForDeletion;
+        return label;
+    }
+
+    /// <summary>An installable plugin's title: its name and the modifiers, appended in the order the installer always used.</summary>
+    /// <param name="name">The name.</param>
+    /// <param name="mods">The modifiers.</param>
+    /// <returns>The title.</returns>
+#pragma warning disable SA1202, SA1204
+    internal static string BuildAvailableTitle(string name, AvailableTitleMods mods)
+#pragma warning restore SA1202, SA1204
+    {
+        var label = name;
+        if (mods.HasFlag(AvailableTitleMods.TestingVersion))
+            label += Locs.PluginTitleMod_TestingVersion;
+        if (mods.HasFlag(AvailableTitleMods.TestingExclusive))
+            label += Locs.PluginTitleMod_TestingExclusive;
+        if (mods.HasFlag(AvailableTitleMods.TestingAvailable))
+            label += Locs.PluginTitleMod_TestingAvailable;
+        if (mods.HasFlag(AvailableTitleMods.Incompatible))
+            label += Locs.PluginTitleMod_Incompatible;
+        return label;
+    }
+
+    private void OnLocalizationChanged(string langCode) => this.rowText.InvalidateLocalized();
+
     private void DrawInstalledPluginChangelog(string changelog)
     {
         ImGuiHelpers.ScaledDummy(5);
@@ -3046,67 +3503,72 @@ internal class PluginInstallerWindow : Window, IDisposable
         ImGui.PopStyleColor(2);
     }
 
-    private unsafe void DrawInstalledPluginContextMenu(LocalPlugin plugin, PluginTestingOptIn? optIn)
+    // Runs for every row, every frame; the menu body has lambdas capturing the plugin, so it lives in its own method.
+    private void DrawInstalledPluginContextMenu(LocalPlugin plugin, PluginTestingOptIn? optIn)
+    {
+        if (ImGui.BeginPopupContextItem("InstalledItemContextMenu"u8))
+        {
+            this.DrawInstalledPluginContextMenuItems(plugin, optIn);
+            ImGui.EndPopup();
+        }
+    }
+
+    private unsafe void DrawInstalledPluginContextMenuItems(LocalPlugin plugin, PluginTestingOptIn? optIn)
     {
         var pluginManager = Service<PluginManager>.Get();
         var configuration = Service<DalamudConfiguration>.Get();
 
-        if (ImGui.BeginPopupContextItem("InstalledItemContextMenu"u8))
+        if (configuration.DoPluginTest)
         {
-            if (configuration.DoPluginTest)
+            var repoManifest = this.pluginListAvailable.FirstOrDefault(x => x.InternalName == plugin.Manifest.InternalName);
+            if (repoManifest?.IsTestingExclusive == true)
+                ImGui.BeginDisabled();
+
+            if (ImGui.MenuItem(Locs.PluginContext_TestingOptIn, optIn != null))
             {
-                var repoManifest = this.pluginListAvailable.FirstOrDefault(x => x.InternalName == plugin.Manifest.InternalName);
-                if (repoManifest?.IsTestingExclusive == true)
-                    ImGui.BeginDisabled();
-
-                if (ImGui.MenuItem(Locs.PluginContext_TestingOptIn, optIn != null))
+                if (optIn != null)
                 {
-                    if (optIn != null)
-                    {
-                        configuration.PluginTestingOptIns!.Remove(optIn);
+                    configuration.PluginTestingOptIns!.Remove(optIn);
 
-                        if (plugin.Manifest.TestingAssemblyVersion > repoManifest?.AssemblyVersion)
-                        {
-                            this.testingWarningModalOnNextFrame = true;
-                        }
-                    }
-                    else
+                    if (plugin.Manifest.TestingAssemblyVersion > repoManifest?.AssemblyVersion)
                     {
-                        EnsureHaveTestingOptIn(plugin.Manifest);
+                        this.testingWarningModalOnNextFrame = true;
                     }
-
-                    configuration.QueueSave();
-                    _ = pluginManager.ReloadPluginMastersAsync();
+                }
+                else
+                {
+                    EnsureHaveTestingOptIn(plugin.Manifest);
                 }
 
-                if (repoManifest?.IsTestingExclusive == true)
-                    ImGui.EndDisabled();
+                configuration.QueueSave();
+                _ = pluginManager.ReloadPluginMastersAsync();
             }
 
-            if (ImGui.MenuItem(Locs.PluginContext_DeletePluginConfigReload))
+            if (repoManifest?.IsTestingExclusive == true)
+                ImGui.EndDisabled();
+        }
+
+        if (ImGui.MenuItem(Locs.PluginContext_DeletePluginConfigReload))
+        {
+            this.ShowDeletePluginConfigWarningModal(plugin.Manifest.Name, optIn != null).ContinueWith(t =>
             {
-                this.ShowDeletePluginConfigWarningModal(plugin.Manifest.Name, optIn != null).ContinueWith(t =>
+                var shouldDelete = t.Result;
+
+                if (shouldDelete)
                 {
-                    var shouldDelete = t.Result;
+                    Log.Debug($"Deleting config for {plugin.Manifest.InternalName}");
 
-                    if (shouldDelete)
-                    {
-                        Log.Debug($"Deleting config for {plugin.Manifest.InternalName}");
+                    this.installStatus = OperationStatus.InProgress;
 
-                        this.installStatus = OperationStatus.InProgress;
+                    Task.Run(() => pluginManager.DeleteConfigurationAsync(plugin))
+                        .ContinueWith(task =>
+                        {
+                            this.installStatus = OperationStatus.Idle;
 
-                        Task.Run(() => pluginManager.DeleteConfigurationAsync(plugin))
-                            .ContinueWith(task =>
-                            {
-                                this.installStatus = OperationStatus.Idle;
-
-                                this.DisplayErrorContinuation(task, Locs.ErrorModal_DeleteConfigFail(plugin.Manifest.InternalName));
-                            });
-                    }
-                });
-            }
-
-            ImGui.EndPopup();
+                            this.DisplayErrorContinuation(task, Locs.ErrorModal_DeleteConfigFail(plugin.Manifest.InternalName));
+                        });
+                }
+            });
         }
     }
 
@@ -3366,14 +3828,20 @@ internal class PluginInstallerWindow : Window, IDisposable
         this.installStatus = OperationStatus.InProgress;
         this.loadingIndicatorKind = LoadingIndicatorKind.UpdatingSingle;
 
-        return await Task.Run(async () => await pluginManager.UpdateSinglePluginAsync(update, true, false))
-                         .ContinueWith(task =>
+        var operation = Task.Run(async () => await pluginManager.UpdateSinglePluginAsync(update, true, false));
+        var progress = this.NewOperationNotification(
+            Locs.Notifications_UpdatingTitle, Locs.Notifications_Updating(update.UpdateManifest.Name), null, update.UpdateManifest.InternalName);
+
+        return await progress.FollowAsync(operation)
+                         .ContinueWith(_ =>
                          {
+                             var task = operation;
+
                              // There is no need to set as Complete for an individual plugin installation
                              this.installStatus = OperationStatus.Idle;
+                             progress.TryFinish(() => DescribeSingleUpdateOutcome(task, update));
 
-                             if (task.IsCompletedSuccessfully &&
-                                 task.Result.Status != PluginUpdateStatus.StatusKind.Success)
+                             if (task.IsCompletedSuccessfully && IsUpdateFailure(task.Result))
                              {
                                  this.ShowErrorModal(
                                      Locs.ErrorModal_SingleUpdateFail(update.UpdateManifest.Name, PluginUpdateStatus.LocalizeUpdateStatusKind(task.Result.Status)));
@@ -3386,6 +3854,14 @@ internal class PluginInstallerWindow : Window, IDisposable
 
     private void DrawUpdateSinglePluginButton(AvailablePluginUpdate update)
     {
+        if (Service<PluginManager>.Get().IsPluginOperationInFlight(update.UpdateManifest.InternalName))
+        {
+            ImGuiComponents.DisabledButton(FontAwesomeIcon.Download);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("這個插件正在安裝或更新，等它完成後再按。");
+            return;
+        }
+
         if (ImGuiComponents.IconButton(FontAwesomeIcon.Download))
         {
             Task.Run(() => this.UpdateSinglePlugin(update));
@@ -3941,6 +4417,10 @@ internal class PluginInstallerWindow : Window, IDisposable
             this.ResortPlugins();
         }
 
+        // The changelog list is derived from the lists we just replaced, so it is now stale.
+        // Dropping the task marks it for rebuild on the next frame that draws the page.
+        this.dalamudChangelogRefreshTask = null;
+
         this.hasHiddenPlugins = this.pluginListAvailable.Any(x => configuration.HiddenPluginInternalName.Contains(x.InternalName));
 
         this.UpdateCategoriesOnPluginsChange();
@@ -3958,6 +4438,9 @@ internal class PluginInstallerWindow : Window, IDisposable
             this.hasDevPlugins = this.pluginListInstalled.Any(plugin => plugin.IsDev);
             this.ResortPlugins();
         }
+
+        // Same as above: an install/update/removal invalidates the changelog list.
+        this.dalamudChangelogRefreshTask = null;
 
         this.UpdateCategoriesOnPluginsChange();
     }
@@ -4385,6 +4868,25 @@ internal class PluginInstallerWindow : Window, IDisposable
         public static string Notifications_UpdatesInstalled(List<PluginUpdateStatus> updates)
             => Loc.Localize("NotificationsUpdatesInstalled", "Updates for {0} of your plugins were installed.\n\n{1}")
                   .Format(updates.Count, string.Join(", ", updates.Select(x => x.InternalName)));
+
+        // Entries keyed AutoUpdate* reuse the auto-updater's keys and fallbacks, so its existing translations apply here too.
+        public static string Notifications_UpdatingTitle => Loc.Localize("AutoUpdateUpdatingPlugins", "Updating plugins...");
+
+        public static string Notifications_Updating(string name) => Loc.Localize("AutoUpdateUpdating", "Updating {0}...").Format(name);
+
+        public static string Notifications_UpdatesFailedTitle => Loc.Localize("AutoUpdateUpdatesFailed", "Updates failed!");
+
+        public static string Notifications_UpdatesFailed => Loc.Localize("AutoUpdateUpdatesFailedContent", "Some plugins failed to update. Please check the plugin installer for more information.");
+
+        public static string Notifications_FailedPlugins(IEnumerable<string> names) => Loc.Localize("AutoUpdateFailedPlugins", "Failed plugin(s): {0}").Format(string.Join(", ", names));
+
+        public static string Notifications_UpdatesPartialTitle => Loc.Localize("InstallerNotificationUpdatesPartialTitle", "部分插件更新失敗！");
+
+        public static string Notifications_InstallingTitle => Loc.Localize("InstallerNotificationInstallingTitle", "正在安裝插件...");
+
+        public static string Notifications_Installing(string name) => Loc.Localize("InstallerNotificationInstalling", "正在安裝 {0}...").Format(name);
+
+        public static string Notifications_PluginAlreadyUpToDate(string name) => Loc.Localize("InstallerNotificationPluginAlreadyUpToDate", "{0} 已是最新版本，不需要更新。").Format(name);
 
         public static string Notifications_PluginDisabledTitle => Loc.Localize("NotificationsPluginDisabledTitle", "Plugin disabled!");
 

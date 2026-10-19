@@ -69,8 +69,12 @@ internal class DataShare : IServiceType
             var callerName = GetCallerName();
 
             cache = cacheLazy.Value;
-            if (!cache.UserAssemblyNames.Remove(callerName) || cache.UserAssemblyNames.Count > 0)
-                return;
+            lock (cache.UserAssemblyNames)
+            {
+                if (!cache.UserAssemblyNames.Remove(callerName) || cache.UserAssemblyNames.Count > 0)
+                    return;
+            }
+
             if (!this.caches.Remove(tag))
                 return;
         }
@@ -144,10 +148,36 @@ internal class DataShare : IServiceType
     /// <returns>All currently subscribed tags, their creator names and all their users.</returns>
     internal IEnumerable<(string Tag, string CreatorAssembly, string[] Users)> GetAllShares()
     {
+        // Only the dictionary is copied under the lock: Lazy.Value may wait on a generator that itself calls DataShare.
+        KeyValuePair<string, Lazy<DataCache>>[] entries;
+        lock (this.caches)
+            entries = this.caches.ToArray();
+
+        return entries.Select(
+            static kvp =>
+            {
+                var cache = kvp.Value.Value;
+                string[] users;
+                lock (cache.UserAssemblyNames)
+                    users = cache.UserAssemblyNames.ToArray();
+                return (kvp.Key, cache.CreatorAssemblyName, users);
+            });
+    }
+
+    /// <summary>Copies the data of every share whose generator has already run; never runs one.</summary>
+    /// <returns>Each share's tag, declared type and data.</returns>
+    internal List<(string Tag, Type Type, object? Data)> GetCreatedData()
+    {
         lock (this.caches)
         {
-            return this.caches.Select(
-                kvp => (kvp.Key, kvp.Value.Value.CreatorAssemblyName, kvp.Value.Value.UserAssemblyNames.ToArray()));
+            var created = new List<(string Tag, Type Type, object? Data)>(this.caches.Count);
+            foreach (var (tag, lazy) in this.caches)
+            {
+                if (lazy.IsValueCreated)
+                    created.Add((tag, lazy.Value.Type, lazy.Value.Data));
+            }
+
+            return created;
         }
     }
 

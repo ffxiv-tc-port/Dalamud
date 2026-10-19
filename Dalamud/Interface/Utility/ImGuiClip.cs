@@ -34,25 +34,31 @@ public static class ImGuiClip
     // Uses ImGuiListClipper and thus handles start- and end-dummies itself.
     public static void ClippedDraw<T>(IReadOnlyList<T> data, Action<T> draw, float lineHeight)
     {
+        // Every exit (early return, a throwing draw) must End the clipper: a begun one stays on the ImGui context's
+        // clipper stack, which every plugin shares. Destroy frees the native allocation and may only run once.
         var clipper = ImGui.ImGuiListClipper();
-
-        clipper.Begin(data.Count, lineHeight);
-        while (clipper.Step())
+        try
         {
-            for (var actualRow = clipper.DisplayStart; actualRow < clipper.DisplayEnd; actualRow++)
+            clipper.Begin(data.Count, lineHeight);
+            while (clipper.Step())
             {
-                if (actualRow >= data.Count)
-                    return;
+                for (var actualRow = clipper.DisplayStart; actualRow < clipper.DisplayEnd; actualRow++)
+                {
+                    if (actualRow >= data.Count)
+                        return;
 
-                if (actualRow < 0)
-                    continue;
+                    if (actualRow < 0)
+                        continue;
 
-                draw(data[actualRow]);
+                    draw(data[actualRow]);
+                }
             }
         }
-
-        clipper.End();
-        clipper.Destroy();
+        finally
+        {
+            clipper.End();
+            clipper.Destroy();
+        }
     }
 
     /// <summary>
@@ -65,40 +71,44 @@ public static class ImGuiClip
     /// <typeparam name="T">The type of data to draw.</typeparam>
     public static void ClippedDraw<T>(IReadOnlyList<T> data, Action<T> draw, int itemsPerLine, float lineHeight)
     {
-        var clipper = ImGui.ImGuiListClipper();
-
         var maxRows = (int)MathF.Ceiling((float)data.Count / itemsPerLine);
 
-        clipper.Begin(maxRows, lineHeight);
-        while (clipper.Step())
+        var clipper = ImGui.ImGuiListClipper();
+        try
         {
-            for (var actualRow = clipper.DisplayStart; actualRow < clipper.DisplayEnd; actualRow++)
+            clipper.Begin(maxRows, lineHeight);
+            while (clipper.Step())
             {
-                if (actualRow >= maxRows)
-                    return;
-
-                if (actualRow < 0)
-                    continue;
-
-                var itemsForRow = data
-                                  .Skip(actualRow * itemsPerLine)
-                                  .Take(itemsPerLine);
-
-                var currentIndex = 0;
-                foreach (var item in itemsForRow)
+                for (var actualRow = clipper.DisplayStart; actualRow < clipper.DisplayEnd; actualRow++)
                 {
-                    if (currentIndex++ != 0 && currentIndex < itemsPerLine + 1)
-                    {
-                        ImGui.SameLine();
-                    }
+                    if (actualRow >= maxRows)
+                        return;
 
-                    draw(item);
+                    if (actualRow < 0)
+                        continue;
+
+                    var itemsForRow = data
+                                      .Skip(actualRow * itemsPerLine)
+                                      .Take(itemsPerLine);
+
+                    var currentIndex = 0;
+                    foreach (var item in itemsForRow)
+                    {
+                        if (currentIndex++ != 0 && currentIndex < itemsPerLine + 1)
+                        {
+                            ImGui.SameLine();
+                        }
+
+                        draw(item);
+                    }
                 }
             }
         }
-
-        clipper.End();
-        clipper.Destroy();
+        finally
+        {
+            clipper.End();
+            clipper.Destroy();
+        }
     }
 
     // Draw a clipped random-access collection of consistent height lineHeight.
@@ -106,24 +116,28 @@ public static class ImGuiClip
     public static void ClippedDraw<T>(IReadOnlyList<T> data, Action<T, int> draw, float lineHeight)
     {
         var clipper = ImGui.ImGuiListClipper();
-
-        clipper.Begin(data.Count, lineHeight);
-        while (clipper.Step())
+        try
         {
-            for (var actualRow = clipper.DisplayStart; actualRow < clipper.DisplayEnd; actualRow++)
+            clipper.Begin(data.Count, lineHeight);
+            while (clipper.Step())
             {
-                if (actualRow >= data.Count)
-                    return;
+                for (var actualRow = clipper.DisplayStart; actualRow < clipper.DisplayEnd; actualRow++)
+                {
+                    if (actualRow >= data.Count)
+                        return;
 
-                if (actualRow < 0)
-                    continue;
+                    if (actualRow < 0)
+                        continue;
 
-                draw(data[actualRow], actualRow);
+                    draw(data[actualRow], actualRow);
+                }
             }
         }
-
-        clipper.End();
-        clipper.Destroy();
+        finally
+        {
+            clipper.End();
+            clipper.Destroy();
+        }
     }
 
     // Draw non-random-access data without storing state.

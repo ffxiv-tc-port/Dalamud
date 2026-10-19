@@ -57,8 +57,16 @@ internal unsafe class NamePlateUpdateContext : INamePlateUpdateContext
     internal NamePlateUpdateContext(ObjectTable objectTable)
     {
         this.ObjectTable = objectTable;
+
+        // Both of these are hand-written wrappers that walk Framework -> UIModule -> ... and return
+        // null at each step if the previous one is null, so neither may be dereferenced blindly.
+        // Store whatever we get (including null) and let ResetState refuse to produce a usable state
+        // if either is missing; dereferencing null here would raise an AccessViolationException,
+        // a corrupted-state exception that no try/catch can recover from.
         this.RaptureAtkModule = FFXIVClientStructs.FFXIV.Client.UI.RaptureAtkModule.Instance();
-        this.Ui3DModule = UIModule.Instance()->GetUI3DModule();
+
+        var uiModule = UIModule.Instance();
+        this.Ui3DModule = uiModule == null ? null : uiModule->GetUI3DModule();
     }
 
     /// <summary>
@@ -141,10 +149,40 @@ internal unsafe class NamePlateUpdateContext : INamePlateUpdateContext
     public void ResetState(AtkUnitBase* addon, NumberArrayData** numberArrayData, StringArrayData** stringArrayData)
     {
         this.Addon = (AddonNamePlate*)addon;
-        this.NumberData = AtkStage.Instance()->GetNumberArrayData(NumberArrayType.NamePlate);
-        this.NumberStruct = (NamePlateNumberArray*)this.NumberData->IntArray;
-        this.StringData = AtkStage.Instance()->GetStringArrayData(StringArrayType.NamePlate);
         this.HasParts = false;
+        this.NumberData = null;
+        this.NumberStruct = null;
+        this.StringData = null;
+        this.ActiveNamePlateCount = 0;
+        this.IsFullUpdate = false;
+
+        // AtkStage.Instance() resolves a [StaticAddress(..., isPointer: true)] slot that is null until
+        // the stage has been created, and the array getters may return null in their own right.
+        // RaptureAtkModule/Ui3DModule are null if the UI module did not exist when this context was
+        // built. Treat any missing one as "nothing to update": ActiveNamePlateCount stays 0, so
+        // NamePlateGui.OnNamePlateUpdate returns before it touches any handler.
+        var stage = AtkStage.Instance();
+        if (stage == null || this.RaptureAtkModule == null || this.Ui3DModule == null || addon == null)
+            return;
+
+        // GetNumberArrayData(NumberArrayType)/GetStringArrayData(StringArrayType) are just
+        // GetNumberArrayData()[(int)type] and GetStringArrayData()[(int)type], i.e. they dereference
+        // the table pointer before indexing it. Both table getters are [MemberFunction]s returning
+        // T**, so the table itself can be null and that dereference is unguarded. Splitting the two
+        // steps costs no extra call and removes it, matching NamePlateGui.RequestRedraw.
+        var numberArrays = stage->GetNumberArrayData();
+        var stringArrays = stage->GetStringArrayData();
+        if (numberArrays == null || stringArrays == null)
+            return;
+
+        var numberData = numberArrays[(int)NumberArrayType.NamePlate];
+        var stringData = stringArrays[(int)StringArrayType.NamePlate];
+        if (numberData == null || stringData == null || numberData->IntArray == null)
+            return;
+
+        this.NumberData = numberData;
+        this.NumberStruct = (NamePlateNumberArray*)numberData->IntArray;
+        this.StringData = stringData;
 
         this.ActiveNamePlateCount = this.NumberStruct->ActiveNamePlateCount;
         this.IsFullUpdate = this.Addon->DoFullUpdate != 0;

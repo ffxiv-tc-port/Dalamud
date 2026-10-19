@@ -11,11 +11,13 @@ using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Gui;
 using Dalamud.Interface.FontIdentifier;
 using Dalamud.Interface.Internal;
+using Dalamud.Interface.Internal.Asserts;
 using Dalamud.Interface.ManagedFontAtlas;
 using Dalamud.Interface.ManagedFontAtlas.Internals;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 using Serilog;
 
 namespace Dalamud.Interface;
@@ -286,6 +288,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
     private readonly LocalPlugin plugin;
     private readonly Stopwatch stopwatch;
     private readonly HitchDetector hitchDetector;
+    private readonly PluginAllocationMeter drawAllocations;
     private readonly string namespaceName;
     private readonly InterfaceManager interfaceManager = Service<InterfaceManager>.Get();
     private readonly Framework framework = Service<Framework>.Get();
@@ -319,6 +322,10 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
             this.hitchDetector = new HitchDetector($"UiBuilder({namespaceName})", this.configuration.UiBuilderHitch);
             this.namespaceName = namespaceName;
             this.plugin = plugin;
+
+            // 放在訂閱 Draw 之前：清理是後進先出，先退訂 Draw 才讓計數器退役。
+            this.drawAllocations = new PluginAllocationMeter(plugin.InternalName, PluginAllocationMeter.Draw);
+            this.scopedFinalizer.Add(this.drawAllocations.Retire);
 
             this.interfaceManager.Draw += this.OnDraw;
             this.scopedFinalizer.Add(() => this.interfaceManager.Draw -= this.OnDraw);
@@ -776,6 +783,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
             this.ShowUi?.InvokeSafely();
         }
 
+        AssertHandler.DrawingPlugin = this.drawAllocations.PluginName;
         ImGui.PushID(this.namespaceName);
         if (DoStats)
         {
@@ -798,6 +806,8 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
             ImGui.End();
         }
 
+        // 要使用者回報的診斷：量這個插件的 Draw 配置了多少記憶體，找週期性 GC 的來源。
+        var allocatedBefore = PluginAllocationMeter.Begin();
         try
         {
             this.Draw?.InvokeSafely();
@@ -811,6 +821,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
             this.hasErrorWindow = true;
         }
 
+        this.drawAllocations.End(allocatedBefore);
         this.FrameCount++;
 
         if (DoStats)
@@ -823,6 +834,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
         }
 
         ImGui.PopID();
+        AssertHandler.DrawingPlugin = null;
 
         this.hitchDetector.Stop();
     }

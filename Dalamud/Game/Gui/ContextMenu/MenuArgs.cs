@@ -2,6 +2,7 @@ using System.Collections.Generic;
 
 using Dalamud.Memory;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
 
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -29,6 +30,23 @@ public interface IMenuArgs
     /// <summary>
     /// Gets the memory pointer of the addon that opened the context menu.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a snapshot of the address taken when the context menu was opened; it is never
+    /// re-resolved. It is safe for the duration of the callback that received these args, and
+    /// must not be stored and used on a later frame: an addon's memory is released by
+    /// <c>AtkUnitManager::FinalizeAddon</c> from the per-frame unit manager update, so after a
+    /// frame boundary this address may point at freed and reused memory. Dereferencing it then
+    /// raises an AccessViolationException that no managed <c>try</c>/<c>catch</c> can contain.
+    /// </para>
+    /// <para>
+    /// To hold on to the addon, store <see cref="AddonName"/> and re-resolve it on each frame
+    /// via <c>RaptureAtkUnitManager.GetAddonByName</c>. An address that still resolves that way
+    /// has not been finalized, so it is safe to dereference within that same call; note that it
+    /// does not prove the addon is still open, because closing an addon does not remove it from
+    /// the list that lookup searches.
+    /// </para>
+    /// </remarks>
     public nint AddonPtr { get; }
 
     /// <summary>
@@ -65,7 +83,7 @@ internal abstract unsafe class MenuArgs : IMenuArgs
     /// <param name="eventInterfaces">List of AtkEventInterfaces associated with the context menu.</param>
     protected internal MenuArgs(AtkUnitBase* addon, AgentInterface* agent, ContextMenuType type, IReadOnlySet<nint>? eventInterfaces)
     {
-        this.AddonName = addon != null ? addon->NameString : null;
+        this.AddonName = addon != null ? NativeStringUtil.GetAddonName(addon) : null;
         this.AddonPtr = (nint)addon;
         this.AgentPtr = (nint)agent;
         this.MenuType = type;

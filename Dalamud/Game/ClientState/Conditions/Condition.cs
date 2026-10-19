@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
@@ -118,20 +117,67 @@ internal sealed class Condition : IInternalDisposableService, ICondition
     /// <inheritdoc/>
     public bool AnyExcept(params ConditionFlag[] excluded)
     {
-        return !this.AsReadOnlySet().Intersect(excluded).Any();
+        // Same result as "AsReadOnlySet() shares no element with excluded", without building the set.
+        ArgumentNullException.ThrowIfNull(excluded);
+        foreach (var flag in excluded)
+        {
+            if (this[flag])
+                return false;
+        }
+
+        return true;
     }
 
     /// <inheritdoc/>
     public bool OnlyAny(params ConditionFlag[] other)
     {
-        return !this.AsReadOnlySet().Except(other).Any();
+        ArgumentNullException.ThrowIfNull(other);
+        Span<bool> listed = stackalloc bool[MaxConditionEntries];
+        MarkListed(other, listed);
+        for (var i = 0; i < MaxConditionEntries; i++)
+        {
+            if (this[i] && !listed[i])
+                return false;
+        }
+
+        return true;
     }
 
     /// <inheritdoc/>
     public bool EqualTo(params ConditionFlag[] other)
     {
-        var resultSet = this.AsReadOnlySet();
-        return resultSet.SetEquals(other);
+        ArgumentNullException.ThrowIfNull(other);
+        Span<bool> listed = stackalloc bool[MaxConditionEntries];
+
+        // An out-of-range value can never be in the active set.
+        if (!MarkListed(other, listed))
+            return false;
+
+        for (var i = 0; i < MaxConditionEntries; i++)
+        {
+            // Branch on the raw byte rather than comparing bools: the game may store values other than 1.
+            if (this[i] ? !listed[i] : listed[i])
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Marks every in-range flag of <paramref name="flags"/> in <paramref name="listed"/>.</summary>
+    /// <returns><c>false</c> if any value is outside [0, <see cref="MaxConditionEntries"/>).</returns>
+    private static bool MarkListed(ConditionFlag[] flags, Span<bool> listed)
+    {
+        var allInRange = true;
+        foreach (var flag in flags)
+        {
+            var i = (int)flag;
+            if ((uint)i < MaxConditionEntries)
+                listed[i] = true;
+            else
+                allInRange = false;
+        }
+
+        return allInRange;
     }
 
     private void Dispose(bool disposing)

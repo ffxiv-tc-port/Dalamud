@@ -1,4 +1,5 @@
-﻿#include <array>
+﻿#include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -45,6 +46,21 @@ static constexpr GUID Guid_IFileDialog_Tspack{ 0xfc057318, 0xad35, 0x4599, {0xa7
 
 HANDLE g_hProcess = nullptr;
 bool g_bSymbolsAvailable = false;
+
+constexpr auto NormalDumpType = static_cast<MINIDUMP_TYPE>(MiniDumpWithDataSegs | MiniDumpWithModuleHeaders);
+
+// Includes the GC heap; every committed page (~10 GB for the game), so only written when wants_gc_heap_dump says so.
+// Deliberately full memory rather than MiniDumpWithPrivateReadWriteMemory: that one goes through the 32-bit
+// MemoryList and Windows 10's dbghelp silently drops memory past 4 GiB while still reporting success.
+constexpr auto ClrInternalErrorDumpType = static_cast<MINIDUMP_TYPE>(MiniDumpWithFullMemory
+    | MiniDumpWithFullMemoryInfo
+    | MiniDumpWithHandleData
+    | MiniDumpWithThreadInfo
+    | MiniDumpWithUnloadedModules
+    | MiniDumpIgnoreInaccessibleMemory);
+
+// Free space a large dump must still leave on the dump drive.
+constexpr uint64_t LargeDumpDiskHeadroomBytes = 8ull << 30;
 
 std::string ws_to_u8(const std::wstring& ws) {
     std::string s(WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), nullptr, 0, nullptr, nullptr), '\0');
@@ -470,6 +486,71 @@ void open_folder_and_select_items(HWND hwndOpener, const std::wstring& path) {
         ILFree(piid);
 }
 
+// Dalamud's own log rolls *forward* once it hits its size limit: dalamud.log -> dalamud_001.log ->
+// dalamud_002.log -> ..., and Serilog's retention eventually deletes dalamud.log itself. So during a
+// very long session the freshest data - the part that actually matters for a crash - is NOT in the
+// file literally named "dalamud.log". Resolve each source name to whichever of its rolled siblings
+// was written to most recently.
+//
+// The accepted shapes are exactly "<stem><ext>" and "<stem>_<digits><ext>". This must stay strict:
+// dalamud.boot.log, dalamud.injector.log, the archived dalamud.<timestamp>.old.log and the crash
+// handler's own dalamud_appcrash_<stamp>_<pid>.log all begin with "dalamud" and end with ".log".
+std::filesystem::path resolve_newest_log_file(const std::filesystem::path& logDir, const char* pcszLogFileName) {
+    const std::filesystem::path nominal = logDir / pcszLogFileName;
+    if (logDir.empty())
+        return nominal;
+
+    const std::wstring stem = nominal.stem().wstring();
+    const std::wstring ext = nominal.extension().wstring();
+    if (stem.empty() || ext.empty())
+        return nominal;
+
+    std::filesystem::path best;
+    std::filesystem::file_time_type bestTime{};
+
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(logDir, ec)) {
+        if (ec)
+            break;
+
+        if (!entry.is_regular_file(ec) || ec) {
+            ec.clear();
+            continue;
+        }
+
+        const std::wstring fn = entry.path().filename().wstring();
+        if (fn.size() < stem.size() + ext.size())
+            continue;
+        if (fn.compare(0, stem.size(), stem) != 0)
+            continue;
+        if (fn.compare(fn.size() - ext.size(), ext.size(), ext) != 0)
+            continue;
+
+        const std::wstring middle = fn.substr(stem.size(), fn.size() - stem.size() - ext.size());
+        if (!middle.empty()) {
+            // Serilog always pads the sequence to at least three digits, so require that too
+            // rather than accepting any "_<digits>" a plugin or the user might have left behind.
+            if (middle.size() < 4 || middle[0] != L'_')
+                continue;
+            if (!std::all_of(middle.begin() + 1, middle.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; }))
+                continue;
+        }
+
+        const auto writeTime = std::filesystem::last_write_time(entry, ec);
+        if (ec) {
+            ec.clear();
+            continue;
+        }
+
+        if (best.empty() || writeTime > bestTime) {
+            best = entry.path();
+            bestTime = writeTime;
+        }
+    }
+
+    return best.empty() ? nominal : best;
+}
+
 void export_tspack(HWND hWndParent, const std::filesystem::path& logDir, const std::string& crashLog, const std::string& troubleshootingPackData) {
     static const char* SourceLogFiles[] = {
         "output.log", // XIVLauncher for Windows
@@ -564,7 +645,9 @@ void export_tspack(HWND hWndParent, const std::filesystem::path& logDir, const s
                 return read;
         };
         for (const auto& pcszLogFileName : SourceLogFiles) {
-            const auto logFilePath = logDir / pcszLogFileName;
+            // Entry name in the pack stays the nominal one (e.g. "dalamud.log") so existing
+            // tooling keeps working; only the source we read from is resolved to the newest roll.
+            const auto logFilePath = resolve_newest_log_file(logDir, pcszLogFileName);
             if (!exists(logFilePath)) {
                 logExportLog += std::format("File does not exist: {}\n", ws_to_u8(logFilePath.wstring()));
                 continue;
@@ -688,6 +771,38 @@ void restart_game_using_injector(int nRadioButton, const std::vector<std::wstrin
     } else {
         MessageBoxW(nullptr, std::format(L"Failed to restart: 0x{:x}", GetLastError()).c_str(), L"Dalamud Boot", MB_ICONERROR | MB_OK);
     }
+}
+
+// Bytes a MiniDumpWithFullMemory dump of the target will hold: every committed, readable page. 0 on failure.
+uint64_t get_full_dump_estimate_bytes() {
+    uint64_t total = 0;
+    MEMORY_BASIC_INFORMATION mbi{};
+    for (uintptr_t address = 0; VirtualQueryEx(g_hProcess, reinterpret_cast<LPCVOID>(address), &mbi, sizeof mbi) == sizeof mbi;) {
+        if (mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+            total += mbi.RegionSize;
+        const auto next = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+        if (next <= address)
+            break;
+        address = next;
+    }
+    return total;
+}
+
+constexpr double BytesPerGiB = 1024.0 * 1024.0 * 1024.0;
+
+// Empty when a full-memory dump of `estimate` bytes fits in dumpDir; otherwise why not. Fails closed (normal dump).
+std::wstring describe_large_dump_space_problem(const std::filesystem::path& dumpDir, const uint64_t estimate) {
+    if (!estimate)
+        return std::format(L"VirtualQueryEx 错误 0x{:x}", GetLastError());
+
+    ULARGE_INTEGER freeBytes{};
+    if (!GetDiskFreeSpaceExW(dumpDir.c_str(), &freeBytes, nullptr, nullptr))
+        return std::format(L"GetDiskFreeSpaceExW 错误 0x{:x}", GetLastError());
+
+    if (freeBytes.QuadPart < estimate + LargeDumpDiskHeadroomBytes)
+        return std::format(L"磁盘空间不足: 预估 {:.1f} GB + 余量 {:.0f} GB > 可用 {:.1f} GB",
+                           estimate / BytesPerGiB, LargeDumpDiskHeadroomBytes / BytesPerGiB, freeBytes.QuadPart / BytesPerGiB);
+    return {};
 }
 
 int main() {
@@ -906,8 +1021,10 @@ int main() {
             }
         }
 
+        const bool wantGcHeapDump = !fullDump && wants_gc_heap_dump(exinfo.ExceptionRecord, stackTrace);
+
         if (pProgressDialog)
-            pProgressDialog->SetLine(3, fullDump ? L"正在创建完整转储" : L"正在创建小型转储", FALSE, NULL);
+            pProgressDialog->SetLine(3, fullDump ? L"正在创建完整转储" : wantGcHeapDump ? L"正在创建完整转储 (CLR 内部错误, 需时较长)" : L"正在创建小型转储", FALSE, NULL);
 
         SYSTEMTIME st;
         GetLocalTime(&st);
@@ -925,6 +1042,8 @@ int main() {
                                      st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
                                      dwProcessId);
         std::wstring dumpError;
+        std::wstring dumpTypeNote;
+        auto dumpType = fullDump ? MiniDumpWithFullMemory : NormalDumpType;
         if (dumpPath.empty())
         {
             std::cout << "跳过转储文件，未指定日志目录" << std::endl;
@@ -935,6 +1054,22 @@ int main() {
         }
         else
         {
+            dumpTypeNote = fullDump ? L"full (--veh-full)" : L"normal";
+            if (wantGcHeapDump)
+            {
+                const auto estimate = get_full_dump_estimate_bytes();
+                if (const auto problem = describe_large_dump_space_problem(logDir, estimate); problem.empty())
+                {
+                    dumpType = ClrInternalErrorDumpType;
+                    dumpTypeNote = std::format(L"full (CLR 内部错误: 事件 {}, 退出代码 0x{:X}, 预估 {:.1f} GB)",
+                                               ClrEventIdUnmanagedFailFast, ClrExitCodeExecutionEngine, estimate / BytesPerGiB);
+                }
+                else
+                {
+                    dumpTypeNote = std::format(L"normal (已跳过完整转储: {})", problem);
+                }
+            }
+
             MINIDUMP_EXCEPTION_INFORMATION mdmp_info{};
             mdmp_info.ThreadId = GetThreadId(exinfo.hThreadHandle);
             mdmp_info.ExceptionPointers = exinfo.pExceptionPointers;
@@ -954,16 +1089,24 @@ int main() {
 
                 std::unique_ptr<std::remove_pointer_t<HANDLE>, decltype(&CloseHandle)> hDumpFilePtr(
                     hDumpFile, &CloseHandle);
-                if (!MiniDumpWriteDump(g_hProcess, dwProcessId, hDumpFile,
-                                       fullDump
-                                           ? MiniDumpWithFullMemory
-                                           : static_cast<MINIDUMP_TYPE>(MiniDumpWithDataSegs |
-                                               MiniDumpWithModuleHeaders), &mdmp_info, nullptr, nullptr))
+                bool written = MiniDumpWriteDump(g_hProcess, dwProcessId, hDumpFile, dumpType, &mdmp_info, nullptr, nullptr) != FALSE;
+                if (!written && dumpType == ClrInternalErrorDumpType)
+                {
+                    // A failed large dump must not cost us the normal one.
+                    dumpTypeNote = std::format(L"normal (完整转储失败: 0x{:x})", GetLastError());
+                    std::wcerr << dumpTypeNote << std::endl;
+                    dumpType = NormalDumpType;
+                    written = SetFilePointerEx(hDumpFile, {}, nullptr, FILE_BEGIN)
+                        && SetEndOfFile(hDumpFile)
+                        && MiniDumpWriteDump(g_hProcess, dwProcessId, hDumpFile, dumpType, &mdmp_info, nullptr, nullptr);
+                }
+
+                if (!written)
                 {
                     std::wcerr << (dumpError = std::format(
-                        L"MiniDumpWriteDump(0x{:x}, {}, 0x{:x}({}), MiniDumpWithFullMemory, ..., nullptr, nullptr) 错误：0x{:x}",
+                        L"MiniDumpWriteDump(0x{:x}, {}, 0x{:x}({}), MINIDUMP_TYPE=0x{:x}, ..., nullptr, nullptr) 错误：0x{:x}",
                         reinterpret_cast<size_t>(g_hProcess), dwProcessId, reinterpret_cast<size_t>(hDumpFile),
-                        dumpPath.wstring(), GetLastError())) << std::endl;
+                        dumpPath.wstring(), static_cast<uint32_t>(dumpType), GetLastError())) << std::endl;
                     break;
                 }
 
@@ -995,6 +1138,8 @@ int main() {
             log << std::format(L"转储文件位置: {}", dumpPath.wstring()) << std::endl;
         else
             log << std::format(L"转储错误: {}", dumpError) << std::endl;
+        if (!dumpTypeNote.empty())
+            log << std::format(L"转储类型: {}, MINIDUMP_TYPE=0x{:x}", dumpTypeNote, static_cast<uint32_t>(dumpType)) << std::endl;
         log << std::format(L"系统时间: {0:%F} {0:%T} {0:%Ez}", std::chrono::system_clock::now()) << std::endl;
         log << L"\n" << stackTrace << std::endl;
 
@@ -1015,7 +1160,14 @@ int main() {
             window_log_str = log.str();
 
         print_exception_info_extended(exinfo.ExceptionPointers, exinfo.ContextRecord, log);
-        std::wofstream(logPath) << log.str();
+        if (const auto temp = ws_to_u8(log.str()); !temp.empty()) {
+            std::ofstream(logPath, std::ios::binary).write(temp.data(), temp.size());
+        } else {
+            // for some reason couldn't be converted to UTF-8; write in UTF-16
+            const auto temp2 = log.str();
+            const auto temp3 = std::span(reinterpret_cast<const char*>(temp2.data()), temp2.size() * sizeof(temp2[0]));
+            std::ofstream(logPath, std::ios::binary).write(temp3.data(), temp3.size());
+        }
 
         TASKDIALOGCONFIG config = { 0 };
 

@@ -11,8 +11,10 @@ using Dalamud.Hooking;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Logging.Internal;
+using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Application.Network;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -53,7 +55,7 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
     [ServiceManager.ServiceDependency]
     private readonly ObjectTable objectTable = Service<ObjectTable>.Get();
 
-    private Hook<LogoutCallbackInterface.Delegates.OnLogout> onLogoutHook;
+    private Hook<LogoutCallbackInterface.Delegates.OnLogout>? onLogoutHook;
     private bool initialized;
     private ushort territoryTypeId;
     private bool isPvP;
@@ -252,14 +254,7 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
 
         var condition = Service<Conditions.Condition>.GetNullable();
 
-        var blockingConditions = condition.AsReadOnlySet().Except([
-            ConditionFlag.NormalConditions,
-            ConditionFlag.Jumping,
-            ConditionFlag.Mounted,
-            ConditionFlag.UsingFashionAccessory,
-            ConditionFlag.OnFreeTrial]);
-
-        blockingFlag = blockingConditions.FirstOrDefault();
+        blockingFlag = FirstBlockingCondition(condition);
         return blockingFlag == 0;
     }
 
@@ -273,20 +268,64 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
     {
         this.handleZoneInitPacketHook.Dispose();
         this.uiModuleHandlePacketHook.Dispose();
-        this.onLogoutHook.Dispose();
+        // Created in Setup(), which is deferred to a framework tick: null when the unload lands before
+        // that tick (aborted boot) or Setup() threw. An NRE here would be swallowed by Service<T>.Unset
+        // and skip the rest of this method, leaving setCurrentInstanceHook enabled and the handlers subscribed.
+        this.onLogoutHook?.Dispose();
         this.setCurrentInstanceHook.Dispose();
 
         this.framework.Update -= this.OnFrameworkUpdate;
         this.networkHandlers.CfPop -= this.NetworkHandlersOnCfPop;
     }
 
+    /// <summary>
+    /// Same result as the lowest flag of <c>AsReadOnlySet()</c> not in the allowed list, or 0 if none,
+    /// without building the set. A set flag 0 (None) is returned as-is, so the client reads as idle even when a
+    /// higher flag would block.
+    /// </summary>
+    private static ConditionFlag FirstBlockingCondition(Conditions.Condition condition)
+    {
+        for (var i = 0; i < Conditions.Condition.MaxConditionEntries; i++)
+        {
+            // Positive test, same as AsReadOnlySet: the game may store raw values other than 1.
+            if (condition[i])
+            {
+                var flag = (ConditionFlag)i;
+                if (flag is not (ConditionFlag.NormalConditions or ConditionFlag.Jumping or ConditionFlag.Mounted
+                    or ConditionFlag.UsingFashionAccessory or ConditionFlag.OnFreeTrial))
+                    return flag;
+            }
+        }
+
+        return 0;
+    }
+
     private unsafe void Setup()
     {
-        this.onLogoutHook = Hook<LogoutCallbackInterface.Delegates.OnLogout>.FromAddress((nint)AgentLobby.Instance()->LogoutCallbackInterface.VirtualTable->OnLogout, this.OnLogoutDetour);
-        this.onLogoutHook.Enable();
+        // AgentLobby is an [Agent]-family type: Instance() legally returns null whenever the agent
+        // module is not up yet, and the vtable pointer behind it is a second, independent null hop.
+        // Dereferencing either is an AccessViolationException that try/catch cannot contain, so both are
+        // checked before the hook is built. Failing to install the hook only costs the Logout event; the
+        // rest of Setup, in particular the framework subscription below, must still run.
+        var agentLobby = AgentLobby.Instance();
+        var logoutVirtualTable = agentLobby is null ? null : agentLobby->LogoutCallbackInterface.VirtualTable;
+        if (logoutVirtualTable is not null)
+        {
+            this.onLogoutHook = Hook<LogoutCallbackInterface.Delegates.OnLogout>.FromAddress((nint)logoutVirtualTable->OnLogout, this.OnLogoutDetour);
+            this.onLogoutHook.Enable();
+        }
+        else
+        {
+            Log.Information("Could not resolve the logout callback vtable during Setup (AgentLobby was not available); the Logout event will not fire this session.");
+        }
 
         this.TerritoryType = (ushort)GameMain.Instance()->CurrentTerritoryTypeId;
-        this.MapId = AgentMap.Instance()->CurrentMapId;
+
+        // AgentMap is likewise [Agent]-family; leave MapId at its previous value if it is not up yet.
+        var agentMap = AgentMap.Instance();
+        if (agentMap is not null)
+            this.MapId = agentMap->CurrentMapId;
+
         this.Instance = CSUIState.Instance()->PublicInstance.InstanceId;
 
         this.initialized = true;
@@ -367,7 +406,13 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
 
     private unsafe void OnFrameworkUpdate(IFramework framework)
     {
-        this.MapId = AgentMap.Instance()->CurrentMapId;
+        // Runs every frame. AgentMap is [Agent]-family and legally returns null between zones and
+        // while logged out, so this cannot be an unchecked dereference. Keep the previous MapId when
+        // the agent is unavailable rather than reporting a bogus 0, and deliberately do not log here
+        // -- a per-frame log line would flood the file.
+        var agentMap = AgentMap.Instance();
+        if (agentMap is not null)
+            this.MapId = agentMap->CurrentMapId;
 
         var condition = Service<Conditions.Condition>.GetNullable();
         var gameGui = Service<GameGui>.GetNullable();
@@ -380,11 +425,20 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
         {
             Log.Debug("Is login");
             this.lastConditionNone = false;
-            this.Login?.InvokeSafely();
+
+            // 要使用者回報的診斷：逐處理器計時，找出登入那一幀是誰慢。例外照舊由 InvokeSafely 同一套接住。
+            var loginTimings = new LoginHandlerTimings();
+            this.Login.InvokeSafelyTimed((handler, elapsed) => loginTimings.Record(LoginHandlerName(handler), elapsed));
             gameGui.ResetUiHideState();
 
             this.lifecycle.ResetLogout();
+            loginTimings.WriteToLog();
         }
+
+        static string LoginHandlerName(Action handler) =>
+            handler.Target is ClientStatePluginScoped scoped
+                ? scoped.PluginName
+                : $"{handler.Method.DeclaringType?.Name}.{handler.Method.Name}";
     }
 
     private unsafe void OnLogoutDetour(LogoutCallbackInterface* thisPtr, LogoutCallbackInterface.LogoutParams* logoutParams)
@@ -448,8 +502,10 @@ internal class ClientStatePluginScoped : IInternalDisposableService, IClientStat
     /// <summary>
     /// Initializes a new instance of the <see cref="ClientStatePluginScoped"/> class.
     /// </summary>
-    internal ClientStatePluginScoped()
+    /// <param name="plugin">The plugin this instance belongs to.</param>
+    internal ClientStatePluginScoped(LocalPlugin plugin)
     {
+        this.PluginName = plugin.InternalName;
         this.clientStateService.ZoneInit += this.ZoneInitForward;
         this.clientStateService.TerritoryChanged += this.TerritoryChangedForward;
         this.clientStateService.MapIdChanged += this.MapIdChangedForward;
@@ -525,6 +581,11 @@ internal class ClientStatePluginScoped : IInternalDisposableService, IClientStat
 
     /// <inheritdoc/>
     public bool IsGPosing => this.clientStateService.IsGPosing;
+
+    /// <summary>
+    /// Gets the internal name of the plugin this instance belongs to.
+    /// </summary>
+    internal string PluginName { get; }
 
     /// <inheritdoc/>
     public bool IsClientIdle(out ConditionFlag blockingFlag) => this.clientStateService.IsClientIdle(out blockingFlag);

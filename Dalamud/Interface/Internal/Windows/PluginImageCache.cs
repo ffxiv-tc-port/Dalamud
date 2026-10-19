@@ -211,22 +211,7 @@ internal class PluginImageCache : IInternalDisposableService
             return true;
         }
 
-        var requestedFrame = Service<DalamudInterface>.GetNullable()?.FrameCount ?? 0;
-        Task.Run(async () =>
-        {
-            try
-            {
-                var texture = await this.DownloadPluginIconAsync(plugin, manifest, isThirdParty, requestedFrame);
-                if (texture != null)
-                    this.pluginIconMap[manifest.InternalName] = new LoadedIcon(texture, DateTime.Now);
-            }
-            catch (Exception)
-            {
-                // Log.Error(ex, $"An unexpected error occurred with the icon for {manifest.InternalName}");
-                Log.Verbose($"An unexpected error occurred with the icon for {manifest.InternalName}");
-            }
-        });
-
+        this.StartIconDownload(plugin, manifest, isThirdParty);
         return false;
     }
 
@@ -252,6 +237,34 @@ internal class PluginImageCache : IInternalDisposableService
         this.pluginImagesMap[manifest.InternalName] = target;
         imageTextures = target;
 
+        this.StartImagesDownload(target, plugin, manifest, isThirdParty);
+
+        return false;
+    }
+
+    // Kept out of TryGetIcon/TryGetImages: a lambda capturing their parameters made every call allocate its closure,
+    // including the cache hits the installer makes for every row, every frame.
+    private void StartIconDownload(LocalPlugin? plugin, IPluginManifest manifest, bool isThirdParty)
+    {
+        var requestedFrame = Service<DalamudInterface>.GetNullable()?.FrameCount ?? 0;
+        Task.Run(async () =>
+        {
+            try
+            {
+                var texture = await this.DownloadPluginIconAsync(plugin, manifest, isThirdParty, requestedFrame);
+                if (texture != null)
+                    this.pluginIconMap[manifest.InternalName] = new LoadedIcon(texture, DateTime.Now);
+            }
+            catch (Exception)
+            {
+                // Log.Error(ex, $"An unexpected error occurred with the icon for {manifest.InternalName}");
+                Log.Verbose($"An unexpected error occurred with the icon for {manifest.InternalName}");
+            }
+        });
+    }
+
+    private void StartImagesDownload(IDalamudTextureWrap?[] target, LocalPlugin? plugin, IPluginManifest manifest, bool isThirdParty)
+    {
         var requestedFrame = Service<DalamudInterface>.GetNullable()?.FrameCount ?? 0;
         Task.Run(async () =>
         {
@@ -265,8 +278,6 @@ internal class PluginImageCache : IInternalDisposableService
                 Log.Verbose($"An unexpected error occurred with the images for {manifest.InternalName}");
             }
         });
-
-        return false;
     }
 
     private async Task<IDalamudTextureWrap?> TryLoadImage(

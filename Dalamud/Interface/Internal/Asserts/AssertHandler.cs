@@ -1,11 +1,15 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.Loader;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
 using Dalamud.Plugin.Internal;
+using Dalamud.Plugin.Internal.Loader;
 using Dalamud.Utility;
 
 using Serilog;
@@ -20,8 +24,14 @@ internal class AssertHandler : IDisposable
     private const int HideThreshold = 20;
     private const int HidePrintEvery = 500;
 
+    private const int MaxCallerFrames = 6;
+
+    [ThreadStatic]
+    private static string? drawingPlugin;
+
     private readonly HashSet<string> ignoredAsserts = [];
     private readonly Dictionary<string, uint> assertCounts = new();
+    private readonly AssertSiteCounter siteCounter;
 
     // Store callback to avoid it from being GC'd
     private readonly AssertCallbackDelegate callback;
@@ -31,8 +41,18 @@ internal class AssertHandler : IDisposable
     /// <summary>
     /// Initializes a new instance of the <see cref="AssertHandler"/> class.
     /// </summary>
-    public unsafe AssertHandler()
+    public AssertHandler()
+        : this(AssertSiteCounter.Shared)
     {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AssertHandler"/> class.
+    /// </summary>
+    /// <param name="siteCounter">Where every failure is counted, shown or not.</param>
+    internal unsafe AssertHandler(AssertSiteCounter siteCounter)
+    {
+        this.siteCounter = siteCounter;
         this.callback = this.OnImGuiAssert;
     }
 
@@ -51,6 +71,16 @@ internal class AssertHandler : IDisposable
     /// and whether we want to log callstacks.
     /// </summary>
     public bool EnableVerboseLogging { get; set; }
+
+    /// <summary>
+    /// Gets or sets the internal name of the plugin whose UiBuilder draw is running on this thread, or null.
+    /// Only for describing asserts, which Dalamud's code around a plugin's draw can also raise.
+    /// </summary>
+    internal static string? DrawingPlugin
+    {
+        get => drawingPlugin;
+        set => drawingPlugin = value;
+    }
 
     /// <summary>
     /// Register the cimgui assert handler with the native library.
@@ -110,7 +140,86 @@ internal class AssertHandler : IDisposable
         return new StackTrace(frames);
     }
 
+    // Same test as Marshal.PtrToStringAnsi: null and Win32 atoms give no string. Nothing is read here.
+    private static unsafe bool GivesString(void* pointer) => ((nuint)pointer & ~(nuint)0xFFFF) != 0;
+
+    // Where the failing ImGui call came from: the thread, the nearest plugin on the stack (by load context, so a
+    // library inside a plugin counts as that plugin), the binding that was called and the frames below it.
+    private static string DescribeCaller()
+    {
+        var text = new StringBuilder(
+            ThreadSafety.IsMainThread
+                ? "framework thread"
+                : $"thread {Environment.CurrentManagedThreadId} \"{Thread.CurrentThread.Name}\"");
+        var callers = new StringBuilder();
+        string? binding = null;
+        string? plugin = null;
+        string? lastAssembly = null;
+        var listed = 0;
+        foreach (var frame in new StackTrace(1, false).GetFrames())
+        {
+            var method = frame.GetMethod();
+            var type = method?.DeclaringType;
+            if (method == null || type == null || type == typeof(AssertHandler))
+                continue;
+
+            if (listed == 0 && type.Namespace?.StartsWith("Dalamud.Bindings", StringComparison.Ordinal) == true)
+            {
+                binding = $"{type.Name}.{method.Name}";
+                continue;
+            }
+
+            plugin ??= AssemblyLoadContext.GetLoadContext(type.Assembly) is ManagedLoadContext context ? context.Name : null;
+            if (listed < MaxCallerFrames)
+            {
+                var assembly = type.Assembly.GetName().Name;
+                callers.Append(listed == 0 ? string.Empty : " <- ").Append(type.Name).Append('.').Append(method.Name);
+                if (assembly != lastAssembly)
+                    callers.Append(" (").Append(assembly).Append(')');
+                lastAssembly = assembly;
+                listed++;
+            }
+            else if (plugin != null)
+            {
+                break;
+            }
+        }
+
+        text.Append(plugin == null ? "; no plugin on the stack" : $"; plugin {plugin} on the stack");
+        text.Append(drawingPlugin == null ? "; in no plugin's UiBuilder draw" : $"; in the UiBuilder draw of {drawingPlugin}");
+        text.Append("; ImGui call: ").Append(binding ?? "none on the stack");
+        if (listed > 0)
+            text.Append("; callers: ").Append(callers);
+        return text.ToString();
+    }
+
     private unsafe void OnImGuiAssert(void* pExpr, void* pFile, int line)
+    {
+        this.CountSite((nint)pExpr, (nint)pFile, line);
+
+        // Neither shown nor logged: return before any string or closure is built. A null or atom pointer still takes
+        // the full path, which logs that it could not be parsed.
+        if (!this.ShowAsserts && !this.everShownAssertThisSession && GivesString(pExpr) && GivesString(pFile))
+            return;
+
+        this.HandleAssert(pExpr, pFile, line);
+    }
+
+    // Runs inside ImGui's native assert, where nothing may unwind; counting is best effort.
+    private void CountSite(nint expr, nint file, int line)
+    {
+        try
+        {
+            if (this.siteCounter.Count(expr, file, line))
+                this.siteCounter.Describe(expr, file, line, DescribeCaller());
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private unsafe void HandleAssert(void* pExpr, void* pFile, int line)
     {
         var expr = Marshal.PtrToStringAnsi(new IntPtr(pExpr));
         var file = Marshal.PtrToStringAnsi(new IntPtr(pFile));

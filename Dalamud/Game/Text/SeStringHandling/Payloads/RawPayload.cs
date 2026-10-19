@@ -29,7 +29,7 @@ public class RawPayload : Payload
         // and not just the data after the header
         // This sets data to hold the chunk data fter the header, excluding the END_BYTE
         this.chunkType = data[1];
-        this.data = data.Skip(3).Take(data.Length - 4).ToArray();
+        this.data = data.Length > 4 ? data.AsSpan(3, data.Length - 4).ToArray() : [];
     }
 
     /// <summary>
@@ -73,8 +73,11 @@ public class RawPayload : Payload
     {
         if (obj is RawPayload rp)
         {
-            if (rp.Data.Length != this.Data.Length) return false;
-            return !this.Data.Where((t, i) => rp.Data[i] != t).Any();
+            // Compares the same bytes Data would clone, encoding rp before this as Data's reads did.
+            var other = rp.Encode();
+            var otherLength = other.Length;
+            var self = this.Encode();
+            return otherLength == self.Length && other.AsSpan().SequenceEqual(self);
         }
 
         return false;
@@ -95,17 +98,15 @@ public class RawPayload : Payload
     /// <inheritdoc/>
     protected override byte[] EncodeImpl()
     {
-        var bytes = new List<byte>()
-        {
-            START_BYTE,
-            this.chunkType,
-        };
-        bytes.AddRange(MakeInteger((uint)this.data.Length)); // chunkLen
-        bytes.AddRange(this.data);
+        var chunkLen = MakeInteger((uint)this.data.Length);
+        var bytes = new byte[2 + chunkLen.Length + this.data.Length + 1];
+        bytes[0] = START_BYTE;
+        bytes[1] = this.chunkType;
+        chunkLen.CopyTo(bytes, 2);
+        this.data.CopyTo(bytes, 2 + chunkLen.Length);
+        bytes[^1] = END_BYTE;
 
-        bytes.Add(END_BYTE);
-
-        return bytes.ToArray();
+        return bytes;
     }
 
     /// <inheritdoc/>

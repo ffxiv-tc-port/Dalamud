@@ -186,10 +186,22 @@ internal sealed unsafe partial class ReShadeAddonInterface : IDisposable
 
     private BOOL GetModuleHandleExWDetour(uint dwFlags, ushort* lpModuleName, HMODULE* phModule)
     {
+        // This is an import-table hook: Hook<T>.Address is the address of the IAT slot, not of a
+        // function. OriginalDisposeSafe would hand back a delegate that executes the slot's bytes as
+        // code, so it must never be used here. Snapshot the hook and fall back to the real import when
+        // it is gone; an exception escaping this native callback would be fatal. ReShade's import table
+        // is the one patched, so GetModuleHandleExW from here goes to kernel32 and cannot re-enter.
+        var resolverHook = this.addonModuleResolverHook;
+        var resolverHookUsable = resolverHook is { IsDisposed: false };
+
         if ((dwFlags & GET.GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS) == 0)
-            return this.addonModuleResolverHook.Original(dwFlags, lpModuleName, phModule);
+            return resolverHookUsable
+                       ? resolverHook.Original(dwFlags, lpModuleName, phModule)
+                       : GetModuleHandleExW(dwFlags, lpModuleName, phModule);
         if ((dwFlags & GET.GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT) == 0)
-            return this.addonModuleResolverHook.Original(dwFlags, lpModuleName, phModule);
+            return resolverHookUsable
+                       ? resolverHook.Original(dwFlags, lpModuleName, phModule)
+                       : GetModuleHandleExW(dwFlags, lpModuleName, phModule);
         if (lpModuleName == this.initSwapChainDelegate ||
             lpModuleName == this.destroySwapChainDelegate ||
             lpModuleName == this.presentDelegate ||
@@ -199,7 +211,9 @@ internal sealed unsafe partial class ReShadeAddonInterface : IDisposable
             return BOOL.TRUE;
         }
 
-        return this.addonModuleResolverHook.Original(dwFlags, lpModuleName, phModule);
+        return resolverHookUsable
+                   ? resolverHook.Original(dwFlags, lpModuleName, phModule)
+                   : GetModuleHandleExW(dwFlags, lpModuleName, phModule);
     }
 
     /// <summary>ReShade effect runtime object.</summary>

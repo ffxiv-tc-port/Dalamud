@@ -61,6 +61,9 @@ internal sealed partial class TextureManager
         private const int PathLookupLruCount = 8192;
 
         private readonly TextureManager textureManager;
+
+        // Converting the instance method group on every call would allocate a delegate each time.
+        private readonly Func<GameIconLookup, string> iconPathFactory;
         private readonly ConcurrentLru<GameIconLookup, string> lookupCache = new(PathLookupLruCount);
         private readonly ConcurrentDictionary<string, SharedImmediateTexture> gameDict = new();
         private readonly ConcurrentDictionary<string, SharedImmediateTexture> fileDict = new();
@@ -76,6 +79,7 @@ internal sealed partial class TextureManager
         public SharedTextureManager(TextureManager textureManager)
         {
             this.textureManager = textureManager;
+            this.iconPathFactory = this.GetIconPathByValue;
 
             this.sharedTextureReleaseThread = new(this.ReleaseSharedTextures)
             {
@@ -128,7 +132,7 @@ internal sealed partial class TextureManager
         /// <inheritdoc cref="ITextureProvider.GetFromGameIcon"/>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public SharedImmediateTexture.PureImpl GetFromGameIcon(in GameIconLookup lookup) =>
-            this.NonDisposed.GetFromGame(this.lookupCache.GetOrAdd(lookup, this.GetIconPathByValue));
+            this.NonDisposed.GetFromGame(this.lookupCache.GetOrAdd(lookup, this.iconPathFactory));
         
         /// <inheritdoc cref="ITextureProvider.TryGetFromGameIcon"/>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

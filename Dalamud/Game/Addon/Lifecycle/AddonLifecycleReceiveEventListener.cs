@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Hooking;
 using Dalamud.Logging.Internal;
+using Dalamud.Utility;
 
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
@@ -78,8 +79,7 @@ internal unsafe class AddonLifecycleReceiveEventListener : IDisposable
     private void OnReceiveEvent(AtkUnitBase* addon, AtkEventType eventType, int eventParam, AtkEvent* atkEvent, AtkEventData* atkEventData)
     {
         // Check that we didn't get here through a call to another addons handler.
-        var addonName = addon->NameString;
-        if (!this.AddonNames.Contains(addonName))
+        if (!this.IsListedAddon(addon))
         {
             this.Hook!.Original(addon, eventType, eventParam, atkEvent, atkEventData);
             return;
@@ -108,5 +108,17 @@ internal unsafe class AddonLifecycleReceiveEventListener : IDisposable
         }
 
         this.AddonLifecycle.InvokeListenersSafely(AddonEvent.PostReceiveEvent, arg);
+    }
+
+    // Same result as AddonNames.Contains(NativeStringUtil.GetAddonName(addon)), without a new string on every event.
+    private bool IsListedAddon(AtkUnitBase* addon)
+    {
+        foreach (var name in this.AddonNames)
+        {
+            if (NativeStringUtil.AddonNameEquals(addon, name))
+                return true;
+        }
+
+        return false;
     }
 }

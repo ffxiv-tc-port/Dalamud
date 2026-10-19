@@ -1,8 +1,10 @@
 using System.IO;
 using System.Reflection;
+using System.Text;
 
 using Dalamud.Storage;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using Newtonsoft.Json;
 
@@ -14,6 +16,8 @@ namespace Dalamud.Configuration;
 [Api13ToDo("Make this a service. We need to be able to dispose it reliably to write configs asynchronously. Maybe also let people write files with vfs.")]
 public sealed class PluginConfigurations
 {
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
     private readonly DirectoryInfo configDirectory;
 
     /// <summary>
@@ -39,7 +43,7 @@ public sealed class PluginConfigurations
     public void Save(IPluginConfiguration config, string pluginName, Guid workingPluginId)
     {
         Service<ReliableFileStorage>.Get()
-            .WriteAllTextAsync(this.GetConfigFile(pluginName).FullName, SerializeConfig(config), workingPluginId).GetAwaiter().GetResult();
+            .WriteAllBytesAsync(this.GetConfigFile(pluginName).FullName, SerializeConfigToUtf8(config), workingPluginId).GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -123,18 +127,28 @@ public sealed class PluginConfigurations
         if (this.GetConfigFile(pluginName) is not { Exists: true } path)
             return default;
 
-        return JsonConvert.DeserializeObject<T>(
-            File.ReadAllText(path.FullName),
-            new JsonSerializerSettings
-            {
-                Converters =
-                [
-                    DalamudAssemblyTypeNameForcingJsonConverter.Instance,
-                ],
-            });
+        var settings = new JsonSerializerSettings
+        {
+            Converters =
+            [
+                DalamudAssemblyTypeNameForcingJsonConverter.Instance,
+            ],
+        };
 
         // intentionally no type handling - it will break when updating a plugin at runtime
         // and turns out to be unnecessary when we fully qualify the object type
+
+        // DeserializeObject turns CheckAdditionalContent on unless something set it; global defaults could have set it,
+        // and whether they did is not public, so keep the string path for them.
+        if (JsonConvert.DefaultSettings != null)
+            return JsonConvert.DeserializeObject<T>(File.ReadAllText(path.FullName), settings);
+
+        // Same reader File.ReadAllText uses (UTF-8, BOM detection, same sharing), without the whole-file string.
+        using var textReader = new StreamReader(path.FullName, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        using var jsonReader = new JsonTextReader(textReader);
+        var serializer = JsonSerializer.CreateDefault(settings);
+        serializer.CheckAdditionalContent = true;
+        return (T)serializer.Deserialize(jsonReader, typeof(T))!;
     }
 
     /// <summary>
@@ -156,6 +170,31 @@ public sealed class PluginConfigurations
             TypeNameAssemblyFormatHandling = TypeNameAssemblyFormatHandling.Simple,
             TypeNameHandling = TypeNameHandling.Objects,
         });
+    }
+
+    /// <summary>
+    /// Serializes a plugin configuration object straight to UTF-8 (no BOM).
+    /// </summary>
+    /// <param name="config">The configuration object.</param>
+    /// <returns>The same bytes as <c>Encoding.UTF8.GetBytes(SerializeConfig(config))</c>.</returns>
+    internal static byte[] SerializeConfigToUtf8(object? config)
+    {
+        var serializer = JsonSerializer.CreateDefault(new JsonSerializerSettings
+        {
+            TypeNameAssemblyFormatHandling = TypeNameAssemblyFormatHandling.Simple,
+            TypeNameHandling = TypeNameHandling.Objects,
+        });
+        serializer.Formatting = Formatting.Indented;
+
+        // Mirrors JsonConvert.SerializeObject; the writer's NewLine (Environment.NewLine) is all it takes from the TextWriter.
+        using var buffer = new PooledChunkWriteStream();
+        using (var jsonWriter = new JsonTextWriter(new StreamWriter(buffer, Utf8NoBom, 1024, leaveOpen: true)))
+        {
+            jsonWriter.Formatting = serializer.Formatting;
+            serializer.Serialize(jsonWriter, config, null);
+        }
+
+        return buffer.ToArray();
     }
 
     /// <summary>

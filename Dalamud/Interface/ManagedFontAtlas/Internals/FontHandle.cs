@@ -100,6 +100,18 @@ internal abstract class FontHandle : IFontHandle
     /// </remarks>
     public ImFontPtr LockUntilPostFrame()
     {
+        // Main thread (every UiBuilder.IconFont-style access): the reference itself goes to the end-of-frame release,
+        // with no LockedImFont per call. Other threads keep the path below, where a failed caller check throws and
+        // leaves the reference to LockedImFont's finalizer.
+        if (ThreadSafety.IsMainThread)
+        {
+            if (!this.TryAddRefFont(out var font, out var owner, out _))
+                return default;
+
+            Service<InterfaceManager>.Get().EnqueueDeferredRelease(owner);
+            return font;
+        }
+
         if (this.TryLock(out _) is not { } locked)
             return default;
 
@@ -140,60 +152,8 @@ internal abstract class FontHandle : IFontHandle
     /// An instance of <see cref="ILockedImFont"/> that <b>must</b> be disposed after use on success;
     /// <c>null</c> with <paramref name="errorMessage"/> populated on failure.
     /// </returns>
-    public ILockedImFont? TryLock(out string? errorMessage)
-    {
-        IFontHandleSubstance? prevSubstance = default;
-        while (true)
-        {
-            if (this.manager is not { } nonDisposedManager)
-            {
-                errorMessage = "The font handle has been disposed.";
-                return null;
-            }
-
-            var substance = nonDisposedManager.Substance;
-
-            // Does the associated IFontAtlas have a built substance?
-            if (substance is null)
-            {
-                errorMessage = "The font atlas has not been built yet.";
-                return null;
-            }
-
-            // Did we loop (because it did not have the requested font),
-            // and are the fetched substance same between loops?
-            if (substance == prevSubstance)
-            {
-                errorMessage = "The font atlas did not built the requested handle yet.";
-                return null;
-            }
-
-            prevSubstance = substance;
-
-            // Try to lock the substance.
-            try
-            {
-                substance.DataRoot.AddRef();
-            }
-            catch (ObjectDisposedException)
-            {
-                // If it got invalidated, it's probably because a new substance is incoming. Try again.
-                continue;
-            }
-
-            var fontPtr = substance.GetFontPtr(this);
-            if (fontPtr.IsNull)
-            {
-                // The font for the requested handle is unavailable. Release the reference and try again.
-                substance.DataRoot.Release();
-                continue;
-            }
-
-            // Transfer the ownership of reference.
-            errorMessage = null;
-            return new LockedImFont(fontPtr, substance.DataRoot);
-        }
-    }
+    public ILockedImFont? TryLock(out string? errorMessage) =>
+        this.TryAddRefFont(out var font, out var owner, out errorMessage) ? new LockedImFont(font, owner) : null;
 
     /// <inheritdoc/>
     public ILockedImFont Lock() =>
@@ -204,8 +164,10 @@ internal abstract class FontHandle : IFontHandle
     {
         ThreadSafety.AssertMainThread();
 
+        var interfaceManager = Service<InterfaceManager>.Get();
+
         // Warn if the client is not properly managing the pushed font stack.
-        var cumulativePresentCalls = Service<InterfaceManager>.Get().CumulativePresentCalls;
+        var cumulativePresentCalls = interfaceManager.CumulativePresentCalls;
         if (this.lastCumulativePresentCalls != cumulativePresentCalls)
         {
             this.lastCumulativePresentCalls = cumulativePresentCalls;
@@ -218,11 +180,12 @@ internal abstract class FontHandle : IFontHandle
             }
         }
 
+        // Keep the atlas alive until the frame is rendered: the reference is released then, with no LockedImFont.
         var font = default(ImFontPtr);
-        if (this.TryLock(out _) is { } locked)
+        if (this.TryAddRefFont(out var locked, out var owner, out _))
         {
-            font = locked.ImFont;
-            Service<InterfaceManager>.Get().EnqueueDeferredDispose(locked);
+            font = locked;
+            interfaceManager.EnqueueDeferredRelease(owner);
         }
 
         var rented = SimplePushedFont.Rent(this.pushedFonts, font);
@@ -308,6 +271,72 @@ internal abstract class FontHandle : IFontHandle
             this.Disposed?.InvokeSafely();
             this.Disposed = null;
             this.ImFontChanged = null;
+        }
+    }
+
+    /// <summary>
+    /// Adds a reference to the built data holding this handle's font; the locking step of <see cref="TryLock"/>.
+    /// </summary>
+    /// <param name="font">The font on success; default on failure.</param>
+    /// <param name="owner">The referenced data on success; the caller must release that reference.</param>
+    /// <param name="errorMessage">The error message, if any.</param>
+    /// <returns>Whether a reference was added; on failure, <paramref name="errorMessage"/> says why.</returns>
+    private bool TryAddRefFont(out ImFontPtr font, out IRefCountable? owner, out string? errorMessage)
+    {
+        font = default;
+        owner = null;
+        IFontHandleSubstance? prevSubstance = default;
+        while (true)
+        {
+            if (this.manager is not { } nonDisposedManager)
+            {
+                errorMessage = "The font handle has been disposed.";
+                return false;
+            }
+
+            var substance = nonDisposedManager.Substance;
+
+            // Does the associated IFontAtlas have a built substance?
+            if (substance is null)
+            {
+                errorMessage = "The font atlas has not been built yet.";
+                return false;
+            }
+
+            // Did we loop (because it did not have the requested font),
+            // and are the fetched substance same between loops?
+            if (substance == prevSubstance)
+            {
+                errorMessage = "The font atlas did not built the requested handle yet.";
+                return false;
+            }
+
+            prevSubstance = substance;
+
+            // Try to lock the substance.
+            try
+            {
+                substance.DataRoot.AddRef();
+            }
+            catch (ObjectDisposedException)
+            {
+                // If it got invalidated, it's probably because a new substance is incoming. Try again.
+                continue;
+            }
+
+            var fontPtr = substance.GetFontPtr(this);
+            if (fontPtr.IsNull)
+            {
+                // The font for the requested handle is unavailable. Release the reference and try again.
+                substance.DataRoot.Release();
+                continue;
+            }
+
+            // Transfer the ownership of reference.
+            errorMessage = null;
+            font = fontPtr;
+            owner = substance.DataRoot;
+            return true;
         }
     }
 }

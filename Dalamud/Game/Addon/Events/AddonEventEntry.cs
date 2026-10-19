@@ -21,12 +21,20 @@ internal unsafe class AddonEventEntry
     /// <summary>
     /// Gets the pointer to the addons AtkUnitBase.
     /// </summary>
+    /// <remarks>
+    /// A snapshot taken when the event was registered, never re-resolved. The addon's memory is
+    /// released by <c>AtkUnitManager::FinalizeAddon</c> from the per-frame unit manager update, so on
+    /// a later frame this may point at freed and reused memory, and dereferencing it then raises an
+    /// AccessViolationException that no managed <c>try</c>/<c>catch</c> can contain. Treat it as an
+    /// identity key, and re-resolve the addon by name via <c>RaptureAtkUnitManager.GetAddonByName</c>
+    /// before dereferencing.
+    /// </remarks>
     public required nint Addon { get; init; }
 
     /// <summary>
     /// Gets the name of the addon this args referrers to.
     /// </summary>
-    public string AddonName => this.Addon == nint.Zero ? InvalidAddonName : this.addonName ??= ((AtkUnitBase*)this.Addon)->NameString;
+    public string AddonName => this.Addon == nint.Zero ? InvalidAddonName : this.addonName ??= NativeStringUtil.GetAddonName((AtkUnitBase*)this.Addon);
 
     /// <summary>
     /// Gets the pointer to the event source.

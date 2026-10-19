@@ -369,8 +369,9 @@ HRESULT WINAPI InitializeImpl(LPVOID lpParam, HANDLE hMainThreadContinue) {
         // In most cases, DalamudCrashHandler will kill us now, so call original here to make sure we still write to the event log.
         const BOOL original_ret = hook->call_original(hEventLog, wType, wCategory, dwEventID, lpUserSid, wNumStrings, dwDataSize, lpStrings, lpRawData);
 
+        // The event ID lets DalamudCrashHandler tell a CLR internal error (1023) apart and dump the GC heap for it.
         const std::wstring error_details(lpStrings[0]);
-        veh::raise_external_event(error_details);
+        veh::raise_external_event(error_details, dwEventID);
 
         return original_ret;
     });

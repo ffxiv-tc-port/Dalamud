@@ -4,6 +4,7 @@ using Xunit;
 
 namespace Dalamud.Test
 {
+    [Collection(CheapLocCollection.Name)]
     public class LocalizationTests
     {
         private readonly Localization localization;

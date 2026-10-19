@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 
 using Dalamud.Game;
 using Dalamud.Game.Gui.ContextMenu;
@@ -75,6 +76,29 @@ internal static class EventHandlerExtensions
             {
                 Log.Error(ex, "Exception during raise of {handler}", action.Method);
             }
+        }
+    }
+
+    /// <summary>
+    /// Same as <see cref="InvokeSafely(Action)"/>, and reports how long each handler ran.
+    /// </summary>
+    /// <param name="act">The Action in question.</param>
+    /// <param name="onInvoked">Called after every handler, a throwing one included; it must not throw.</param>
+    public static void InvokeSafelyTimed(this Action? act, Action<Action, TimeSpan> onInvoked)
+    {
+        foreach (var action in Delegate.EnumerateInvocationList(act))
+        {
+            var start = Stopwatch.GetTimestamp();
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Exception during raise of {handler}", action.Method);
+            }
+
+            onInvoked(action, Stopwatch.GetElapsedTime(start));
         }
     }
 

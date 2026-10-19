@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -15,6 +16,7 @@ using Dalamud.Memory;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.System.String;
@@ -40,7 +42,7 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
 {
     private static readonly ModuleLog Log = new("ChatGui");
 
-    private readonly Queue<XivChatEntry> chatQueue = new();
+    private readonly ConcurrentQueue<XivChatEntry> chatQueue = new();
     private readonly Dictionary<(string PluginName, uint CommandId), Action<uint, SeString>> dalamudLinkHandlers = new();
 
     private readonly Hook<PrintMessageDelegate> printMessageHook;
@@ -204,7 +206,7 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
     /// </summary>
     public void UpdateQueue()
     {
-        if (this.chatQueue.Count == 0)
+        if (this.chatQueue.IsEmpty)
             return;
 
         var sb = LSeStringBuilder.SharedPool.Get();
@@ -516,6 +518,7 @@ internal class ChatGuiPluginScoped : IInternalDisposableService, IChatGui
     private readonly ChatGui chatGuiService = Service<ChatGui>.Get();
 
     private readonly LocalPlugin plugin;
+    private readonly PluginAllocationMeter allocationMeter;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatGuiPluginScoped"/> class.
@@ -524,6 +527,7 @@ internal class ChatGuiPluginScoped : IInternalDisposableService, IChatGui
     internal ChatGuiPluginScoped(LocalPlugin plugin)
     {
         this.plugin = plugin;
+        this.allocationMeter = new PluginAllocationMeter(plugin.InternalName, PluginAllocationMeter.Chat);
         this.chatGuiService.ChatMessage += this.OnMessageForward;
         this.chatGuiService.CheckMessageHandled += this.OnCheckMessageForward;
         this.chatGuiService.ChatMessageHandled += this.OnMessageHandledForward;
@@ -563,6 +567,7 @@ internal class ChatGuiPluginScoped : IInternalDisposableService, IChatGui
         this.CheckMessageHandled = null;
         this.ChatMessageHandled = null;
         this.ChatMessageUnhandled = null;
+        this.allocationMeter.Retire();
     }
 
     /// <inheritdoc/>
@@ -605,15 +610,72 @@ internal class ChatGuiPluginScoped : IInternalDisposableService, IChatGui
     public void PrintError(ReadOnlySpan<byte> message, string? messageTag = null, ushort? tagColor = null)
         => this.chatGuiService.PrintError(message, messageTag, tagColor);
 
+    // Measured with try/finally: exceptions still reach ChatGui's own handling unchanged.
     private void OnMessageForward(XivChatType type, int timestamp, ref SeString sender, ref SeString message, ref bool isHandled)
-        => this.ChatMessage?.Invoke(type, timestamp, ref sender, ref message, ref isHandled);
+    {
+        var handlers = this.ChatMessage;
+        if (handlers == null)
+            return;
+
+        var allocatedBefore = PluginAllocationMeter.Begin();
+        try
+        {
+            handlers.Invoke(type, timestamp, ref sender, ref message, ref isHandled);
+        }
+        finally
+        {
+            this.allocationMeter.End(allocatedBefore);
+        }
+    }
 
     private void OnCheckMessageForward(XivChatType type, int timestamp, ref SeString sender, ref SeString message, ref bool isHandled)
-        => this.CheckMessageHandled?.Invoke(type, timestamp, ref sender, ref message, ref isHandled);
+    {
+        var handlers = this.CheckMessageHandled;
+        if (handlers == null)
+            return;
+
+        var allocatedBefore = PluginAllocationMeter.Begin();
+        try
+        {
+            handlers.Invoke(type, timestamp, ref sender, ref message, ref isHandled);
+        }
+        finally
+        {
+            this.allocationMeter.End(allocatedBefore);
+        }
+    }
 
     private void OnMessageHandledForward(XivChatType type, int timestamp, SeString sender, SeString message)
-        => this.ChatMessageHandled?.Invoke(type, timestamp, sender, message);
+    {
+        var handlers = this.ChatMessageHandled;
+        if (handlers == null)
+            return;
+
+        var allocatedBefore = PluginAllocationMeter.Begin();
+        try
+        {
+            handlers.Invoke(type, timestamp, sender, message);
+        }
+        finally
+        {
+            this.allocationMeter.End(allocatedBefore);
+        }
+    }
 
     private void OnMessageUnhandledForward(XivChatType type, int timestamp, SeString sender, SeString message)
-        => this.ChatMessageUnhandled?.Invoke(type, timestamp, sender, message);
+    {
+        var handlers = this.ChatMessageUnhandled;
+        if (handlers == null)
+            return;
+
+        var allocatedBefore = PluginAllocationMeter.Begin();
+        try
+        {
+            handlers.Invoke(type, timestamp, sender, message);
+        }
+        finally
+        {
+            this.allocationMeter.End(allocatedBefore);
+        }
+    }
 }

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -127,13 +128,25 @@ public class WindowSystem
         if (config?.ReduceMotions ?? false)
             flags |= Window.WindowDrawFlags.IsReducedMotion;
 
-        // Shallow clone the list of windows so that we can edit it without modifying it while the loop is iterating
-        foreach (var window in this.windows.ToArray())
+        // Shallow clone the list of windows so that we can edit it without modifying it while the loop is iterating.
+        // The clone lives in a pooled array (cleared on return) instead of a new array every frame.
+        var count = this.windows.Count;
+        var snapshot = ArrayPool<Window>.Shared.Rent(count);
+        try
         {
+            this.windows.CopyTo(snapshot);
+            for (var i = 0; i < count; i++)
+            {
+                var window = snapshot[i];
 #if DEBUG
-            // Log.Verbose($"[WS{(hasNamespace ? "/" + this.Namespace : string.Empty)}] Drawing {window.WindowName}");
+                // Log.Verbose($"[WS{(hasNamespace ? "/" + this.Namespace : string.Empty)}] Drawing {window.WindowName}");
 #endif
-            window.DrawInternal(flags, persistence);
+                window.DrawInternal(flags, persistence);
+            }
+        }
+        finally
+        {
+            ArrayPool<Window>.Shared.Return(snapshot, clearArray: true);
         }
 
         var focusedWindow = this.windows.FirstOrDefault(window => window.IsFocused);

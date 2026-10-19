@@ -52,6 +52,27 @@ internal sealed class SettingsTabExperimental : SettingsTab
 
         new GapSettingsEntry(5),
 
+        new GitHubTokenSettingsEntry(),
+
+        new GapSettingsEntry(5),
+
+        new SettingsEntry<int>(
+            LazyLoc.Localize("DalamudSettingsPluginDownloadConnections", "插件下載連線數"),
+            LazyLoc.Localize("DalamudSettingsPluginDownloadConnectionsHint", "下載一個插件時同時開幾條連線，各自下載檔案的不同段落。GitHub 單條連線很慢時能快好幾倍，某一段中途斷線也只重下那一段。設成 1 就是只用一條連線的舊下載方式。"),
+            c => c.PluginDownloadConnections,
+            (v, c) => c.PluginDownloadConnections = v)
+        {
+            CustomDraw = static entry =>
+            {
+                ImGui.TextWrapped(entry.Name.ToString());
+                var value = Math.Clamp(entry.Value, 1, PluginManager.MaxPluginDownloadConnections);
+                if (ImGui.SliderInt("###pluginDownloadConnections", ref value, 1, PluginManager.MaxPluginDownloadConnections))
+                    entry.Value = Math.Clamp(value, 1, PluginManager.MaxPluginDownloadConnections);
+            },
+        },
+
+        new GapSettingsEntry(5),
+
         new DevPluginsSettingsEntry(),
 
         new GapSettingsEntry(5, true),
@@ -97,6 +118,30 @@ internal sealed class SettingsTabExperimental : SettingsTab
                 ReShadeHandlingMode.HookReShadeDxgiSwapChainOnPresent => "Hook ReShade::DXGISwapChain::OnPresent",
                 ReShadeHandlingMode.None                              => "不處理",
                 _                                                     => "<無效值>",
+            },
+        },
+
+        new GapSettingsEntry(5, true),
+
+        new SettingsEntry<bool>(
+            LazyLoc.Localize("DalamudSettingsAllocationSampling", "卡頓診斷：整個遊戲行程的記憶體配置取樣"),
+            LazyLoc.Localize("DalamudSettingsAllocationSamplingHint", "每小時在 dalamud.log 寫一次依執行緒與型別分列的配置取樣，關掉時再補寫當下這一段。平常不必開。"),
+            c => c.PerfDiagAllocationSampling,
+            (v, c) => c.PerfDiagAllocationSampling = v)
+        {
+            CustomDraw = static entry =>
+            {
+                var name = entry.Name.ToString();
+                var value = entry.Value;
+                if (ImGui.Checkbox($"{name}###perfDiagAllocationSampling", ref value))
+                    entry.Value = value;
+
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                {
+                    ImGui.SetTooltip(Loc.Localize(
+                                         "DalamudSettingsAllocationSamplingCost",
+                                         "開著時有額外成本：執行環境每配置約 100 KB 記憶體就送一次事件給它，遊戲主執行緒每幀約多花 20～30 微秒（離線量測），另多配置約 0.3 MB/秒。\n只在要查「插件回呼以外的記憶體配置是誰」時打開，查完就關。"));
+                }
             },
         },
 

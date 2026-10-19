@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+
+using Dalamud.Utility.Internal;
 
 namespace Dalamud.Utility;
 
@@ -53,6 +56,43 @@ internal class ThreadBoundTaskScheduler : TaskScheduler
             _ = this.TryExecuteTask(task);
         }
     }
+
+    /// <summary>
+    /// Same as <see cref="Run"/>, and reports which task ran longest.
+    /// </summary>
+    /// <param name="slowest">The task that ran longest, or null when none ran.</param>
+    /// <param name="slowestAction">Its delegate, taken before it ran; null when unknown.</param>
+    /// <param name="slowestTicks">How long it ran, in <see cref="Stopwatch"/> ticks.</param>
+    /// <returns>How long the whole run took, in <see cref="Stopwatch"/> ticks.</returns>
+    public long RunTimed(out Task? slowest, out Delegate? slowestAction, out long slowestTicks)
+    {
+        var start = Stopwatch.GetTimestamp();
+        slowest = null;
+        slowestAction = null;
+        slowestTicks = 0;
+        foreach (var task in this.scheduledTasks.Keys)
+        {
+            if (!this.scheduledTasks.TryUpdate(task, Running, Scheduled))
+                continue;
+
+            var action = FrameworkUpdateAttribution.ActionOf(task);
+            var taskStart = Stopwatch.GetTimestamp();
+            _ = this.TryExecuteTask(task);
+            var ticks = Stopwatch.GetTimestamp() - taskStart;
+            if (slowest == null || ticks > slowestTicks)
+            {
+                slowest = task;
+                slowestAction = action;
+                slowestTicks = ticks;
+            }
+        }
+
+        return Stopwatch.GetTimestamp() - start;
+    }
+
+    /// <summary>Copies the tasks queued and not yet finished.</summary>
+    /// <returns>The tasks.</returns>
+    public ICollection<Task> GetQueuedTasks() => this.scheduledTasks.Keys;
 
     /// <inheritdoc/>
     protected override IEnumerable<Task> GetScheduledTasks()

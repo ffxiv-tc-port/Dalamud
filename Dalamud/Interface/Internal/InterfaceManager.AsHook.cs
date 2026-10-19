@@ -79,26 +79,32 @@ internal unsafe partial class InterfaceManager
         uint flags,
         DXGI_PRESENT_PARAMETERS* presentParams)
     {
-        Debug.Assert(
-            this.reShadeDxgiSwapChainPresentHook is not null,
-            "this.reShadeDxgiSwapChainPresentHook is not null");
+        // Field lives in another partial and may be cleared by a concurrent dispose; an exception
+        // escaping a native callback is fatal, so snapshot and skip the original for this frame instead.
+        var presentHook = this.reShadeDxgiSwapChainPresentHook;
+        Debug.Assert(presentHook is not null, "this.reShadeDxgiSwapChainPresentHook is not null");
 
         if (this.RenderDalamudCheckAndInitialize(swapChain->AsIDxgiSwapChain(), flags) is { } activeScene)
             this.RenderDalamudDraw(activeScene);
 
-        this.reShadeDxgiSwapChainPresentHook!.Original(swapChain, flags, presentParams);
+        if (presentHook is not null && !presentHook.IsDisposed)
+            presentHook.Original(swapChain, flags, presentParams);
 
         // Upstream call to system IDXGISwapChain::Present will be called by ReShade.
     }
 
     private int DxgiSwapChainPresentDetour(IDXGISwapChain* swapChain, uint syncInterval, uint flags)
     {
-        Debug.Assert(this.dxgiSwapChainPresentHook is not null, "this.dxgiSwapChainPresentHook is not null");
+        var presentHook = this.dxgiSwapChainPresentHook;
+        Debug.Assert(presentHook is not null, "this.dxgiSwapChainPresentHook is not null");
 
         if (this.RenderDalamudCheckAndInitialize(swapChain, flags) is { } activeScene)
             this.RenderDalamudDraw(activeScene);
 
-        return this.dxgiSwapChainPresentHook!.Original(swapChain, syncInterval, flags);
+        if (presentHook is null || presentHook.IsDisposed)
+            return 0; // S_OK; only reachable when racing hook setup/teardown.
+
+        return presentHook.Original(swapChain, syncInterval, flags);
     }
 
     private int AsHookDxgiSwapChainResizeBuffersDetour(
@@ -109,8 +115,12 @@ internal unsafe partial class InterfaceManager
         DXGI_FORMAT newFormat,
         uint swapChainFlags)
     {
+        var resizeBuffersHook = this.dxgiSwapChainResizeBuffersHook;
+        if (resizeBuffersHook is null || resizeBuffersHook.IsDisposed)
+            return 0; // S_OK; only reachable when racing hook setup/teardown.
+
         if (!SwapChainHelper.IsGameDeviceSwapChain(swapChain))
-            return this.dxgiSwapChainResizeBuffersHook!.Original(swapChain, bufferCount, width, height, newFormat, swapChainFlags);
+            return resizeBuffersHook.Original(swapChain, bufferCount, width, height, newFormat, swapChainFlags);
 
 #if DEBUG
         Log.Verbose(
@@ -121,7 +131,7 @@ internal unsafe partial class InterfaceManager
 
         this.backend?.OnPreResize();
 
-        var ret = this.dxgiSwapChainResizeBuffersHook!.Original(swapChain, bufferCount, width, height, newFormat, swapChainFlags);
+        var ret = resizeBuffersHook.Original(swapChain, bufferCount, width, height, newFormat, swapChainFlags);
         if (ret == DXGI.DXGI_ERROR_INVALID_CALL)
             Log.Error("invalid call to resizeBuffers");
 

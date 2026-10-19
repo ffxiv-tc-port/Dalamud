@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading.Tasks;
@@ -20,6 +21,7 @@ using Dalamud.Interface.Internal.Windows.PluginInstaller;
 using Dalamud.Interface.Internal.Windows.SelfTest;
 using Dalamud.Interface.Internal.Windows.Settings;
 using Dalamud.IoC.Internal;
+using Dalamud.Networking.Http;
 using Dalamud.Plugin.Internal;
 using Dalamud.Plugin.Internal.AutoUpdate;
 using Dalamud.Plugin.Internal.Types;
@@ -154,7 +156,7 @@ internal sealed class DalamudPluginInterface : IDalamudPluginInterface, IDisposa
 
     /// <inheritdoc/>
     public IEnumerable<IExposedPlugin> InstalledPlugins =>
-        Service<PluginManager>.Get().InstalledPlugins.Select(p => new ExposedPlugin(p));
+        Service<PluginManager>.Get().ExposedInstalledPlugins;
 
     /// <summary>
     /// Gets the <see cref="UiBuilder"/> internal implementation.
@@ -360,6 +362,14 @@ internal sealed class DalamudPluginInterface : IDalamudPluginInterface, IDisposa
 
     /// <inheritdoc/>
     public string GetPluginLocDirectory() => this.configs.GetDirectory(Path.Combine(this.plugin.InternalName, "loc"));
+
+    #endregion
+
+    #region Networking
+
+    /// <inheritdoc/>
+    public HttpClient CreateGitHubHttpClient()
+        => Service<HappyHttpClient>.Get().CreateGitHubAuthenticatedClient();
 
     #endregion
 

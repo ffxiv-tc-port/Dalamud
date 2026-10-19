@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using Dalamud.Logging.Internal;
+using Dalamud.Utility.Internal;
 
 namespace Dalamud.IoC.Internal;
 
@@ -88,8 +89,9 @@ internal class ServiceContainer : IServiceType
     /// <param name="allowedVisibility">Defines which services are allowed to be directly resolved into this type.</param>
     /// <param name="scopedObjects">Scoped objects to be included in the constructor.</param>
     /// <param name="scope">The scope to be used to create scoped services.</param>
+    /// <param name="constructorCost">Receives what the constructor cost on its thread, if given.</param>
     /// <returns>The created object.</returns>
-    public async Task<object> CreateAsync(Type objectType, ObjectInstanceVisibility allowedVisibility, object[] scopedObjects, IServiceScope? scope = null)
+    public async Task<object> CreateAsync(Type objectType, ObjectInstanceVisibility allowedVisibility, object[] scopedObjects, IServiceScope? scope = null, PluginLoadReport.ConstructorCost? constructorCost = null)
     {
         var errorStep = "constructor lookup";
 
@@ -117,7 +119,7 @@ internal class ServiceContainer : IServiceType
             // Plugin ctor can block to wait for Tasks, as we currently do not support asynchronous plugin init.
             errorStep = "ctor invocation";
             await Task.Factory.StartNew(
-                () => ctor.Invoke(instance, resolvedParams),
+                () => Invoke(ctor, instance, resolvedParams, constructorCost),
                 CancellationToken.None,
                 TaskCreationOptions.LongRunning,
                 TaskScheduler.Default).ConfigureAwait(false);
@@ -198,6 +200,27 @@ internal class ServiceContainer : IServiceType
         return scopedObjects.FirstOrDefault(o => o.GetType().IsAssignableTo(serviceType))
                ?? throw new InvalidOperationException(
                    $"Requested type {serviceType.FullName ?? serviceType.Name} could not be found from {nameof(scopedObjects)}");
+    }
+
+    // Measures only when asked; the readings cannot throw, and the cost is recorded even if the constructor throws.
+    private static void Invoke(ConstructorInfo ctor, object instance, object[] parameters, PluginLoadReport.ConstructorCost? cost)
+    {
+        if (cost is null)
+        {
+            ctor.Invoke(instance, parameters);
+            return;
+        }
+
+        var bytesBefore = GC.GetAllocatedBytesForCurrentThread();
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            ctor.Invoke(instance, parameters);
+        }
+        finally
+        {
+            cost.Record(GC.GetAllocatedBytesForCurrentThread() - bytesBefore, Stopwatch.GetTimestamp() - started);
+        }
     }
 
     private async Task<object?> GetSingletonService(Type serviceType, bool tryGetInterface = true)

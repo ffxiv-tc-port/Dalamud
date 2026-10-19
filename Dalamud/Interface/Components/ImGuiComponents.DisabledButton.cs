@@ -1,7 +1,6 @@
 using System.Numerics;
 
 using Dalamud.Bindings.ImGui;
-using Dalamud.Interface.Utility.Raii;
 
 namespace Dalamud.Interface.Components;
 
@@ -22,15 +21,23 @@ public static partial class ImGuiComponents
     /// <returns>Indicator if button is clicked.</returns>
     public static bool DisabledButton(FontAwesomeIcon icon, int? id = null, Vector4? defaultColor = null, Vector4? activeColor = null, Vector4? hoveredColor = null, float alphaMult = .5f)
     {
-        using (ImRaii.PushFont(UiBuilder.IconFont))
+        PushFontTracked(UiBuilder.IconFont);
+        try
         {
-            var text = icon.ToIconString();
-            if (id.HasValue)
+            Span<char> label = stackalloc char[IntLabelLength];
+            if (!id.HasValue)
             {
-                text = $"{text}##{id}";
+                label[0] = icon.ToIconChar();
+                return DisabledButtonCore(label[..1], defaultColor, activeColor, hoveredColor, alphaMult);
             }
 
-            return DisabledButton(text, defaultColor, activeColor, hoveredColor, alphaMult);
+            return TryWriteIconLabel(icon, id.Value, label, out var length)
+                       ? DisabledButtonCore(label[..length], defaultColor, activeColor, hoveredColor, alphaMult)
+                       : DisabledButtonCore($"{icon.ToIconString()}##{id}", defaultColor, activeColor, hoveredColor, alphaMult);
+        }
+        finally
+        {
+            PopFontTracked();
         }
     }
 
@@ -44,29 +51,30 @@ public static partial class ImGuiComponents
     /// <param name="alphaMult">A multiplier for the current alpha levels.</param>
     /// <returns>Indicator if button is clicked.</returns>
     public static bool DisabledButton(string labelWithId, Vector4? defaultColor = null, Vector4? activeColor = null, Vector4? hoveredColor = null, float alphaMult = .5f)
+        => DisabledButtonCore(labelWithId, defaultColor, activeColor, hoveredColor, alphaMult);
+
+    private static bool DisabledButtonCore(ReadOnlySpan<char> labelWithId, Vector4? defaultColor, Vector4? activeColor, Vector4? hoveredColor, float alphaMult)
     {
-        using var col = new ImRaii.Color();
-
-        if (defaultColor.HasValue)
+        var colorCount = 0;
+        try
         {
-            col.Push(ImGuiCol.Button, defaultColor.Value);
+            PushButtonColorsTracked(defaultColor, activeColor, hoveredColor, ref colorCount);
+
+            var style = ImGui.GetStyle();
+
+            PushStyleTracked(ImGuiStyleVar.Alpha, style.Alpha * alphaMult);
+            try
+            {
+                return ImGui.Button(labelWithId);
+            }
+            finally
+            {
+                PopStyleTracked();
+            }
         }
-
-        if (activeColor.HasValue)
+        finally
         {
-            col.Push(ImGuiCol.ButtonActive, activeColor.Value);
-        }
-
-        if (hoveredColor.HasValue)
-        {
-            col.Push(ImGuiCol.ButtonHovered, hoveredColor.Value);
-        }
-
-        var style = ImGui.GetStyle();
-
-        using (ImRaii.PushStyle(ImGuiStyleVar.Alpha, style.Alpha * alphaMult))
-        {
-            return ImGui.Button(labelWithId);
+            PopColorsTracked(colorCount);
         }
     }
 }

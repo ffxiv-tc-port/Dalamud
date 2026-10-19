@@ -72,4 +72,10 @@ internal class LoaderConfig
     /// Gets or sets a value indicating whether to load assemblies into memory in order to not lock files.
     /// </summary>
     public bool LoadInMemory { get; set; }
+
+    /// <summary>
+    /// Gets or sets a callback that runs on the unloading thread right before a collectible context is unloaded, so that
+    /// shared caches can drop references to its types. Exceptions are logged and do not stop the unload.
+    /// </summary>
+    public Action<AssemblyLoadContext>? BeforeUnload { get; set; }
 }

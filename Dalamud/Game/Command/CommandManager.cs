@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 
 using Dalamud.Console;
 using Dalamud.Hooking;
@@ -34,6 +35,8 @@ internal sealed unsafe class CommandManager : IInternalDisposableService, IComma
     [ServiceManager.ServiceDependency]
     private readonly ConsoleManager console = Service<ConsoleManager>.Get();
 
+    private int changeCount;
+
     [ServiceManager.ServiceConstructor]
     private CommandManager(Dalamud dalamud)
     {
@@ -57,6 +60,12 @@ internal sealed unsafe class CommandManager : IInternalDisposableService, IComma
 
     /// <inheritdoc/>
     public ReadOnlyDictionary<string, IReadOnlyCommandInfo> Commands => new(this.commandMap);
+
+    /// <summary>
+    /// Gets a number that changes after every add or remove, once both command tables are updated.
+    /// A reader that sees the same number before and after reading the tables read an unchanged set.
+    /// </summary>
+    internal int ChangeCount => Volatile.Read(ref this.changeCount);
 
     /// <inheritdoc/>
     public bool ProcessCommand(string content)
@@ -141,10 +150,12 @@ internal sealed unsafe class CommandManager : IInternalDisposableService, IComma
         if (!this.commandAssemblyNameMap.TryAdd((command, info), loaderAssemblyName))
         {
             this.commandMap.Remove(command, out _);
+            Interlocked.Increment(ref this.changeCount);
             Log.Error("Command {CommandName} is already registered in the assembly name map", command);
             return false;
         }
 
+        Interlocked.Increment(ref this.changeCount);
         return true;
     }
 
@@ -160,6 +171,7 @@ internal sealed unsafe class CommandManager : IInternalDisposableService, IComma
             return false;
         }
 
+        Interlocked.Increment(ref this.changeCount);
         this.CommandAdded?.InvokeSafely(this, new CommandEventArgs
         {
             Command = command,
@@ -178,6 +190,7 @@ internal sealed unsafe class CommandManager : IInternalDisposableService, IComma
         }
 
         var removed = this.commandMap.Remove(command, out var info);
+        Interlocked.Increment(ref this.changeCount);
         if (removed)
         {
             this.CommandRemoved?.InvokeSafely(this, new CommandEventArgs

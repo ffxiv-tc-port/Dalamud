@@ -109,6 +109,14 @@ HRESULT InitializeClrAndGetEntryPoint(
     SetEnvironmentVariable(L"DOTNET_TC_QuickJitForLoops", L"1");
     SetEnvironmentVariable(L"DOTNET_ReadyToRun", L"1");
 
+    // Cap the gen0 budget at 16 MB (the value is read as hexadecimal); the runtime only takes it from the environment.
+    // Any gen0 size the user already set wins, and 0 there means the runtime default.
+    if (GetEnvironmentVariableW(L"DOTNET_GCgen0MaxBudget", nullptr, 0) == 0 &&
+        GetEnvironmentVariableW(L"COMPlus_GCgen0MaxBudget", nullptr, 0) == 0 &&
+        GetEnvironmentVariableW(L"DOTNET_GCgen0size", nullptr, 0) == 0 &&
+        GetEnvironmentVariableW(L"COMPlus_GCgen0size", nullptr, 0) == 0)
+        SetEnvironmentVariableW(L"DOTNET_GCgen0MaxBudget", L"1000000");
+
     // WINE does not support QUIC and we don't need it
     SetEnvironmentVariable(L"DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP3SUPPORT", L"0");
 

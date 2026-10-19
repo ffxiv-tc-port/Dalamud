@@ -369,6 +369,17 @@ internal partial class InterfaceManager : IInternalDisposableService
         this.deferredDisposeDisposables.Add(locked);
     }
 
+    /// <summary>
+    /// Enqueue a reference to be released at the end of the frame.
+    /// </summary>
+    /// <param name="reference">
+    /// The reference; disposing an <see cref="IRefCountable"/> is <see cref="IRefCountable.Release"/>.
+    /// </param>
+    public void EnqueueDeferredRelease(IRefCountable reference)
+    {
+        this.deferredDisposeDisposables.Add(reference);
+    }
+
     /// <summary>Queues an action to be run before <see cref="ImGui.Render"/> call.</summary>
     /// <param name="action">The action.</param>
     /// <returns>A <see cref="Task"/> that resolves once <paramref name="action"/> is run.</returns>

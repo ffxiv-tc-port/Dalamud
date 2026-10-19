@@ -3,7 +3,7 @@ namespace Dalamud.Interface.GameFonts;
 /// <summary>
 /// Describes a font based on game resource file.
 /// </summary>
-public struct GameFontStyle
+public struct GameFontStyle : IEquatable<GameFontStyle>
 {
     /// <summary>
     /// Font family of the font.
@@ -278,6 +278,26 @@ public struct GameFontStyle
     /// <returns>Width adjustment in pixel unit.</returns>
     public readonly int CalculateBaseWidthAdjustment(FdtReader reader, FdtReader.FontTableEntry glyph) =>
         this.CalculateBaseWidthAdjustment(reader.FontHeader, glyph);
+
+    /// <summary>Determines whether the specified GameFontStyle is equal to the current GameFontStyle.</summary>
+    /// <remarks>
+    /// Same result as the default struct equality, which compared each field with its own <c>Equals</c> (so NaN equals
+    /// NaN and 0 equals -0), but without boxing every field through reflection on each dictionary lookup.
+    /// </remarks>
+    /// <param name="other">The GameFontStyle to compare with the current GameFontStyle.</param>
+    /// <returns><c>true</c> if all four fields are equal; otherwise, <c>false</c>.</returns>
+    public readonly bool Equals(GameFontStyle other) =>
+        this.FamilyAndSize == other.FamilyAndSize
+        && this.SizePx.Equals(other.SizePx)
+        && this.Weight.Equals(other.Weight)
+        && this.SkewStrength.Equals(other.SkewStrength);
+
+    /// <inheritdoc cref="object.Equals(object?)"/>
+    public override readonly bool Equals(object obj) => obj is GameFontStyle other && this.Equals(other);
+
+    /// <inheritdoc cref="object.GetHashCode()"/>
+    public override readonly int GetHashCode() =>
+        HashCode.Combine((int)this.FamilyAndSize, this.SizePx, this.Weight, this.SkewStrength);
 
     /// <inheritdoc/>
     public override readonly string ToString()

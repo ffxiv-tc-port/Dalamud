@@ -401,15 +401,15 @@ internal sealed class ChangelogWindow : Window, IDisposable
 
                     case State.AskAutoUpdate:
                         ImGui.TextColoredWrapped(ImGuiColors.DalamudWhite, Loc.Localize("DalamudSettingsAutoUpdateHint",
-                                                "Dalamud 可自动更新插件，确保最新功能和修复" +
-                                                "在此选择自动更新的时间和方式"));
+                                                "Dalamud 可以自动更新你的插件，确保你始终" +
+                                                "能获得最新功能和错误修复。可以在此设置自动更新的时机和方式。"));
                         ImGuiHelpers.ScaledDummy(2);
 
                         ImGui.TextColoredWrapped(ImGuiColors.DalamudGrey, Loc.Localize("DalamudSettingsAutoUpdateDisclaimer1",
-                                                                "可通过插件列表中的更新按钮手动更新" +
-                                                                "也可右键特定插件选择'始终自动更新'"));
+                                                                "你始终可以通过插件列表中的更新按钮手动更新插件。" +
+                                                                "也可右键单击插件并选择\"始终自动更新\"来为特定插件启用自动更新。"));
                         ImGui.TextColoredWrapped(ImGuiColors.DalamudGrey, Loc.Localize("DalamudSettingsAutoUpdateDisclaimer2",
-                                                                "Dalamud 仅在空闲时通知更新"));
+                                                                "Dalamud 只会在你处于空闲状态时通知更新。"));
 
                         ImGuiHelpers.ScaledDummy(15);
 

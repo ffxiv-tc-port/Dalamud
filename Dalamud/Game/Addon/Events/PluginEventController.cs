@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 using Dalamud.Game.Addon.Events.EventDataTypes;
 using Dalamud.Game.Gui;
@@ -48,7 +49,7 @@ internal unsafe class PluginEventController : IDisposable
 
         var eventHandle = new AddonEventHandle
         {
-            AddonName = addon->NameString,
+            AddonName = NativeStringUtil.GetAddonName(addon),
             ParamKey = eventId,
             EventType = atkEventType,
             EventGuid = eventGuid,
@@ -77,7 +78,7 @@ internal unsafe class PluginEventController : IDisposable
     /// <param name="handle">Unique ID of the event to remove.</param>
     public void RemoveEvent(IAddonEventHandle handle)
     {
-        if (this.Events.FirstOrDefault(registeredEvent => registeredEvent.Handle == handle) is not { } targetEvent) return;
+        if (this.FindByHandle(handle) is not { } targetEvent) return;
 
         Log.Verbose($"Removing Event. {targetEvent.LogString}");
         this.TryRemoveEventFromNative(targetEvent);
@@ -90,7 +91,14 @@ internal unsafe class PluginEventController : IDisposable
     /// <param name="addonName">Addon name to remove events from.</param>
     public void RemoveForAddon(string addonName)
     {
-        if (this.Events.Where(entry => entry.AddonName == addonName).ToList() is { Count: not 0 } events)
+        List<AddonEventEntry>? events = null;
+        foreach (var entry in CollectionsMarshal.AsSpan(this.Events))
+        {
+            if (entry.AddonName == addonName)
+                (events ??= []).Add(entry);
+        }
+
+        if (events is { Count: not 0 })
         {
             Log.Verbose($"Addon: {addonName} is Finalizing, removing {events.Count} events.");
 
@@ -116,10 +124,34 @@ internal unsafe class PluginEventController : IDisposable
     {
         for (var i = 0u; i < uint.MaxValue; ++i)
         {
-            if (this.Events.All(registeredEvent => registeredEvent.ParamKey != i)) return i;
+            if (this.FindByParamKey(i) is null) return i;
         }
 
         throw new OverflowException($"uint.MaxValue number of ParamKeys used for this event controller.");
+    }
+
+    // Same results as the LINQ FirstOrDefault these replace, which on .NET 9 also walk a span of the list,
+    // without a capturing lambda per call.
+    private AddonEventEntry? FindByHandle(IAddonEventHandle handle)
+    {
+        foreach (var entry in CollectionsMarshal.AsSpan(this.Events))
+        {
+            if (entry.Handle == handle)
+                return entry;
+        }
+
+        return null;
+    }
+
+    private AddonEventEntry? FindByParamKey(uint paramKey)
+    {
+        foreach (var entry in CollectionsMarshal.AsSpan(this.Events))
+        {
+            if (entry.ParamKey == paramKey)
+                return entry;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -192,7 +224,7 @@ internal unsafe class PluginEventController : IDisposable
         try
         {
             if (eventPtr is null) return;
-            if (this.Events.FirstOrDefault(handler => handler.ParamKey == eventParam) is not { } eventInfo) return;
+            if (this.FindByParamKey(eventParam) is not { } eventInfo) return;
 
             eventInfo.Delegate.Invoke((AddonEventType)eventType, new AddonEventData
             {

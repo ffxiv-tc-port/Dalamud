@@ -2,12 +2,16 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 
 using Dalamud.Plugin.Ipc.Exceptions;
 using Dalamud.Plugin.Ipc.Internal.Converters;
+using Dalamud.Utility.Internal;
 
 using Newtonsoft.Json;
 using Serilog;
+
+using Direction = Dalamud.Utility.Internal.IpcJsonConversionReport.Direction;
 
 namespace Dalamud.Plugin.Ipc.Internal;
 
@@ -16,6 +20,14 @@ namespace Dalamud.Plugin.Ipc.Internal;
 /// </summary>
 internal class CallGateChannel
 {
+    /// <summary>
+    /// Settings for <see cref="ConvertObject"/>; shared because nothing mutates them after construction.
+    /// </summary>
+    private static readonly JsonSerializerSettings ConvertSettings = new()
+    {
+        Converters = { new GameObjectConverter() },
+    };
+
     /// <summary>
     /// The actual storage.
     /// </summary>
@@ -26,6 +38,15 @@ internal class CallGateChannel
     /// <see cref="subscriptions"/>.
     /// </summary>
     private ImmutableList<Delegate>? subscriptionsCopy;
+
+    /// <summary>
+    /// What <see cref="SendMessage"/> iterates; cleared together with <see cref="subscriptionsCopy"/>.
+    /// </summary>
+    private InvokeTarget[]? subscriptionTargets;
+
+    private InvokeTarget? actionTarget;
+
+    private InvokeTarget? funcTarget;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CallGateChannel"/> class.
@@ -59,12 +80,20 @@ internal class CallGateChannel
     /// <summary>
     /// Gets or sets an action for when InvokeAction is called.
     /// </summary>
-    public Delegate? Action { get; set; }
+    public Delegate? Action
+    {
+        get => this.actionTarget?.Handler;
+        set => this.actionTarget = value is null ? null : new InvokeTarget(value);
+    }
 
     /// <summary>
     /// Gets or sets a func for when InvokeFunc is called.
     /// </summary>
-    public Delegate? Func { get; set; }
+    public Delegate? Func
+    {
+        get => this.funcTarget?.Handler;
+        set => this.funcTarget = value is null ? null : new InvokeTarget(value);
+    }
 
     /// <summary>
     /// Gets a value indicating whether this <see cref="CallGateChannel"/> is not being used.
@@ -77,6 +106,7 @@ internal class CallGateChannel
         lock (this.subscriptions)
         {
             this.subscriptionsCopy = null;
+            this.subscriptionTargets = null;
             this.subscriptions.Add(action);
         }
     }
@@ -87,8 +117,44 @@ internal class CallGateChannel
         lock (this.subscriptions)
         {
             this.subscriptionsCopy = null;
+            this.subscriptionTargets = null;
             this.subscriptions.Remove(action);
         }
+    }
+
+    /// <summary>Removes every subscription, action and function part that <paramref name="remove"/> matches.</summary>
+    /// <remarks>
+    /// The rest of a multicast delegate stays registered. The action and function are swapped only if no one replaced
+    /// them meanwhile, the way their setters write them: without a lock. A call already under way may still run a removed part.
+    /// </remarks>
+    /// <param name="remove">Whether one part of a registered delegate is to be removed.</param>
+    /// <param name="removed">Receives each removed part with what it was registered as.</param>
+    internal void RemoveDelegates(Func<Delegate, bool> remove, List<(string Kind, Delegate Part)> removed)
+    {
+        lock (this.subscriptions)
+        {
+            List<Delegate>? matched = null;
+            foreach (var subscription in this.subscriptions)
+            {
+                if (Array.Exists(subscription.GetInvocationList(), p => remove(p)))
+                    (matched ??= []).Add(subscription);
+            }
+
+            if (matched != null)
+            {
+                this.subscriptionsCopy = null;
+                this.subscriptionTargets = null;
+                foreach (var subscription in matched)
+                {
+                    this.subscriptions.Remove(subscription);
+                    if (Split(subscription, remove, "subscription", removed) is { } rest)
+                        this.subscriptions.Add(rest);
+                }
+            }
+        }
+
+        RemoveTarget(ref this.actionTarget, remove, "action", removed);
+        RemoveTarget(ref this.funcTarget, remove, "function", removed);
     }
 
     /// <summary>
@@ -97,12 +163,13 @@ internal class CallGateChannel
     /// <param name="args">Message arguments.</param>
     internal void SendMessage(object?[]? args)
     {
-        foreach (var subscription in this.Subscriptions)
+        var targets = this.GetSubscriptionTargets();
+        for (var i = 0; i < targets.Length; i++)
         {
-            var methodInfo = subscription.GetMethodInfo();
-            this.CheckAndConvertArgs(args, methodInfo);
+            var target = targets[i];
+            this.CheckAndConvertArgs(args, target.ParameterTypes, Direction.MessageArgument);
 
-            subscription.DynamicInvoke(args);
+            target.Handler.DynamicInvoke(args);
         }
     }
 
@@ -113,13 +180,11 @@ internal class CallGateChannel
     /// <exception cref="IpcNotReadyError">This is thrown when the IPC publisher has not registered a func for calling yet.</exception>
     internal void InvokeAction(object?[]? args)
     {
-        if (this.Action == null)
-            throw new IpcNotReadyError(this.Name);
+        var target = this.actionTarget ?? throw new IpcNotReadyError(this.Name);
 
-        var methodInfo = this.Action.GetMethodInfo();
-        this.CheckAndConvertArgs(args, methodInfo);
+        this.CheckAndConvertArgs(args, target.ParameterTypes, Direction.ActionArgument);
 
-        this.Action.DynamicInvoke(args);
+        target.Handler.DynamicInvoke(args);
     }
 
     /// <summary>
@@ -131,25 +196,83 @@ internal class CallGateChannel
     /// <exception cref="IpcNotReadyError">This is thrown when the IPC publisher has not registered a func for calling yet.</exception>
     internal TRet InvokeFunc<TRet>(object?[]? args)
     {
-        if (this.Func == null)
-            throw new IpcNotReadyError(this.Name);
+        var target = this.funcTarget ?? throw new IpcNotReadyError(this.Name);
 
-        var methodInfo = this.Func.GetMethodInfo();
-        this.CheckAndConvertArgs(args, methodInfo);
+        // No arguments and the very same return type: nothing to check or convert, so call the delegate itself
+        // and a value type result is not boxed. A throwing provider is wrapped the way DynamicInvoke wraps it.
+        // The return type test is not redundant: a Func<string> also passes "is Func<object>".
+        if ((args is null || args.Length == 0) && target.ParameterTypes.Length == 0
+            && typeof(TRet) == target.ReturnType && target.Handler is Func<TRet> direct)
+        {
+            try
+            {
+                return direct();
+            }
+            catch (Exception ex)
+            {
+                throw new TargetInvocationException(ex);
+            }
+        }
 
-        var result = this.Func.DynamicInvoke(args);
+        this.CheckAndConvertArgs(args, target.ParameterTypes, Direction.FunctionArgument);
 
-        if (typeof(TRet) != methodInfo.ReturnType)
-            result = this.ConvertObject(result, typeof(TRet));
+        var result = target.Handler.DynamicInvoke(args);
+
+        if (typeof(TRet) != target.ReturnType)
+            result = this.ConvertObject(result, typeof(TRet), Direction.FunctionResult);
 
         return (TRet)result;
     }
 
-    private void CheckAndConvertArgs(object?[]? args, MethodInfo methodInfo)
+    private static bool IsInBaseTypeChain(Type? type, Type target)
     {
-        var paramTypes = methodInfo.GetParameters()
-                                   .Select(pi => pi.ParameterType).ToArray();
+        for (; type != null && type != typeof(object); type = type.BaseType)
+        {
+            if (type == target)
+                return true;
+        }
 
+        return false;
+    }
+
+    private static Delegate? Split(Delegate registered, Func<Delegate, bool> remove, string kind, List<(string Kind, Delegate Part)> removed)
+    {
+        Delegate? rest = null;
+        foreach (var part in registered.GetInvocationList())
+        {
+            if (remove(part))
+                removed.Add((kind, part));
+            else
+                rest = Delegate.Combine(rest, part);
+        }
+
+        return rest;
+    }
+
+    private static void RemoveTarget(
+        ref InvokeTarget? field, Func<Delegate, bool> remove, string kind, List<(string Kind, Delegate Part)> removed)
+    {
+        var current = Volatile.Read(ref field);
+        if (current == null || !Array.Exists(current.Handler.GetInvocationList(), p => remove(p)))
+            return;
+
+        var parts = new List<(string Kind, Delegate Part)>();
+        var rest = Split(current.Handler, remove, kind, parts);
+        if (Interlocked.CompareExchange(ref field, rest is null ? null : new InvokeTarget(rest), current) == current)
+            removed.AddRange(parts);
+    }
+
+    private InvokeTarget[] GetSubscriptionTargets()
+    {
+        var targets = this.subscriptionTargets;
+        if (targets is not null)
+            return targets;
+        lock (this.subscriptions)
+            return this.subscriptionTargets ??= this.subscriptions.Select(static x => new InvokeTarget(x)).ToArray();
+    }
+
+    private void CheckAndConvertArgs(object?[]? args, Type[] paramTypes, Direction direction)
+    {
         if (args is null)
         {
             if (paramTypes.Length == 0)
@@ -182,34 +305,25 @@ internal class CallGateChannel
             if (argType != paramType)
             {
                 // check the inheritance tree
-                var baseTypes = this.GenerateTypes(argType.BaseType);
-                if (baseTypes.Any(t => t == paramType))
+                if (IsInBaseTypeChain(argType.BaseType, paramType))
                 {
                     // The source type inherits from the destination type
                     continue;
                 }
 
-                args[i] = this.ConvertObject(arg, paramType);
+                args[i] = this.ConvertObject(arg, paramType, direction);
             }
         }
     }
 
-    private IEnumerable<Type> GenerateTypes(Type? type)
-    {
-        while (type != null && type != typeof(object))
-        {
-            yield return type;
-            type = type.BaseType;
-        }
-    }
-
-    private object? ConvertObject(object? obj, Type type)
+    private object? ConvertObject(object? obj, Type type, Direction direction)
     {
         if (obj is null)
             return null;
 
-        var settings = new JsonSerializerSettings();
-        settings.Converters.Add(new GameObjectConverter());
+        IpcJsonConversionReport.Counter.Shared.Count(this.Name, direction, obj.GetType(), type);
+
+        var settings = ConvertSettings;
 
         var json = JsonConvert.SerializeObject(obj, settings);
 
@@ -252,5 +366,26 @@ internal class CallGateChannel
         {
             throw new IpcTypeMismatchError(this.Name, obj.GetType(), type, ex);
         }
+    }
+
+    /// <summary>
+    /// A registered delegate with its signature read once instead of on every call.
+    /// It holds the plugin's types, so it must be dropped the moment its delegate is removed.
+    /// </summary>
+    private sealed class InvokeTarget
+    {
+        public InvokeTarget(Delegate handler)
+        {
+            var methodInfo = handler.GetMethodInfo();
+            this.Handler = handler;
+            this.ParameterTypes = Array.ConvertAll(methodInfo.GetParameters(), static pi => pi.ParameterType);
+            this.ReturnType = methodInfo.ReturnType;
+        }
+
+        public Delegate Handler { get; }
+
+        public Type[] ParameterTypes { get; }
+
+        public Type ReturnType { get; }
     }
 }

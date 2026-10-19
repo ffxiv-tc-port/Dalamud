@@ -5,6 +5,8 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 
 using Dalamud.Game.Text;
@@ -90,6 +92,12 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// Gets or sets a value indicating whether a message should be sent in chat once a duty is found.
     /// </summary>
     public bool DutyFinderChatMessage { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether command help messages should be shown next to the
+    /// command in the chat box's autocompletion list.
+    /// </summary>
+    public bool ShowCommandHelpInCompletion { get; set; } = true;
 
     /// <summary>
     /// Gets or sets the language code to load Dalamud localization with.
@@ -354,6 +362,34 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     /// Gets or sets the proxy port.
     /// </summary>
     public int ProxyPort { get; set; } = 1080;
+
+    /// <summary>
+    /// Gets or sets the GitHub token, encrypted with the Windows user's DPAPI key and then
+    /// Base64-encoded. This is the only form of it that ever reaches disk.
+    /// </summary>
+    /// <remarks>
+    /// Neither this nor <see cref="GitHubToken"/> may be written to a log, a crash report or
+    /// the UI: the configuration file is routinely read whole by tooling.
+    /// </remarks>
+    public string? GitHubTokenProtected { get; set; }
+
+    /// <summary>
+    /// Gets or sets the plaintext GitHub token. Null when none is stored, and also when the
+    /// stored blob cannot be decrypted by the current Windows account.
+    /// </summary>
+    [JsonIgnore]
+    public string? GitHubToken
+    {
+        get => UnprotectSecret(this.GitHubTokenProtected);
+        set => this.GitHubTokenProtected = ProtectSecret(value);
+    }
+
+    /// <summary>
+    /// Gets or sets how many connections one plugin download may use at once, each fetching a different part of the file.
+    /// 1 downloads it over a single connection, the way it always was; values above
+    /// <see cref="Plugin.Internal.PluginManager.MaxPluginDownloadConnections"/> count as that.
+    /// </summary>
+    public int PluginDownloadConnections { get; set; } = 8;
     
     /// <summary>
     /// Gets or sets the default UI preset.
@@ -490,6 +526,12 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
 
     /// <summary>Gets or sets a value indicating whether to track texture allocation by plugins.</summary>
     public bool UseTexturePluginTracking { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to sample the whole process's allocations by thread and type, logged hourly.
+    /// Off unless turned on in settings; it costs the framework thread time every frame while on.
+    /// </summary>
+    public bool PerfDiagAllocationSampling { get; set; }
 
     /// <summary>
     /// Gets or sets the page of the plugin installer that is shown by default when opened.
@@ -653,6 +695,41 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
                                         ? Plugin.Internal.AutoUpdate.AutoUpdateBehavior.UpdateAll
                                         : Plugin.Internal.AutoUpdate.AutoUpdateBehavior.OnlyNotify;
 #pragma warning restore CS0618
+    }
+
+    private static string? ProtectSecret(string? plaintext)
+    {
+        if (string.IsNullOrEmpty(plaintext))
+            return null;
+
+        try
+        {
+            return Convert.ToBase64String(
+                ProtectedData.Protect(Encoding.UTF8.GetBytes(plaintext), null, DataProtectionScope.CurrentUser));
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Could not encrypt the GitHub token; it will not be stored");
+            return null;
+        }
+    }
+
+    private static string? UnprotectSecret(string? protectedBase64)
+    {
+        if (string.IsNullOrEmpty(protectedBase64))
+            return null;
+
+        try
+        {
+            return Encoding.UTF8.GetString(
+                ProtectedData.Unprotect(
+                    Convert.FromBase64String(protectedBase64), null, DataProtectionScope.CurrentUser));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not decrypt the stored GitHub token; it has to be entered again");
+            return null;
+        }
     }
 
     private void Save()

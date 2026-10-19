@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
@@ -41,8 +40,6 @@ internal class PluginRepository
 
     private static readonly ModuleLog Log = new("PLUGINR");
 
-    private readonly HttpClient httpClient;
-
     /// <summary>
     ///     创建插件仓库实例
     /// </summary>
@@ -51,31 +48,6 @@ internal class PluginRepository
     /// <param name="isEnabled">仓库是否启用</param>
     public PluginRepository(HappyHttpClient happyHttpClient, string pluginMasterUrl, bool isEnabled)
     {
-        this.httpClient = new(new SocketsHttpHandler
-        {
-            AutomaticDecompression = DecompressionMethods.All,
-            ConnectCallback        = happyHttpClient.SharedHappyEyeballsCallback.ConnectCallback
-        })
-        {
-            Timeout = TimeSpan.FromSeconds(20),
-            DefaultRequestHeaders =
-            {
-                Accept =
-                {
-                    new MediaTypeWithQualityHeaderValue("application/json")
-                },
-                CacheControl = new CacheControlHeaderValue
-                {
-                    NoCache = true
-                },
-                UserAgent =
-                {
-                    new ProductInfoHeaderValue("Dalamud", Util.AssemblyVersion)
-                }
-            }
-        };
-
-        this.httpClient.DefaultRequestHeaders.Add("X-Machine-Token", DeviceUtils.GetDeviceId());
         PluginMasterUrl = pluginMasterUrl;
         IsEnabled       = isEnabled;
     }

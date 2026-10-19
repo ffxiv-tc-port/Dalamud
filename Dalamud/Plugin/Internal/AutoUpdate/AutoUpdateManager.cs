@@ -56,6 +56,12 @@ internal class AutoUpdateManager : IServiceType
     /// </summary>
     private static readonly TimeSpan CooldownAfterUnblock = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// How often the progress text of a running update is rebuilt.
+    /// </summary>
+    private static readonly TimeSpan ProgressRefreshInterval =
+        TimeSpan.FromMilliseconds(PluginUpdateProgressDisplay.RefreshIntervalMs);
+
     [ServiceManager.ServiceDependency]
     private readonly PluginManager pluginManager = Service<PluginManager>.Get();
 
@@ -243,33 +249,39 @@ internal class AutoUpdateManager : IServiceType
             DateTime.Now > this.nextUpdateCheckTime &&
             this.updateNotification == null)
         {
-            Log.Verbose("Starting periodic update check");
-            this.pluginManager.ReloadPluginMastersAsync()
-                .ContinueWith(
-                    t =>
-                    {
-                        if (t.IsFaulted || t.IsCanceled)
-                        {
-                            Log.Error(t.Exception!, "Failed to reload plugin masters for auto-update");
-                        }
-
-                        Log.Verbose($"Available Updates: {string.Join(", ", this.pluginManager.UpdatablePlugins.Select(s => s.UpdateManifest.InternalName))}");
-                        var updatable = this.GetAvailablePluginUpdates(
-                            DecideUpdateListingRestriction(behavior));
-
-                        if (updatable.Count > 0)
-                        {
-                            this.NotifyUpdatesAreAvailable(updatable);
-                        }
-                        else
-                        {
-                            this.nextUpdateCheckTime = DateTime.Now + TimeBetweenUpdateChecks;
-                            Log.Verbose(
-                                "Auto update found nothing to do, next update at {Time}",
-                                this.nextUpdateCheckTime);
-                        }
-                    });
+            this.StartPeriodicUpdateCheck(behavior);
         }
+    }
+
+    // Separate method so the closure capturing behavior is only allocated when a check actually starts, not on every frame.
+    private void StartPeriodicUpdateCheck(AutoUpdateBehavior behavior)
+    {
+        Log.Verbose("Starting periodic update check");
+        this.pluginManager.ReloadPluginMastersAsync()
+            .ContinueWith(
+                t =>
+                {
+                    if (t.IsFaulted || t.IsCanceled)
+                    {
+                        Log.Error(t.Exception!, "Failed to reload plugin masters for auto-update");
+                    }
+
+                    Log.Verbose($"Available Updates: {string.Join(", ", this.pluginManager.UpdatablePlugins.Select(s => s.UpdateManifest.InternalName))}");
+                    var updatable = this.GetAvailablePluginUpdates(
+                        DecideUpdateListingRestriction(behavior));
+
+                    if (updatable.Count > 0)
+                    {
+                        this.NotifyUpdatesAreAvailable(updatable);
+                    }
+                    else
+                    {
+                        this.nextUpdateCheckTime = DateTime.Now + TimeBetweenUpdateChecks;
+                        Log.Verbose(
+                            "Auto update found nothing to do, next update at {Time}",
+                            this.nextUpdateCheckTime);
+                    }
+                });
     }
 
     private IActiveNotification GetBaseNotification(Notification notification)
@@ -328,14 +340,25 @@ internal class AutoUpdateManager : IServiceType
         notification.Icon = INotificationIcon.From(FontAwesomeIcon.Download);
         notification.Minimized = false;
 
-        var progress = new Progress<PluginManager.PluginUpdateProgress>();
-        progress.ProgressChanged += (_, updateProgress) =>
-        {
-            notification.Content = Locs.NotificationContentUpdating(updateProgress.CurrentPluginManifest.Name);
-            notification.Progress = (float)updateProgress.PluginsProcessed / updateProgress.TotalPlugins;
-        };
+        var batch = new PluginUpdateBatchProgress(updatablePlugins);
+        var display = new PluginUpdateProgressDisplay(batch);
+        var updateTask = this.pluginManager.UpdatePluginsAsync(updatablePlugins, this.isDryRun.Value, true, batch);
 
-        var pluginStates = (await this.pluginManager.UpdatePluginsAsync(updatablePlugins, this.isDryRun.Value, true, progress)).ToList();
+        // Only this flow writes the progress text, so the final state set below is never overwritten by a late update.
+        while (!updateTask.IsCompleted)
+        {
+            display.Refresh(this.pluginManager.ActiveDownloads, force: true);
+            notification.Content = display.Text;
+            if (display.Fraction is { } fraction)
+                notification.Progress = fraction;
+
+            await Task.WhenAny(updateTask, Task.Delay(ProgressRefreshInterval));
+        }
+
+        // A plugin another update round already brought up to date was neither updated nor failed.
+        var pluginStates = (await updateTask)
+                           .Where(x => x.Status != PluginUpdateStatus.StatusKind.AlreadyUpToDate)
+                           .ToList();
         this.pluginManager.PrintUpdatedPlugins(pluginStates, Loc.Localize("DalamudPluginAutoUpdate", "The following plugins were auto-updated:"));
 
         notification.Progress = 1;
@@ -545,9 +568,6 @@ internal class AutoUpdateManager : IServiceType
             => numPlugins == 1 ?
                    Loc.Localize("AutoUpdatePreparingToUpdateSingular", "Preparing to update 1 plugin...") :
                    string.Format(Loc.Localize("AutoUpdatePreparingToUpdatePlural", "Preparing to update {0} plugins..."), numPlugins);
-
-        public static string NotificationContentUpdating(string name)
-            => string.Format(Loc.Localize("AutoUpdateUpdating", "Updating {0}..."), name);
 
         public static string NotificationContentFailedPlugins(IEnumerable<string> failedPlugins)
             => string.Format(Loc.Localize("AutoUpdateFailedPlugins", "Failed plugin(s): {0}"), string.Join(", ", failedPlugins));

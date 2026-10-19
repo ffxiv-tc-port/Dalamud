@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -7,6 +8,8 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -30,6 +33,7 @@ using Dalamud.Plugin.Internal.Types.Manifest;
 using Dalamud.Plugin.Ipc.Internal;
 using Dalamud.Support;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 using Dalamud.Utility.Timing;
 using Newtonsoft.Json;
 
@@ -48,9 +52,31 @@ internal class PluginManager : IInternalDisposableService
     /// </summary>
     public const int PluginWaitBeforeFreeDefault = 1000; // upped from 500ms, seems more stable
 
+    /// <summary>
+    /// The most connections one plugin download may use, whatever the configuration says.
+    /// </summary>
+    internal const int MaxPluginDownloadConnections = 16;
+
     private const string BrokenMarkerFileName = ".broken";
 
+    /// <summary>
+    /// The slowest average rate, in bytes per second, that a download of known size is allowed:
+    /// its hard limit becomes size / this rate whenever that is longer than <see cref="PluginDownloadHardTimeout"/>.
+    /// </summary>
+    private const long PluginDownloadMinimumRate = 16 * 1024;
+
     private static readonly ModuleLog Log = ModuleLog.Create<PluginManager>();
+
+    /// <summary>
+    /// How long a plugin download may make no progress at all before it is given up on.
+    /// </summary>
+    private static readonly TimeSpan PluginDownloadStallTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Upper bound for a single plugin download, however steadily it is progressing.
+    /// Downloads that announce their size get more time, see <see cref="PluginDownloadMinimumRate"/>.
+    /// </summary>
+    private static readonly TimeSpan PluginDownloadHardTimeout = TimeSpan.FromMinutes(10);
 
     private readonly object pluginListLock = new();
     private readonly DirectoryInfo pluginDirectory;
@@ -59,6 +85,11 @@ internal class PluginManager : IInternalDisposableService
     private readonly List<LocalPlugin> installedPluginsList = new();
     private readonly List<RemotePluginManifest> availablePluginsList = new();
     private readonly List<AvailablePluginUpdate> updatablePluginsList = new();
+
+    private readonly object activeDownloadsLock = new();
+
+    // Keyed by InternalName: every install or update of one plugin writes the same versions directory.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> pluginOperationGates = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Task<DalamudLinkPayload> openInstallerWindowPluginChangelogsLink;
 
@@ -73,6 +104,19 @@ internal class PluginManager : IInternalDisposableService
 
     [ServiceManager.ServiceDependency]
     private readonly HappyHttpClient happyHttpClient = Service<HappyHttpClient>.Get();
+
+    // Copy-on-write under activeDownloadsLock; readers take the published array without locking.
+    private PluginDownloadProgress[] activeDownloads = [];
+
+    private int pluginOperationsInFlight;
+
+    // Read-only copy of installedPluginsList that InstalledPlugins hands out; null while stale. The list changes only
+    // in AddInstalledPlugin and RemoveInstalledPlugin, which drop the copy under pluginListLock. A published copy is
+    // never modified, so any thread reads and enumerates it without the lock while the list changes.
+    private ReadOnlyCollection<LocalPlugin>? installedPluginsSnapshot;
+
+    // The same list wrapped for other plugins; same rules, dropped together with installedPluginsSnapshot.
+    private ReadOnlyCollection<IExposedPlugin>? exposedPluginsSnapshot;
 
     static PluginManager()
     {
@@ -179,13 +223,55 @@ internal class PluginManager : IInternalDisposableService
     /// <summary>
     /// Gets a copy of the list of all loaded plugins.
     /// </summary>
+    /// <remarks>The same read-only instance until the list changes. Safe to read from any thread.</remarks>
     public IEnumerable<LocalPlugin> InstalledPlugins
     {
         get
         {
+            var snapshot = Volatile.Read(ref this.installedPluginsSnapshot);
+            if (snapshot != null)
+                return snapshot;
+
             lock (this.pluginListLock)
             {
-                return this.installedPluginsList.ToList();
+                snapshot = this.installedPluginsSnapshot;
+                if (snapshot == null)
+                {
+                    snapshot = Array.AsReadOnly(this.installedPluginsList.ToArray());
+                    Volatile.Write(ref this.installedPluginsSnapshot, snapshot);
+                }
+
+                return snapshot;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the installed plugins as the wrappers handed to other plugins, in the order of <see cref="InstalledPlugins"/>.
+    /// </summary>
+    /// <remarks>The same read-only instance until the list changes. Safe to read from any thread.</remarks>
+    public IReadOnlyCollection<IExposedPlugin> ExposedInstalledPlugins
+    {
+        get
+        {
+            var snapshot = Volatile.Read(ref this.exposedPluginsSnapshot);
+            if (snapshot != null)
+                return snapshot;
+
+            lock (this.pluginListLock)
+            {
+                snapshot = this.exposedPluginsSnapshot;
+                if (snapshot == null)
+                {
+                    var exposed = new IExposedPlugin[this.installedPluginsList.Count];
+                    for (var i = 0; i < exposed.Length; i++)
+                        exposed[i] = new ExposedPlugin(this.installedPluginsList[i]);
+
+                    snapshot = Array.AsReadOnly(exposed);
+                    Volatile.Write(ref this.exposedPluginsSnapshot, snapshot);
+                }
+
+                return snapshot;
             }
         }
     }
@@ -217,6 +303,17 @@ internal class PluginManager : IInternalDisposableService
             }
         }
     }
+
+    /// <summary>
+    /// Gets the plugin downloads in flight right now. Safe to read from any thread; the list itself never changes.
+    /// </summary>
+    public IReadOnlyList<PluginDownloadProgress> ActiveDownloads => Volatile.Read(ref this.activeDownloads);
+
+    /// <summary>
+    /// Gets a value indicating whether any plugin install or update is running or waiting for its turn,
+    /// whoever started it. Safe to read from any thread.
+    /// </summary>
+    public bool IsAnyPluginOperationInFlight => Volatile.Read(ref this.pluginOperationsInFlight) > 0;
 
     /// <summary>
     /// Gets the main repository.
@@ -344,7 +441,16 @@ internal class PluginManager : IInternalDisposableService
     /// <returns>A value indicating whether testing should be used.</returns>
     public bool HasTestingOptIn(IPluginManifest manifest)
     {
-        return this.configuration.PluginTestingOptIns!.Any(x => x.InternalName == manifest.InternalName);
+        // A loop, not Any: the installer asks this for every row it draws, every frame.
+        var optIns = this.configuration.PluginTestingOptIns;
+        ArgumentNullException.ThrowIfNull(optIns, "source"); // what Any threw on a null list
+        foreach (var optIn in CollectionsMarshal.AsSpan(optIns))
+        {
+            if (optIn.InternalName == manifest.InternalName)
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -614,6 +720,7 @@ internal class PluginManager : IInternalDisposableService
             }
         }
 
+        var bootLoadBatch = PluginLoadReport.BeginBatch("boot");
         var syncPlugins = pluginDefs.Where(def => def.Manifest?.LoadSync == true).ToList();
         var asyncPlugins = pluginDefs.Where(def => def.Manifest?.LoadSync != true).ToList();
         var loadTasks = new List<Task>();
@@ -681,6 +788,8 @@ internal class PluginManager : IInternalDisposableService
                     Log.Error(e, "Failed to load at least one plugin");
                 }
 
+                bootLoadBatch.End();
+
                 var sigScanner = await Service<TargetSigScanner>.GetAsync().ConfigureAwait(false);
                 this.PluginsReady = true;
                 this.NotifyinstalledPluginsListChanged();
@@ -702,7 +811,10 @@ internal class PluginManager : IInternalDisposableService
                 {
                     Log.Error(t.Exception, "Failed to load FrameworkTickAsync/DrawAvailableAsync plugins");
                 }
-            }, TaskContinuationOptions.OnlyOnFaulted);
+
+                // Normally already ended above; this covers a faulted or canceled boot load.
+                bootLoadBatch.End();
+            }, TaskScheduler.Default);
     }
 
     /// <summary>
@@ -835,9 +947,19 @@ internal class PluginManager : IInternalDisposableService
         RemotePluginManifest repoManifest, bool useTesting, PluginLoadReason reason,
         Guid? inheritedWorkingPluginId = null)
     {
+        using var operation = await this.EnterPluginOperationAsync(repoManifest.InternalName);
+
         var stream = await this.DownloadPluginAsync(repoManifest, useTesting);
         return await this.InstallPluginInternalAsync(repoManifest, useTesting, reason, stream, inheritedWorkingPluginId);
     }
+
+    /// <summary>
+    /// Check whether an install or update of the given plugin is running right now. Safe to call from any thread.
+    /// </summary>
+    /// <param name="internalName">The plugin's internal name.</param>
+    /// <returns>Whether one is running.</returns>
+    public bool IsPluginOperationInFlight(string internalName)
+        => this.pluginOperationGates.TryGetValue(internalName, out var gate) && gate.CurrentCount == 0;
 
     /// <summary>
     /// Remove a plugin.
@@ -847,7 +969,7 @@ internal class PluginManager : IInternalDisposableService
     {
         lock (this.pluginListLock)
         {
-            this.installedPluginsList.Remove(plugin);
+            this.RemoveInstalledPlugin(plugin);
         }
 
         this.NotifyinstalledPluginsListChanged();
@@ -965,6 +1087,7 @@ internal class PluginManager : IInternalDisposableService
         IProgress<PluginUpdateProgress>? progress = null)
     {
         Log.Information("Starting plugin update");
+        using var loadBatch = PluginLoadReport.BeginBatch(autoUpdate ? "auto-update" : "update");
 
         var updateTasks = new List<Task<PluginUpdateStatus>>();
         var totalPlugins = toUpdate.Count;
@@ -989,7 +1112,24 @@ internal class PluginManager : IInternalDisposableService
             autoUpdate ? PluginListInvalidationKind.AutoUpdate : PluginListInvalidationKind.Update,
             updatedList.Select(x => x.InternalName));
 
-        Log.Information("Plugin update OK. {UpdateCount} plugins updated", updatedList.Length);
+        // updatedList counts attempts, not successes: reporting it as "updated" hid failed downloads.
+        var failedList = updatedList
+                         .Where(x => x.Status is not (PluginUpdateStatus.StatusKind.Success
+                                                          or PluginUpdateStatus.StatusKind.AlreadyUpToDate))
+                         .ToArray();
+
+        if (failedList.Length == 0)
+        {
+            Log.Information("Plugin update OK. {UpdateCount} plugins updated", updatedList.Length);
+        }
+        else
+        {
+            Log.Error(
+                "Plugin update FAILED for {FailCount} of {TotalCount} plugins: {FailedPlugins}",
+                failedList.Length,
+                updatedList.Length,
+                string.Join(", ", failedList.Select(x => $"{x.InternalName} ({x.Status})")));
+        }
 
         return updatedList;
 
@@ -1020,6 +1160,9 @@ internal class PluginManager : IInternalDisposableService
     /// <returns>The status of the update.</returns>
     public async Task<PluginUpdateStatus> UpdateSinglePluginAsync(AvailablePluginUpdate metadata, bool notify, bool dryRun)
     {
+        // Taken before the up-to-date check, so an update queued behind another one of the same plugin sees its result.
+        using var operation = await this.EnterPluginOperationAsync(metadata.UpdateManifest.InternalName);
+
         var plugin = metadata.InstalledPlugin;
 
         var workingPluginId = metadata.InstalledPlugin.EffectiveWorkingPluginId;
@@ -1094,7 +1237,7 @@ internal class PluginManager : IInternalDisposableService
 
                 lock (this.pluginListLock)
                 {
-                    this.installedPluginsList.Remove(plugin);
+                    this.RemoveInstalledPlugin(plugin);
                 }
             }
             catch (Exception ex)
@@ -1337,6 +1480,62 @@ internal class PluginManager : IInternalDisposableService
         }
     }
 
+    private static TimeSpan GetDownloadHardLimit(long? contentLength, DownloadLimits limits)
+    {
+        if (contentLength is not > 0 || limits.MinimumBytesPerSecond <= 0)
+            return limits.HardTimeout;
+
+        // CancelAfter rejects delays beyond int.MaxValue milliseconds; no real plugin comes near that.
+        var seconds = Math.Min(contentLength.Value / (double)limits.MinimumBytesPerSecond, int.MaxValue / 1000.0);
+        var sizeBased = TimeSpan.FromSeconds(seconds);
+        return sizeBased > limits.HardTimeout ? sizeBased : limits.HardTimeout;
+    }
+
+    private static void AcceptPluginArchive(HttpRequestMessage request)
+    {
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/zip"));
+
+        // GitHub's release-asset API returns the asset's JSON metadata unless the
+        // request explicitly accepts octet-stream, which reads downstream as a bad zip.
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
+    }
+
+    private static void LogStillDownloading(
+        RemotePluginManifest repoManifest, PluginDownloadProgress progress, PluginDownloadProgress.LogSample sample)
+    {
+        Log.Information(
+            "Still downloading {Name}: {Received} of {Total} bytes after {Elapsed:0}s, {Speed:0.0} KB/s over the last {Window:0}s, longest pause {Pause:0.0}s",
+            repoManifest.InternalName,
+            progress.BytesReceived,
+            progress.TotalBytes > 0 ? progress.TotalBytes : (object)"unknown",
+            sample.ElapsedMs / 1000.0,
+            sample.WindowMs > 0 ? sample.WindowBytes / 1024.0 / (sample.WindowMs / 1000.0) : 0,
+            sample.WindowMs / 1000.0,
+            sample.LongestPauseMs / 1000.0);
+    }
+
+    // true = matches, false = does not, null = GitHub's digest could not be had in time.
+    private static async Task<bool?> VerifySha256Async(Task<byte[]?> expectedSha256, byte[] data)
+    {
+        byte[]? expected;
+        try
+        {
+            expected = await expectedSha256.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+
+        return expected is null ? null : SHA256.HashData(data).AsSpan().SequenceEqual(expected);
+    }
+
+    private static bool IsPluginFileIn(FileInfo dllFile, DirectoryInfo dir)
+        => string.Equals(
+            Path.TrimEndingDirectorySeparator(dllFile.DirectoryName ?? string.Empty),
+            Path.TrimEndingDirectorySeparator(dir.FullName),
+            StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Check if there are any inconsistencies with our plugins, their IDs, and our profiles.
     /// </summary>
@@ -1361,23 +1560,209 @@ internal class PluginManager : IInternalDisposableService
         this.profileManager.ParanoiaValidateProfiles();
     }
 
-    private async Task<Stream> DownloadPluginAsync(RemotePluginManifest repoManifest, bool useTesting)
+    private async Task<Stream> DownloadPluginAsync(
+        RemotePluginManifest repoManifest, bool useTesting, DownloadLimits? limitsOverride = null)
+    {
+        var progress = new PluginDownloadProgress(repoManifest.InternalName, repoManifest.Name);
+        this.SetDownloadActive(progress, true);
+        try
+        {
+            return await this.DownloadPluginCoreAsync(
+                       repoManifest, useTesting, progress, limitsOverride ?? DownloadLimits.Default);
+        }
+        finally
+        {
+            this.SetDownloadActive(progress, false);
+        }
+    }
+
+    private void SetDownloadActive(PluginDownloadProgress progress, bool active)
+    {
+        lock (this.activeDownloadsLock)
+        {
+            var current = this.activeDownloads;
+            Volatile.Write(
+                ref this.activeDownloads,
+                active ? [.. current, progress] : Array.FindAll(current, x => x != progress));
+        }
+    }
+
+    private async Task<Stream> DownloadPluginCoreAsync(
+        RemotePluginManifest repoManifest, bool useTesting, PluginDownloadProgress progress, DownloadLimits limits)
     {
         var downloadUrl = useTesting ? repoManifest.DownloadLinkTesting : repoManifest.DownloadLinkInstall;
-        var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl)
-        {
-            Headers =
-            {
-                Accept =
-                {
-                    new MediaTypeWithQualityHeaderValue("application/zip"),
-                },
-            },
-        };
-        var response = await this.happyHttpClient.SharedHttpClient.SendAsync(request);
-        response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadAsStreamAsync();
+        // A big plugin on a slow line is not an error, a transfer that stops moving is. The stall
+        // watchdog is rearmed after every chunk; the hard cap only catches a permanently slow trickle.
+        var started = Stopwatch.StartNew();
+        using var stallCts = new CancellationTokenSource(limits.StallTimeout);
+        using var hardCts = new CancellationTokenSource(limits.HardTimeout);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(stallCts.Token, hardCts.Token);
+        var deadline = new DownloadDeadline(limits, started, stallCts, hardCts);
+
+        HttpResponseMessage? wholeResponse = null;
+        if (this.happyHttpClient.PluginDownloader is { } downloader &&
+            Uri.TryCreate(downloadUrl, UriKind.Absolute, out var url))
+        {
+            var connections = Math.Clamp(this.configuration.PluginDownloadConnections, 1, MaxPluginDownloadConnections);
+            if (connections > 1)
+            {
+                var segmented = await this.DownloadSegmentedAsync(
+                                    downloader, url, connections, repoManifest, progress, deadline, cts.Token);
+                if (segmented.Archive is not null)
+                    return segmented.Archive;
+
+                wholeResponse = segmented.WholeResponse;
+            }
+        }
+
+        using var request = wholeResponse is null ? new HttpRequestMessage(HttpMethod.Get, downloadUrl) : null;
+        if (request is not null)
+            AcceptPluginArchive(request);
+
+        using var response = wholeResponse ?? await this.happyHttpClient.SharedLargeFileHttpClient.SendAsync(
+                                 request!, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        response.EnsureSuccessStatusCode();
+        var contentLength = response.Content.Headers.ContentLength;
+        progress.OnResponse(contentLength);
+        deadline.OnContentLength(contentLength);
+
+        // ZipArchive needs a seekable stream, so the archive is materialised here rather than streamed on.
+        var buffer = new MemoryStream();
+        try
+        {
+            await using var content = await response.Content.ReadAsStreamAsync(cts.Token);
+
+            var chunk = new byte[81920];
+            int read;
+            while ((read = await content.ReadAsync(chunk, cts.Token)) > 0)
+            {
+                await buffer.WriteAsync(chunk.AsMemory(0, read), cts.Token);
+                stallCts.CancelAfter(limits.StallTimeout);
+
+                // Answers "slow or stuck?" from the log alone: a steady rate with short pauses is a slow line.
+                if (progress.OnData(read, out var sample))
+                    LogStillDownloading(repoManifest, progress, sample);
+            }
+        }
+        catch (OperationCanceledException) when (deadline.Fired)
+        {
+            throw deadline.CreateTimeout(repoManifest.InternalName, buffer.Length);
+        }
+
+        Log.Information("Downloaded {Name} ({Size} bytes)", repoManifest.InternalName, buffer.Length);
+
+        buffer.Position = 0;
+        return buffer;
+    }
+
+    // Returns the archive when the segmented download finished; otherwise the plain download runs next, reading
+    // WholeResponse when the server already sent the whole file, or starting over with a request of its own.
+    private async Task<(Stream? Archive, HttpResponseMessage? WholeResponse)> DownloadSegmentedAsync(
+        SegmentedDownloader downloader,
+        Uri url,
+        int connections,
+        RemotePluginManifest repoManifest,
+        PluginDownloadProgress progress,
+        DownloadDeadline deadline,
+        CancellationToken cancellationToken)
+    {
+        var expectedSha256 = downloader.TryGetGitHubAssetSha256Async(url, cancellationToken);
+        SegmentedDownloadResult? result = null;
+        try
+        {
+            result = await downloader.DownloadAsync(
+                         url,
+                         connections,
+                         AcceptPluginArchive,
+                         total =>
+                         {
+                             progress.OnResponse(total);
+                             deadline.OnContentLength(total);
+                         },
+                         received =>
+                         {
+                             deadline.Rearm();
+                             if (progress.OnData((int)Math.Min(received, int.MaxValue), out var sample))
+                                 LogStillDownloading(repoManifest, progress, sample);
+                         },
+                         cancellationToken);
+        }
+        catch (OperationCanceledException) when (deadline.Fired)
+        {
+            throw deadline.CreateTimeout(repoManifest.InternalName, progress.BytesReceived);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warning(ex, "Segmented download of {Name} failed unexpectedly; downloading it again on one connection", repoManifest.InternalName);
+        }
+
+        switch (result?.Outcome)
+        {
+            case SegmentedDownloadOutcome.Completed:
+                var verified = await VerifySha256Async(expectedSha256, result.Data!);
+                if (verified == false)
+                {
+                    Log.Warning(
+                        "Segmented download of {Name} does not match the SHA-256 GitHub lists for it; downloading it again on one connection",
+                        repoManifest.InternalName);
+                    break;
+                }
+
+                var stats = result.Stats;
+                Log.Information(
+                    "Downloaded {Name} ({Size} bytes) in {Elapsed:0.0}s over {Connections} connections ({Requests} requests, {Retries} retries, {Refreshes} link refreshes, {Splits} splits), sha256 {Sha256}",
+                    repoManifest.InternalName,
+                    result.Data!.Length,
+                    deadline.Elapsed.TotalSeconds,
+                    stats.Connections,
+                    stats.Requests,
+                    stats.Retries,
+                    stats.LinkRefreshes,
+                    stats.Splits,
+                    verified == true ? "verified" : "not checked");
+                return (new MemoryStream(result.Data, false), null);
+
+            case SegmentedDownloadOutcome.WholeResponse:
+                return (null, result.WholeResponse);
+
+            case SegmentedDownloadOutcome.NotSupported:
+                Log.Information(result.Exception, "Downloading {Name} on one connection: {Reason}", repoManifest.InternalName, result.Reason!);
+                break;
+
+            case SegmentedDownloadOutcome.GaveUp:
+                Log.Warning(
+                    result.Exception,
+                    "Segmented download of {Name} gave up after {Received} of {Total} bytes ({Reason}); downloading it again on one connection",
+                    repoManifest.InternalName,
+                    result.Stats.BytesReceived,
+                    progress.TotalBytes,
+                    result.Reason!);
+                break;
+        }
+
+        progress.OnRestart();
+        deadline.Rearm();
+        return (null, null);
+    }
+
+    /// <summary>
+    /// Wait until no other install or update of this plugin is running, and hold that until the result is disposed.
+    /// </summary>
+    /// <param name="internalName">The plugin's internal name.</param>
+    /// <returns>The hold on this plugin; dispose it when done.</returns>
+    private async Task<IDisposable> EnterPluginOperationAsync(string internalName)
+    {
+        var gate = this.pluginOperationGates.GetOrAdd(internalName, static _ => new SemaphoreSlim(1, 1));
+        Interlocked.Increment(ref this.pluginOperationsInFlight);
+
+        if (!gate.Wait(0))
+        {
+            Log.Information("Another install or update of {InternalName} is running, waiting for it to finish", internalName);
+            await gate.WaitAsync();
+        }
+
+        return new PluginOperationHold(this, gate);
     }
 
     /// <summary>
@@ -1441,11 +1826,19 @@ internal class PluginManager : IInternalDisposableService
         var tempOutputDir = new DirectoryInfo(FilesystemUtil.GetTempFileName());
         var outputDir = new DirectoryInfo(Path.Combine(pluginVersionsDir.FullName, version?.ToString() ?? string.Empty));
 
+        // Recreating the directory would pull the files out from under the instance installed there.
+        lock (this.pluginListLock)
+        {
+            if (this.installedPluginsList.Any(p => IsPluginFileIn(p.DllFile, outputDir)))
+                throw new InvalidOperationException($"An installed plugin already uses {outputDir.FullName}, not installing over it");
+        }
+
         FilesystemUtil.DeleteAndRecreateDirectory(tempOutputDir);
         FilesystemUtil.DeleteAndRecreateDirectory(outputDir);
 
         Log.Debug("Extracting plugin to {TempOutputDir}", tempOutputDir);
 
+        LocalPluginManifest? finalManifest = null;
         try
         {
             using var archive = new ZipArchive(zipStream);
@@ -1521,8 +1914,8 @@ internal class PluginManager : IInternalDisposableService
 
             var finalDllFile = LocalPluginManifest.GetPluginFile(outputDir, repoManifest);
             var finalManifestFile = LocalPluginManifest.GetManifestFile(finalDllFile);
-            var finalManifest = LocalPluginManifest.Load(finalManifestFile) ??
-                           throw new Exception("Plugin had no valid manifest after copy");
+            finalManifest = LocalPluginManifest.Load(finalManifestFile) ??
+                            throw new Exception("Plugin had no valid manifest after copy");
 
             Log.Information("Installed plugin {InternalName} (testing={UseTesting})", tempManifest.Name, useTesting);
             var plugin = await this.LoadPluginAsync(finalDllFile, finalManifest, reason);
@@ -1532,15 +1925,30 @@ internal class PluginManager : IInternalDisposableService
         }
         catch
         {
-            // Attempt to clean up if we can
-            try
+            // The instance this install created does not count, so a failed load still cleans up as before.
+            bool usedByAnotherInstance;
+            lock (this.pluginListLock)
             {
-                outputDir.Delete(true);
+                usedByAnotherInstance = this.installedPluginsList.Any(
+                    p => !ReferenceEquals(p.Manifest, finalManifest) && IsPluginFileIn(p.DllFile, outputDir));
             }
-            catch
+
+            if (usedByAnotherInstance)
             {
-                // Write marker file if we can't, we'll try to do it at the next start
-                File.WriteAllText(Path.Combine(pluginVersionsDir.FullName, BrokenMarkerFileName), string.Empty);
+                Log.Warning("Not cleaning up {OutputDir}: another installed instance of {InternalName} uses it", outputDir.FullName, repoManifest.InternalName);
+            }
+            else
+            {
+                // Attempt to clean up if we can
+                try
+                {
+                    outputDir.Delete(true);
+                }
+                catch
+                {
+                    // Write marker file if we can't, we'll try to do it at the next start
+                    File.WriteAllText(Path.Combine(pluginVersionsDir.FullName, BrokenMarkerFileName), string.Empty);
+                }
             }
 
             throw;
@@ -1598,7 +2006,7 @@ internal class PluginManager : IInternalDisposableService
                 plugin = new LocalPlugin(dllFile, manifest);
             }
 
-            this.installedPluginsList.Add(plugin);
+            this.AddInstalledPlugin(plugin);
         }
 
         Log.Verbose("Starting to load plugin {Name} at {FileLocation}", manifest.InternalName, dllFile.FullName);
@@ -1797,6 +2205,27 @@ internal class PluginManager : IInternalDisposableService
         Log.Debug("Update check found {updateCount} available updates.", this.updatablePluginsList.Count);
     }
 
+    // The only two places that change installedPluginsList; each drops the published copies in the same lock.
+    private void AddInstalledPlugin(LocalPlugin plugin)
+    {
+        lock (this.pluginListLock)
+        {
+            this.installedPluginsList.Add(plugin);
+            Volatile.Write(ref this.installedPluginsSnapshot, null);
+            Volatile.Write(ref this.exposedPluginsSnapshot, null);
+        }
+    }
+
+    private void RemoveInstalledPlugin(LocalPlugin plugin)
+    {
+        lock (this.pluginListLock)
+        {
+            this.installedPluginsList.Remove(plugin);
+            Volatile.Write(ref this.installedPluginsSnapshot, null);
+            Volatile.Write(ref this.exposedPluginsSnapshot, null);
+        }
+    }
+
     private void NotifyAvailablePluginsChanged()
     {
         this.DetectAvailablePluginUpdates();
@@ -1921,10 +2350,103 @@ internal class PluginManager : IInternalDisposableService
         }
     }
 
+    /// <summary>
+    /// Timing limits of one plugin download. Every real download uses <see cref="Default"/>; only tests pass others.
+    /// </summary>
+    /// <param name="StallTimeout">How long a transfer may receive nothing before it is given up on.</param>
+    /// <param name="HardTimeout">The cap for downloads of unknown size, and the least time any download gets.</param>
+    /// <param name="MinimumBytesPerSecond">The slowest average rate a download of known size is given time for.</param>
+    internal sealed record DownloadLimits(TimeSpan StallTimeout, TimeSpan HardTimeout, long MinimumBytesPerSecond)
+    {
+        /// <summary>
+        /// Gets the limits used for every real download.
+        /// </summary>
+        public static DownloadLimits Default { get; } =
+            new(PluginDownloadStallTimeout, PluginDownloadHardTimeout, PluginDownloadMinimumRate);
+    }
+
     private static class Locs
     {
         public static string DalamudPluginUpdateSuccessful(string name, Version version) => Loc.Localize("DalamudPluginUpdateSuccessful", "    》 {0} updated to v{1}.").Format(name, version);
 
         public static string DalamudPluginUpdateFailed(string name, Version version, string why) => Loc.Localize("DalamudPluginUpdateFailed", "    》 {0} update to v{1} failed ({2}).").Format(name, version, why);
+    }
+
+    /// <summary>
+    /// The stall watchdog and hard cap of one plugin download, kept across a segmented attempt and the plain one after it.
+    /// </summary>
+    private sealed class DownloadDeadline
+    {
+        private readonly DownloadLimits limits;
+        private readonly Stopwatch started;
+        private readonly CancellationTokenSource stallCts;
+        private readonly CancellationTokenSource hardCts;
+        private TimeSpan hardLimit;
+        private long? hardLimitRaisedFor;
+
+        public DownloadDeadline(
+            DownloadLimits limits, Stopwatch started, CancellationTokenSource stallCts, CancellationTokenSource hardCts)
+        {
+            this.limits = limits;
+            this.started = started;
+            this.stallCts = stallCts;
+            this.hardCts = hardCts;
+            this.hardLimit = limits.HardTimeout;
+        }
+
+        public bool Fired => this.stallCts.IsCancellationRequested || this.hardCts.IsCancellationRequested;
+
+        public TimeSpan Elapsed => this.started.Elapsed;
+
+        public void Rearm() => this.stallCts.CancelAfter(this.limits.StallTimeout);
+
+        // The hard cap has been running since the request started, so only what is left of the raised cap is armed.
+        // It is only ever raised: a later response without a size keeps what an earlier one allowed.
+        public void OnContentLength(long? contentLength)
+        {
+            var limit = GetDownloadHardLimit(contentLength, this.limits);
+            if (limit <= this.hardLimit || this.hardCts.IsCancellationRequested)
+                return;
+
+            this.hardLimit = limit;
+            this.hardLimitRaisedFor = contentLength;
+            var remaining = limit - this.started.Elapsed;
+            this.hardCts.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+        }
+
+        public TimeoutException CreateTimeout(string internalName, long receivedBytes)
+        {
+            var reason = !this.hardCts.IsCancellationRequested
+                             ? $"stalled for {this.limits.StallTimeout.TotalSeconds:0} seconds"
+                             : this.hardLimitRaisedFor is { } size
+                                 ? $"exceeded the {this.hardLimit.TotalMinutes:0.#} minute limit for its {size} bytes at {this.limits.MinimumBytesPerSecond / 1024} KiB/s"
+                                 : $"exceeded the {this.hardLimit.TotalMinutes:0.#} minute limit";
+            return new TimeoutException($"Download of {internalName} {reason} after {receivedBytes} bytes.");
+        }
+    }
+
+    /// <summary>
+    /// One plugin's install or update slot, taken by <see cref="EnterPluginOperationAsync"/>.
+    /// </summary>
+    private sealed class PluginOperationHold : IDisposable
+    {
+        private readonly PluginManager owner;
+        private readonly SemaphoreSlim gate;
+        private int disposed;
+
+        public PluginOperationHold(PluginManager owner, SemaphoreSlim gate)
+        {
+            this.owner = owner;
+            this.gate = gate;
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref this.disposed, 1) != 0)
+                return;
+
+            this.gate.Release();
+            Interlocked.Decrement(ref this.owner.pluginOperationsInFlight);
+        }
     }
 }

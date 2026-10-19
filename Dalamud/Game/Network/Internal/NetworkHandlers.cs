@@ -52,6 +52,10 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
     [ServiceManager.ServiceDependency]
     private readonly DalamudConfiguration configuration = Service<DalamudConfiguration>.Get();
 
+    private readonly MarketBoardUploadGuard uploadGuard = new(
+        static () => Environment.TickCount64,
+        static line => Log.Information("{MbUploadGuardLine:l}", line));
+
     private bool disposing;
 
     [ServiceManager.ServiceConstructor]
@@ -265,12 +269,58 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         this.mbOfferingsHook.Dispose();
         this.mbSendPurchaseRequestHook.Dispose();
         this.cfPopHook.Dispose();
+
+        if (this.uploadGuard.BuildSummary() is { } summary)
+            Log.Information("{MbUploadGuardLine:l}", summary);
     }
 
-    private static (ulong UploaderId, uint WorldId) GetUploaderInfo()
+    // 讀的欄位跟 PlayerState.CurrentWorld／HomeWorld 同一批；不保存指標。
+    private static MarketBoardUploadGuard.Worlds ReadUploadWorlds()
     {
-        var playerState = Service<PlayerState>.Get();
-        return (playerState.ContentId, playerState.CurrentWorld.RowId);
+        var localPlayer = FFXIVClientStructs.FFXIV.Client.Game.Control.Control.GetLocalPlayer();
+        var agentLobby = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentLobby.Instance();
+        var hasPlayer = localPlayer != null;
+        var hasLobby = agentLobby != null;
+        return new MarketBoardUploadGuard.Worlds(
+            hasPlayer,
+            hasPlayer ? localPlayer->CurrentWorld : 0u,
+            hasPlayer ? localPlayer->HomeWorld : 0u,
+            hasLobby && agentLobby->IsLoggedIn,
+            hasLobby ? agentLobby->LobbyData.CurrentWorldId : 0u,
+            hasLobby ? agentLobby->LobbyData.HomeWorldId : 0u);
+    }
+
+    // 契約：在 Rx 的選擇器裡被呼叫，絕不擲例外（擲了那條管線整個結束、之後都不上傳）。
+    // 刻意不走 PlayerState.CurrentWorld：它沒有本機角色時會退回大廳欄位，那裡可能殘留舊世界。
+    private UploaderInfo ResolveUploader(MarketBoardUploadGuard.Kind kind, uint itemId)
+    {
+        try
+        {
+            if (!this.configuration.IsMbCollect)
+            {
+                this.uploadGuard.NoteDisabled();
+                return default;
+            }
+
+            var uploaderId = Service<PlayerState>.Get().ContentId;
+            return this.uploadGuard.TryResolve(kind, itemId, ReadUploadWorlds(), out var worldId)
+                       ? new UploaderInfo(true, uploaderId, worldId)
+                       : default;
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                this.uploadGuard.NoteSkip(
+                    kind, itemId, MarketBoardUploadGuard.SkipReason.ResolveFailed, default, ex.GetType().Name);
+            }
+            catch
+            {
+                // 診斷本身失敗也不能讓例外離開選擇器。
+            }
+
+            return default;
+        }
     }
 
     private unsafe nint CfPopDetour(PublicContentDirector.EnterContentInfoPacket* packetData)
@@ -433,7 +483,8 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
                              startObservable
                                  .And(this.OnMarketBoardSalesBatch(startObservable))
                                  .And(this.OnMarketBoardListingsBatch(startObservable))
-                                 .Then((request, sales, listings) => (request, sales, listings, GetUploaderInfo())))
+                                 .Then((request, sales, listings) => (request, sales, listings, Uploader: this.ResolveUploader(MarketBoardUploadGuard.Kind.Listings, sales.CatalogId))))
+                         .Where(data => data.Uploader.Upload)
                          .Where(this.ShouldUpload)
                          .SubscribeOn(ThreadPoolScheduler.Instance)
                          .Subscribe(
@@ -480,7 +531,8 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
     private IDisposable HandleMarketTaxRates()
     {
         return this.MbTaxesObservable
-                   .Select((taxes) => (taxes, GetUploaderInfo()))
+                   .Select((taxes) => (taxes, Uploader: this.ResolveUploader(MarketBoardUploadGuard.Kind.Tax, 0)))
+                   .Where(data => data.Uploader.Upload)
                    .Where(this.ShouldUpload)
                    .SubscribeOn(ThreadPoolScheduler.Instance)
                    .Subscribe(
@@ -509,7 +561,8 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
     private IDisposable HandleMarketBoardPurchaseHandler()
     {
         return this.MbPurchaseSentObservable
-                   .Zip(this.MbPurchaseObservable, (handler, purchase) => (handler, purchase, GetUploaderInfo()))
+                   .Zip(this.MbPurchaseObservable, (handler, purchase) => (handler, purchase, Uploader: this.ResolveUploader(MarketBoardUploadGuard.Kind.Purchase, handler.CatalogId)))
+                   .Where(data => data.Uploader.Upload)
                    .Where(this.ShouldUpload)
                    .SubscribeOn(ThreadPoolScheduler.Instance)
                    .Subscribe(
@@ -629,4 +682,6 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
 
         return this.mbSendPurchaseRequestHook.OriginalDisposeSafe(infoProxyItemSearch);
     }
+
+    private readonly record struct UploaderInfo(bool Upload, ulong UploaderId, uint WorldId);
 }

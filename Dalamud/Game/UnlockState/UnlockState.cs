@@ -16,6 +16,8 @@ using FFXIVClientStructs.FFXIV.Component.Exd;
 using Lumina.Excel;
 using Lumina.Excel.Sheets;
 
+using Serilog.Events;
+
 using ActionSheet = Lumina.Excel.Sheets.Action;
 using InstanceContentSheet = Lumina.Excel.Sheets.InstanceContent;
 using PublicContentSheet = Lumina.Excel.Sheets.PublicContent;
@@ -678,7 +680,9 @@ internal unsafe class UnlockState : IInternalDisposableService, IUnlockState
 
             unlockedRowIds.Add(row.RowId);
 
-            Log.Verbose($"Unlock detected: {typeof(T).Name}#{row.RowId}");
+            // Every unlocked row passes here on each login (logout clears the cache); build the line only if logged.
+            if (EntryPoint.LogLevelSwitch.MinimumLevel <= LogEventLevel.Verbose)
+                Log.Verbose($"Unlock detected: {typeof(T).Name}#{row.RowId}");
 
             foreach (var action in Delegate.EnumerateInvocationList(this.Unlock))
             {

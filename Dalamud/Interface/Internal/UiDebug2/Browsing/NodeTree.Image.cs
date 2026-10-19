@@ -282,10 +282,16 @@ internal unsafe partial class ImageNodeTree : ResNodeTree
         public TextureData(AtkUldPartsList* partsList, uint partId)
         {
             this.PartsList = partsList;
+
+            if (this.PartsList == null)
+            {
+                return;
+            }
+
             this.PartCount = this.PartsList->PartCount;
             this.PartId = partId >= this.PartCount ? 0 : partId;
 
-            if (this.PartsList == null)
+            if (this.PartCount == 0 || this.PartsList->Parts == null)
             {
                 return;
             }
@@ -301,9 +307,12 @@ internal unsafe partial class ImageNodeTree : ResNodeTree
 
             if (this.TexType == Resource)
             {
+                // A Resource-type texture can still have no resource or no file handle yet.
                 var resource = asset->AtkTexture.Resource;
-                this.Texture = resource->KernelTextureObject;
-                this.Path = Marshal.PtrToStringAnsi(new(resource->TexFileResourceHandle->ResourceHandle.FileName.BufferPtr));
+                this.Texture = resource == null ? null : resource->KernelTextureObject;
+                this.Path = resource == null || resource->TexFileResourceHandle == null
+                    ? null
+                    : Marshal.PtrToStringAnsi(new(resource->TexFileResourceHandle->ResourceHandle.FileName.BufferPtr));
             }
             else
             {

@@ -125,11 +125,12 @@ public static class ItemUtil
 
         if (IsEventItem(itemId))
         {
-            return dataManager
-                .GetExcelSheet<EventItem>(language)
-                .TryGetRow(itemId, out var eventItem)
-                    ? eventItem.Name
-                    : default;
+            if (!dataManager.GetExcelSheet<EventItem>(language).TryGetRow(itemId, out var eventItem))
+                return default;
+
+            // Only English, German and French fill Name; the other clients (TC included) only have Singular.
+            // Decided by the data rather than by `language`, which the TC Lumina fork ignores.
+            return eventItem.Name.IsEmpty ? eventItem.Singular : eventItem.Name;
         }
 
         var (baseId, kind) = GetBaseId(itemId);

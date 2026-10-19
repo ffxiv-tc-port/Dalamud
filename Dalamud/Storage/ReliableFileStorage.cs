@@ -133,20 +133,25 @@ internal class ReliableFileStorage : IInternalDisposableService
             this.db.RunInTransaction(() =>
             {
                 var normalizedPath = NormalizePath(path);
-                var file = this.db.Table<DbFile>().FirstOrDefault(f => f.Path == normalizedPath && f.ContainerId == containerId);
-                if (file == null)
+
+                // Only the key: loading the old row would read back its whole Data just to overwrite it.
+                var existing = this.db.Query<DbFileKey>(
+                    "select \"Id\" from \"DbFile\" where ((\"Path\" = ?) and (\"ContainerId\" = ?)) limit 1",
+                    normalizedPath,
+                    containerId);
+                var file = new DbFile
                 {
-                    file = new DbFile
-                    {
-                        ContainerId = containerId,
-                        Path = normalizedPath,
-                        Data = bytes,
-                    };
+                    ContainerId = containerId,
+                    Path = normalizedPath,
+                    Data = bytes,
+                };
+                if (existing.Count == 0)
+                {
                     this.db.Insert(file);
                 }
                 else
                 {
-                    file.Data = bytes;
+                    file.Id = existing[0].Id;
                     this.db.Update(file);
                 }
 
@@ -331,5 +336,10 @@ internal class ReliableFileStorage : IInternalDisposableService
         public string Path { get; set; } = null!;
 
         public byte[] Data { get; set; } = null!;
+    }
+
+    private class DbFileKey
+    {
+        public int Id { get; set; }
     }
 }

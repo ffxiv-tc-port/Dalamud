@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
@@ -5,6 +6,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 
 using CheapLoc;
 using Dalamud.Bindings.ImGui;
@@ -33,6 +35,7 @@ using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Internal;
+using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.SelfTest.Internal;
 using Dalamud.Storage.Assets;
 using Dalamud.Utility;
@@ -510,6 +513,16 @@ internal class DalamudInterface : IInternalDisposableService
     {
         this.pluginWindow.SetSearchText(text);
     }
+
+    /// <summary>
+    /// Starts the plugin installer's "update all" without opening the installer. Framework thread only.
+    /// </summary>
+    /// <param name="onFinished">Called once on a pool thread when the update has ended.</param>
+    /// <param name="count">How many plugins the update was started for.</param>
+    /// <returns>Whether the update started, or why not.</returns>
+    public PluginInstallerWindow.UpdateAllRequestResult TryStartPluginUpdateAll(
+        Action<Task<IEnumerable<PluginUpdateStatus>>> onFinished, out int count)
+        => this.pluginWindow.TryStartUpdateAll(onFinished, out count);
 
     /// <summary>
     /// Sets the current search text for the settings window.

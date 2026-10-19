@@ -62,11 +62,15 @@ internal unsafe partial class InterfaceManager
         DXGI_FORMAT newFormat,
         uint swapChainFlags)
     {
+        var resizeBuffersHook = this.dxgiSwapChainResizeBuffersHook;
+        if (resizeBuffersHook is null || resizeBuffersHook.IsDisposed)
+            return 0; // S_OK; only reachable when racing hook setup/teardown.
+
         // Hooked vtbl instead of registering ReShade event. This check is correct.
         if (!SwapChainHelper.IsGameDeviceSwapChain(swapChain))
-            return this.dxgiSwapChainResizeBuffersHook!.Original(swapChain, bufferCount, width, height, newFormat, swapChainFlags);
+            return resizeBuffersHook.Original(swapChain, bufferCount, width, height, newFormat, swapChainFlags);
 
         this.ResizeBuffers?.InvokeSafely();
-        return this.dxgiSwapChainResizeBuffersHook!.Original(swapChain, bufferCount, width, height, newFormat, swapChainFlags);
+        return resizeBuffersHook.Original(swapChain, bufferCount, width, height, newFormat, swapChainFlags);
     }
 }

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using Dalamud.Configuration.Internal;
+using Dalamud.Data;
 using Dalamud.Game;
 using Dalamud.Interface.Internal;
 using Dalamud.IoC.Internal;
@@ -16,7 +17,11 @@ using Dalamud.Plugin.Internal.Exceptions;
 using Dalamud.Plugin.Internal.Loader;
 using Dalamud.Plugin.Internal.Profiles;
 using Dalamud.Plugin.Internal.Types.Manifest;
+using Dalamud.Plugin.Ipc.Internal;
+using Dalamud.Support;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
+using Lumina.Excel;
 
 namespace Dalamud.Plugin.Internal.Types;
 
@@ -320,6 +325,8 @@ internal class LocalPlugin : IAsyncDisposable
 
             this.State = PluginState.Loading;
             Log.Information($"正在加载 {this.DllFile.Name}");
+            UnloadedContextWatch.Report();
+            var loadStart = PluginLoadReport.Start();
 
             this.EnsureLoader();
 
@@ -386,15 +393,20 @@ internal class LocalPlugin : IAsyncDisposable
             this.serviceScope = ioc.GetScope();
             this.serviceScope.RegisterPrivateScopes(this); // 添加这个 LocalPlugin 作为私有作用域，以便服务可以获取它
 
+            var constructorCost = new PluginLoadReport.ConstructorCost();
+            var loadReported = false;
             try
             {
                 this.instance = await CreatePluginInstance(
                                     this.manifest,
                                     this.serviceScope,
                                     this.pluginType!,
-                                    this.dalamudInterface);
+                                    this.dalamudInterface,
+                                    constructorCost);
                 this.State = PluginState.Loaded;
                 Log.Information("完成加载 {PluginName}", this.InternalName);
+                PluginLoadReport.Report(this.InternalName, this.EffectiveVersion, loadStart, constructorCost, false);
+                loadReported = true;
 
                 var manager = Service<PluginManager>.Get();
                 manager.NotifyPluginsForStateChange(PluginListInvalidationKind.Loaded, [this.manifest.InternalName]);
@@ -406,6 +418,9 @@ internal class LocalPlugin : IAsyncDisposable
                     ex,
                     "加载 {PluginName} 时出错，绑定并调用插件构造函数失败",
                     this.InternalName);
+                PluginLoadFailureEcho.Report(this, ex);
+                if (!loadReported)
+                    PluginLoadReport.Report(this.InternalName, this.EffectiveVersion, loadStart, constructorCost, true);
                 await this.ClearAndDisposeAllResources(PluginLoaderDisposalMode.ImmediateDispose);
             }
         }
@@ -420,6 +435,9 @@ internal class LocalPlugin : IAsyncDisposable
                 Log.Warning(ex.Message);
             else
                 Log.Error(ex, "加载 {PluginName} 时出错", this.InternalName);
+
+            if (ex is not InvalidPluginOperationException)
+                PluginLoadFailureEcho.Report(this, ex);
 
             throw;
         }
@@ -560,6 +578,48 @@ internal class LocalPlugin : IAsyncDisposable
     public bool LoadsIn(AssemblyLoadContext context)
         => this.loader?.LoadContext == context;
 
+    /// <summary>Sets up the loader configuration every plugin is loaded with.</summary>
+    /// <param name="config">The configuration to set up.</param>
+    internal static void SetupLoaderConfig(LoaderConfig config)
+    {
+        config.IsUnloadable = true;
+        config.LoadInMemory = true;
+        config.PreferSharedTypes = false;
+
+        // 确保插件不加载自己的 Dalamud 程序集。
+        // 我们不递归固定这个；如果插件加载自己的 Dalamud 程序集，这总是错误的，
+        // 但插件可能加载 Dalamud 依赖的其他程序集的其他版本。
+        config.SharedAssemblies.Add((typeof(EntryPoint).Assembly.GetName(), false));
+        config.SharedAssemblies.Add((typeof(Common.DalamudStartInfo).Assembly.GetName(), false));
+
+        // 固定 Lumina，因为我们将其作为 API 表面公开。在有人再次删除这个之前，请参阅 #1598。
+        // 对 Lumina 的更改应该尽可能地上游，如果有人想重新添加未固定的 Lumina，
+        // 我们需要将其置于某种功能标志之后。
+        config.SharedAssemblies.Add((typeof(Lumina.GameData).Assembly.GetName(), true));
+        config.SharedAssemblies.Add((typeof(Lumina.Excel.Sheets.Addon).Assembly.GetName(), true));
+
+        // Shared caches keyed by type (Newtonsoft, TypeDescriptor, Lumina's sheet attributes) would otherwise keep the context alive.
+        config.BeforeUnload = static context =>
+        {
+            UnloadedContextWatch.Report();
+            SharedTypeCacheRelease.Release(context);
+            Troubleshooting.ForgetLastException();
+            UnloadedContextHolders.Release(context, Service<CallGate>.GetNullable(Service<CallGate>.ExceptionPropagationMode.None));
+            UnloadedContextWatch.Track(context);
+            if (Service<DataManager>.GetNullable(Service<DataManager>.ExceptionPropagationMode.None) is { } dataManager)
+                ReleaseExcelTypeCache(context, dataManager.Excel);
+        };
+    }
+
+    /// <summary>Removes the references to types from <paramref name="context"/> that <paramref name="excel"/> caches.</summary>
+    /// <param name="context">The plugin's load context, about to be unloaded.</param>
+    /// <param name="excel">The shared Excel module.</param>
+    internal static void ReleaseExcelTypeCache(AssemblyLoadContext context, ExcelModule excel)
+    {
+        foreach (var assembly in context.Assemblies)
+            excel.UnloadTypedCache(assembly);
+    }
+
     /// <summary>
     /// Save this plugin manifest.
     /// </summary>
@@ -578,38 +638,21 @@ internal class LocalPlugin : IAsyncDisposable
     /// <param name="scope">服务作用域。</param>
     /// <param name="type">插件主类的类型。</param>
     /// <param name="dalamudInterface"><see cref="IDalamudPluginInterface"/> 的实例。</param>
+    /// <param name="constructorCost">Receives what the constructor cost on its thread.</param>
     /// <returns>插件的新实例。</returns>
     private static async Task<IDalamudPlugin> CreatePluginInstance(
         LocalPluginManifest manifest,
         IServiceScope scope,
         Type type,
-        DalamudPluginInterface dalamudInterface)
+        DalamudPluginInterface dalamudInterface,
+        PluginLoadReport.ConstructorCost constructorCost)
     {
         var framework = await Service<Framework>.GetAsync();
         var forceFrameworkThread = manifest.LoadSync && manifest.LoadRequiredState is 0 or 1;
         var newInstanceTask = forceFrameworkThread ? framework.RunOnFrameworkThread(Create) : Create();
         return await newInstanceTask.ConfigureAwait(false);
 
-        async Task<IDalamudPlugin> Create() => (IDalamudPlugin)await scope.CreateAsync(type, ObjectInstanceVisibility.ExposedToPlugins, dalamudInterface);
-    }
-
-    private static void SetupLoaderConfig(LoaderConfig config)
-    {
-        config.IsUnloadable = true;
-        config.LoadInMemory = true;
-        config.PreferSharedTypes = false;
-
-        // 确保插件不加载自己的 Dalamud 程序集。
-        // 我们不递归固定这个；如果插件加载自己的 Dalamud 程序集，这总是错误的，
-        // 但插件可能加载 Dalamud 依赖的其他程序集的其他版本。
-        config.SharedAssemblies.Add((typeof(EntryPoint).Assembly.GetName(), false));
-        config.SharedAssemblies.Add((typeof(Common.DalamudStartInfo).Assembly.GetName(), false));
-
-        // 固定 Lumina，因为我们将其作为 API 表面公开。在有人再次删除这个之前，请参阅 #1598。
-        // 对 Lumina 的更改应该尽可能地上游，如果有人想重新添加未固定的 Lumina，
-        // 我们需要将其置于某种功能标志之后。
-        config.SharedAssemblies.Add((typeof(Lumina.GameData).Assembly.GetName(), true));
-        config.SharedAssemblies.Add((typeof(Lumina.Excel.Sheets.Addon).Assembly.GetName(), true));
+        async Task<IDalamudPlugin> Create() => (IDalamudPlugin)await scope.CreateMeasuredAsync(type, ObjectInstanceVisibility.ExposedToPlugins, constructorCost, dalamudInterface);
     }
 
     private void EnsureLoader()

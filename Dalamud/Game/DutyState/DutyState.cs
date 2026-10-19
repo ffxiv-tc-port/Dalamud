@@ -15,6 +15,12 @@ namespace Dalamud.Game.DutyState;
 [ServiceManager.EarlyLoadedService]
 internal unsafe class DutyState : IInternalDisposableService, IDutyState
 {
+    // Checked every frame; passing these instead of params lists keeps the per-frame call allocation-free.
+    private static readonly ConditionFlag[] BoundByDutyFlags =
+        [ConditionFlag.BoundByDuty, ConditionFlag.BoundByDuty56, ConditionFlag.BoundByDuty95];
+
+    private static readonly ConditionFlag[] InCombatFlags = [ConditionFlag.InCombat];
+
     private readonly DutyStateAddressResolver address;
     private readonly Hook<SetupContentDirectNetworkMessageDelegate> contentDirectorNetworkMessageHook;
 
@@ -151,12 +157,10 @@ internal unsafe class DutyState : IInternalDisposableService, IDutyState
     }
 
     private bool IsBoundByDuty()
-        => this.condition.Any(ConditionFlag.BoundByDuty,
-                              ConditionFlag.BoundByDuty56,
-                              ConditionFlag.BoundByDuty95);
-    
-    private bool IsInCombat()        
-        => this.condition.Any(ConditionFlag.InCombat);
+        => this.condition.Any(BoundByDutyFlags);
+
+    private bool IsInCombat()
+        => this.condition.Any(InCombatFlags);
 }
 
 /// <summary>

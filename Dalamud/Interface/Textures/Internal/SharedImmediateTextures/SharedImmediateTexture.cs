@@ -245,15 +245,21 @@ internal abstract class SharedImmediateTexture
             if (!this.ownerPlugins.Contains(plugin))
             {
                 this.ownerPlugins.Add(plugin);
-                this.UnderlyingWrap?.ContinueWith(
-                    r =>
-                    {
-                        if (r.IsCompletedSuccessfully)
-                            Service<TextureManager>.Get().Blame(r.Result, plugin);
-                    },
-                    default(CancellationToken));
+                BlameWhenLoaded(this.UnderlyingWrap, plugin);
             }
         }
+
+        return;
+
+        // A closure over a parameter is allocated on method entry, so it lives here instead of on the per-frame path.
+        static void BlameWhenLoaded(Task<IDalamudTextureWrap>? wrap, LocalPlugin plugin) =>
+            wrap?.ContinueWith(
+                r =>
+                {
+                    if (r.IsCompletedSuccessfully)
+                        Service<TextureManager>.Get().Blame(r.Result, plugin);
+                },
+                default(CancellationToken));
     }
 
     /// <inheritdoc/>

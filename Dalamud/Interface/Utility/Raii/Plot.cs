@@ -13,55 +13,55 @@ public static partial class ImRaii
     #region EndObjects
 
     public static IEndObject Plot(string titleId, Vector2 size, ImPlotFlags flags)
-        => new EndConditionally(ImPlot.EndPlot, ImPlot.BeginPlot(titleId, size, flags));
+        => Conditional(ImPlot.EndPlot, ImPlot.BeginPlot(titleId, size, flags));
 
     public static IEndObject Plot(ReadOnlySpan<byte> titleId, Vector2 size, ImPlotFlags flags)
-        => new EndConditionally(ImPlot.EndPlot, ImPlot.BeginPlot(titleId, size, flags));
+        => Conditional(ImPlot.EndPlot, ImPlot.BeginPlot(titleId, size, flags));
 
     public static IEndObject AlignedPlots(string groupId, bool vertical = true)
-        => new EndConditionally(ImPlot.EndAlignedPlots, ImPlot.BeginAlignedPlots(groupId, vertical));
+        => Conditional(ImPlot.EndAlignedPlots, ImPlot.BeginAlignedPlots(groupId, vertical));
 
     public static IEndObject AlignedPlots(ReadOnlySpan<byte> groupId, bool vertical = true)
-        => new EndConditionally(ImPlot.EndAlignedPlots, ImPlot.BeginAlignedPlots(groupId, vertical));
+        => Conditional(ImPlot.EndAlignedPlots, ImPlot.BeginAlignedPlots(groupId, vertical));
 
     public static IEndObject LegendPopup(string labelId, ImGuiMouseButton mouseButton = ImGuiMouseButton.Right)
-        => new EndConditionally(ImPlot.EndLegendPopup, ImPlot.BeginLegendPopup(labelId, mouseButton));
+        => Conditional(ImPlot.EndLegendPopup, ImPlot.BeginLegendPopup(labelId, mouseButton));
 
     public static IEndObject LegendPopup(ReadOnlySpan<byte> labelId, ImGuiMouseButton mouseButton = ImGuiMouseButton.Right)
-        => new EndConditionally(ImPlot.EndLegendPopup, ImPlot.BeginLegendPopup(labelId, mouseButton));
+        => Conditional(ImPlot.EndLegendPopup, ImPlot.BeginLegendPopup(labelId, mouseButton));
 
     public static IEndObject Subplots(string titleId, int rows, int cols, Vector2 size, ImPlotSubplotFlags flags = ImPlotSubplotFlags.None)
-        => new EndConditionally(ImPlot.EndSubplots, ImPlot.BeginSubplots(titleId, rows, cols, size, flags));
+        => Conditional(ImPlot.EndSubplots, ImPlot.BeginSubplots(titleId, rows, cols, size, flags));
 
     public static IEndObject Subplots(ReadOnlySpan<byte> titleId, int rows, int cols, Vector2 size, ImPlotSubplotFlags flags = ImPlotSubplotFlags.None)
-        => new EndConditionally(ImPlot.EndSubplots, ImPlot.BeginSubplots(titleId, rows, cols, size, flags));
+        => Conditional(ImPlot.EndSubplots, ImPlot.BeginSubplots(titleId, rows, cols, size, flags));
 
     public static IEndObject Subplots(string titleId, int rows, int cols, Vector2 size, ImPlotSubplotFlags flags, ref float rowRatios, ref float colRatios)
-        => new EndConditionally(ImPlot.EndSubplots, ImPlot.BeginSubplots(titleId, rows, cols, size, flags, ref rowRatios, ref colRatios));
+        => Conditional(ImPlot.EndSubplots, ImPlot.BeginSubplots(titleId, rows, cols, size, flags, ref rowRatios, ref colRatios));
 
     public static IEndObject Subplots(ReadOnlySpan<byte> titleId, int rows, int cols, Vector2 size, ImPlotSubplotFlags flags, ref float rowRatios, ref float colRatios)
-        => new EndConditionally(ImPlot.EndSubplots, ImPlot.BeginSubplots(titleId, rows, cols, size, flags, ref rowRatios, ref colRatios));
+        => Conditional(ImPlot.EndSubplots, ImPlot.BeginSubplots(titleId, rows, cols, size, flags, ref rowRatios, ref colRatios));
 
     public static IEndObject DragDropSourceAxis(ImAxis axis, ImGuiDragDropFlags flags = ImGuiDragDropFlags.None)
-        => new EndConditionally(ImPlot.EndDragDropSource, ImPlot.BeginDragDropSourceAxis(axis, flags));
+        => Conditional(ImPlot.EndDragDropSource, ImPlot.BeginDragDropSourceAxis(axis, flags));
 
     public static IEndObject DragDropSourceItem(string labelId, ImGuiDragDropFlags flags = ImGuiDragDropFlags.None)
-        => new EndConditionally(ImPlot.EndDragDropSource, ImPlot.BeginDragDropSourceItem(labelId, flags));
+        => Conditional(ImPlot.EndDragDropSource, ImPlot.BeginDragDropSourceItem(labelId, flags));
 
     public static IEndObject DragDropSourceItem(ReadOnlySpan<byte> labelId, ImGuiDragDropFlags flags = ImGuiDragDropFlags.None)
-        => new EndConditionally(ImPlot.EndDragDropSource, ImPlot.BeginDragDropSourceItem(labelId, flags));
+        => Conditional(ImPlot.EndDragDropSource, ImPlot.BeginDragDropSourceItem(labelId, flags));
 
     public static IEndObject DragDropSourcePlot(ImGuiDragDropFlags flags = ImGuiDragDropFlags.None)
-        => new EndConditionally(ImPlot.EndDragDropSource, ImPlot.BeginDragDropSourcePlot(flags));
+        => Conditional(ImPlot.EndDragDropSource, ImPlot.BeginDragDropSourcePlot(flags));
 
     public static IEndObject DragDropTargetAxis(ImAxis axis)
-        => new EndConditionally(ImPlot.EndDragDropTarget, ImPlot.BeginDragDropTargetAxis(axis));
+        => Conditional(ImPlot.EndDragDropTarget, ImPlot.BeginDragDropTargetAxis(axis));
 
     public static IEndObject DragDropTargetLegend()
-        => new EndConditionally(ImPlot.EndDragDropTarget, ImPlot.BeginDragDropTargetLegend());
+        => Conditional(ImPlot.EndDragDropTarget, ImPlot.BeginDragDropTargetLegend());
 
     public static IEndObject DragDropTargetPlot()
-        => new EndConditionally(ImPlot.EndDragDropTarget, ImPlot.BeginDragDropTargetPlot());
+        => Conditional(ImPlot.EndDragDropTarget, ImPlot.BeginDragDropTargetPlot());
 
     #endregion EndObjects
 

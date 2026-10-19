@@ -12,6 +12,7 @@ using Dalamud.Logging.Internal;
 using Dalamud.Memory;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.System.Memory;
 using FFXIVClientStructs.FFXIV.Client.UI;
@@ -28,16 +29,30 @@ namespace Dalamud.Game.Gui.ContextMenu;
 [ServiceManager.EarlyLoadedService]
 internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextMenu
 {
+    private const string LayoutNotDerivedChatLine = "Dalamud：遊戲改版後推算不出右鍵選單的版面，插件加進右鍵選單的項目先停用（遊戲原本的選項照常可用），等 Dalamud 更新。詳情請輸入 /xllog 查看。";
+
     private static readonly ModuleLog Log = new("ContextMenu");
 
-    private readonly Hook<AtkModuleVf22OpenAddonByAgentDelegate> atkModuleVf22OpenAddonByAgentHook;
-    private readonly Hook<AddonContextMenuOnMenuSelectedDelegate> addonContextMenuOnMenuSelectedHook;
+    // Both null when the layout could not be derived: then no menu is ever touched.
+    private readonly Hook<AtkModuleVf22OpenAddonByAgentDelegate>? atkModuleVf22OpenAddonByAgentHook;
+    private readonly Hook<AddonContextMenuOnMenuSelectedDelegate>? addonContextMenuOnMenuSelectedHook;
+
+    // "ContextMenu" addon: index of the first item in its AtkValues, and of its slot in AgentContext's event arrays.
+    private readonly int firstEntryIndex;
 
     private uint? addonContextSubNameId;
 
     [ServiceManager.ServiceConstructor]
-    private ContextMenu()
+    private ContextMenu(TargetSigScanner sigScanner)
     {
+        this.firstEntryIndex = DeriveFirstEntryIndex(sigScanner);
+        if (this.firstEntryIndex == ContextMenuLayoutDerivation.NotDerived)
+        {
+            // Writing items at a guessed offset shifts them against the game's own values, which crashes natively.
+            FeatureDisabledEcho.Report("ContextMenu.Layout", LayoutNotDerivedChatLine);
+            return;
+        }
+
         var raptureAtkModuleVtable = (nint*)RaptureAtkModule.StaticVirtualTablePointer;
         this.atkModuleVf22OpenAddonByAgentHook = Hook<AtkModuleVf22OpenAddonByAgentDelegate>.FromAddress(raptureAtkModuleVtable[22], this.AtkModuleVf22OpenAddonByAgentDetour);
         this.addonContextMenuOnMenuSelectedHook = Hook<AddonContextMenuOnMenuSelectedDelegate>.FromAddress((nint)AddonContextMenu.StaticVirtualTablePointer->OnMenuSelected, this.AddonContextMenuOnMenuSelectedDetour);
@@ -75,38 +90,28 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
 
     private IReadOnlyList<IMenuItem>? SubmenuItems { get; set; }
 
-    private uint AddonContextSubNameId
-    {
-        get
-        {
-            if (this.addonContextSubNameId is not uint id)
-            {
-                id = checked((uint)RaptureAtkModule.Instance()->AddonNames.FindIndex(s => s.EqualToString("AddonContextSub")));
-                this.addonContextSubNameId = id;
-            }
-
-            return id;
-        }
-    }
-
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
     {
-        this.atkModuleVf22OpenAddonByAgentHook.Dispose();
-        this.addonContextMenuOnMenuSelectedHook.Dispose();
+        this.atkModuleVf22OpenAddonByAgentHook?.Dispose();
+        this.addonContextMenuOnMenuSelectedHook?.Dispose();
+
+        // Never hooked: nothing of ours can be in an open menu.
+        if (this.atkModuleVf22OpenAddonByAgentHook == null)
+            return;
 
         var manager = RaptureAtkUnitManager.Instance();
         if (manager == null)
             return;
 
+        // 各判各的，不要寫成聯合早退：AddonContextSub 只有在子選單開著時才存在，
+        // 而「開著右鍵選單、沒開子選單」才是常態，併成一個早退會在最常見的情況下連 ContextMenu 都不關。
         var menu = manager->GetAddonByName("ContextMenu");
         var submenu = manager->GetAddonByName("AddonContextSub");
-        if (menu == null || submenu == null)
-            return;
 
-        if (menu->IsVisible)
+        if (menu != null && menu->IsVisible)
             menu->FireCallbackInt(-1);
-        if (submenu->IsVisible)
+        if (submenu != null && submenu->IsVisible)
             submenu->FireCallbackInt(-1);
     }
 
@@ -144,6 +149,73 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
               .Append(menuItem.Name)
               .Build()
             : menuItem.Name;
+
+    /// <summary>
+    /// Derives where context menu items start from game code; never throws.
+    /// </summary>
+    /// <param name="scanner">The game module scanner.</param>
+    /// <returns>The index, or <see cref="ContextMenuLayoutDerivation.NotDerived"/>.</returns>
+    private static int DeriveFirstEntryIndex(ISigScanner scanner)
+    {
+        try
+        {
+            int index;
+            string evidence;
+            if (sizeof(AtkValue) != ContextMenuLayoutDerivation.AtkValueSize)
+            {
+                index = ContextMenuLayoutDerivation.NotDerived;
+                evidence = $"sizeof(AtkValue)={sizeof(AtkValue)}";
+            }
+            else
+            {
+                index = ContextMenuLayoutDerivation.Derive((signature, length) => ReadMatch(scanner, signature, length), out evidence);
+            }
+
+            if (index == ContextMenuLayoutDerivation.NotDerived)
+                Log.Error("Could not derive where context menu items start; plugin context menu items are disabled ({Evidence})", evidence);
+            else
+                Log.Information("Context menu items start at AtkValues[{Index}] ({Evidence})", index, evidence);
+
+            return index;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Could not derive where context menu items start; plugin context menu items are disabled");
+            return ContextMenuLayoutDerivation.NotDerived;
+        }
+    }
+
+    // Reads the scanner's module copy (unaffected by other hooks); the match and its length must lie inside .text.
+    private static byte[]? ReadMatch(ISigScanner scanner, string signature, int length)
+    {
+        if (!scanner.TryScanText(signature, out var address))
+            return null;
+
+        var rva = (long)address - (long)scanner.Module.BaseAddress;
+        if (rva < scanner.TextSectionOffset || rva + length > scanner.TextSectionOffset + scanner.TextSectionSize)
+            return null;
+
+        var bytes = new byte[length];
+        Marshal.Copy(scanner.SearchBase + (nint)rva, bytes, 0, length);
+        return bytes;
+    }
+
+    /// <summary>
+    /// Gets the addon name id of "AddonContextSub", resolving and caching it on first use.
+    /// </summary>
+    /// <param name="module">A non-null RaptureAtkModule, supplied by the caller so that this does not
+    /// have to re-resolve (and re-null-check) the module it has already validated.</param>
+    /// <returns>The addon name id.</returns>
+    private uint GetAddonContextSubNameId(RaptureAtkModule* module)
+    {
+        if (this.addonContextSubNameId is not uint id)
+        {
+            id = checked((uint)module->AddonNames.FindIndex(s => s.EqualToString("AddonContextSub")));
+            this.addonContextSubNameId = id;
+        }
+
+        return id;
+    }
 
     private AtkValue* ExpandContextMenuArray(Span<AtkValue> oldValues, int newSize)
     {
@@ -295,8 +367,7 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
         // 2: UInt = Return Mask (?)
         // 3: UInt = Submenu Mask
         // 4: UInt = OpenAtCursorPosition ? 2 : 1
-        // 5: UInt = 0
-        // 6: UInt = 0
+        // 5..(firstEntryIndex - 1): UInt, unused here (7 header values before the 7.4 generation, 8 from it)
 
         foreach (var item in items)
         {
@@ -312,7 +383,7 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             }
         }
 
-        this.SetupGenericMenu(7, 0, 2, 3, items, ref valueCount, ref values);
+        this.SetupGenericMenu(this.firstEntryIndex, 0, 2, 3, items, ref valueCount, ref values);
     }
 
     private void SetupContextSubMenu(IReadOnlyList<IMenuItem> items, ref int valueCount, ref AtkValue* values)
@@ -338,7 +409,20 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             this.MenuCallbackIds.Clear();
             this.SelectedAgent = agent;
             var unitManager = RaptureAtkUnitManager.Instance();
-            this.SelectedParentAddon = unitManager->GetAddonById(unitManager->GetAddonByName(addonName)->ContextMenuParentId);
+
+            // Both halves of this lookup can legitimately be null: RaptureAtkUnitManager.Instance()
+            // returns null while RaptureAtkModule is not up, and GetAddonByName returns null whenever the
+            // addon is not currently open. Reading ContextMenuParentId through either raises an
+            // AccessViolationException that cannot be caught, inside a native detour. A null
+            // SelectedParentAddon is not a new state for plugins: GetAddonById can already return null.
+            this.SelectedParentAddon = null;
+            if (unitManager != null)
+            {
+                var contextAddon = unitManager->GetAddonByName(addonName);
+                if (contextAddon != null)
+                    this.SelectedParentAddon = unitManager->GetAddonById(contextAddon->ContextMenuParentId);
+            }
+
             this.SelectedEventInterfaces.Clear();
             if (this.SelectedAgent == AgentInventoryContext.Instance())
             {
@@ -346,19 +430,54 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             }
             else if (this.SelectedAgent == AgentContext.Instance())
             {
-                this.SelectedMenuType = ContextMenuType.Default;
-
-                var menu = AgentContext.Instance()->CurrentContextMenu;
-                var handlers = menu->EventHandlers;
-                var ids = menu->EventIds;
-                var count = (int)values[0].UInt;
-                handlers = handlers.Slice(7, count);
-                ids = ids.Slice(7, count);
-                for (var i = 0; i < count; ++i)
+                // AgentContext.CurrentContextMenu is a real pointer that the game repoints and clears, not an
+                // inline struct, so it can be null here; dereferencing it inside a native detour raises an
+                // AccessViolationException no try/catch can recover from. When it is not readable, fall through
+                // to the same state as an unrecognized agent (no menu type, so no Dalamud items are injected).
+                // The tail call to Original at the end of this detour stays unconditional either way.
+                var contextAgent = AgentContext.Instance();
+                if (contextAgent == null)
                 {
-                    if (ids[i] <= 106)
-                        continue;
-                    this.SelectedEventInterfaces.Add((nint)handlers[i].Value);
+                    Log.Warning("AgentContext.Instance() was null while opening a context menu; skipping menu item injection for this menu.");
+                    this.SelectedMenuType = null;
+                }
+                else
+                {
+                    var menu = contextAgent->CurrentContextMenu;
+                    if (menu == null)
+                    {
+                        Log.Warning("AgentContext.CurrentContextMenu was null while opening the default context menu; skipping menu item injection for this menu.");
+                        this.SelectedMenuType = null;
+                    }
+                    else
+                    {
+                        this.SelectedMenuType = ContextMenuType.Default;
+
+                        var handlers = menu->EventHandlers;
+                        var ids = menu->EventIds;
+                        var count = (int)values[0].UInt;
+
+                        // EventHandlers and EventIds are both FixedSizeArray32 and the slots before firstEntryIndex belong
+                        // to the game's header. count is whatever the game wrote into the AtkValue array, unvalidated, and
+                        // the uint-to-int cast can even go negative. Span.Slice would then throw out of a native detour,
+                        // which the game has no way to handle, so clamp to what is readable instead; the tail call to
+                        // Original below is unaffected either way.
+                        var maxCount = Math.Max(0, Math.Min(handlers.Length, ids.Length) - this.firstEntryIndex);
+                        if (count < 0 || count > maxCount)
+                        {
+                            Log.Warning($"Context menu reported {count} items, but only {maxCount} are readable; clamping.");
+                            count = Math.Clamp(count, 0, maxCount);
+                        }
+
+                        handlers = handlers.Slice(this.firstEntryIndex, count);
+                        ids = ids.Slice(this.firstEntryIndex, count);
+                        for (var i = 0; i < count; ++i)
+                        {
+                            if (ids[i] <= 106)
+                                continue;
+                            this.SelectedEventInterfaces.Add((nint)handlers[i].Value);
+                        }
+                    }
                 }
             }
             else
@@ -405,7 +524,7 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             this.MenuCallbackIds.Clear();
         }
 
-        var ret = this.atkModuleVf22OpenAddonByAgentHook.Original(module, addonName, valueCount, values, agent, a7, a8);
+        var ret = this.atkModuleVf22OpenAddonByAgentHook!.Original(module, addonName, valueCount, values, agent, a7, a8);
         if (values != oldValues)
             this.FreeExpandedContextMenuArray(values, valueCount);
         return ret;
@@ -443,7 +562,18 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
 
         this.SubmenuItems = submenuItems;
 
+        // RaptureAtkModule.Instance() is a hand-written wrapper over
+        // Framework -> UIModule -> GetRaptureAtkModule() and legitimately returns null before the UI
+        // module exists. Bail out before allocating the array below so there is nothing to free, and
+        // never dereference it: an AccessViolationException here is a corrupted-state exception that
+        // no try/catch can recover from.
         var module = RaptureAtkModule.Instance();
+        if (module == null)
+        {
+            Log.Warning("RaptureAtkModule unavailable, cannot open submenu");
+            return;
+        }
+
         var values = this.CreateEmptySubmenuContextMenuArray(name, posX, posY, out var valueCount);
 
         switch (this.SelectedMenuType)
@@ -451,14 +581,14 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             case ContextMenuType.Default:
                 {
                     var ownerAddonId = ((AgentContext*)this.SelectedAgent)->OwnerAddon;
-                    module->OpenAddon(this.AddonContextSubNameId, (uint)valueCount, values, &this.SelectedAgent->AtkEventInterface, 71, checked((ushort)ownerAddonId), 4);
+                    module->OpenAddon(this.GetAddonContextSubNameId(module), (uint)valueCount, values, &this.SelectedAgent->AtkEventInterface, 71, checked((ushort)ownerAddonId), 4);
                     break;
                 }
 
             case ContextMenuType.Inventory:
                 {
                     var ownerAddonId = ((AgentInventoryContext*)this.SelectedAgent)->OwnerAddonId;
-                    module->OpenAddon(this.AddonContextSubNameId, (uint)valueCount, values, &this.SelectedAgent->AtkEventInterface, 0, checked((ushort)ownerAddonId), 4);
+                    module->OpenAddon(this.GetAddonContextSubNameId(module), (uint)valueCount, values, &this.SelectedAgent->AtkEventInterface, 0, checked((ushort)ownerAddonId), 4);
                     break;
                 }
 
@@ -523,7 +653,7 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
 
 original:
         // Eventually handled by inventory context here: 14022BBD0 (6.51)
-        return this.addonContextMenuOnMenuSelectedHook.Original(addon, selectedIdx, a3);
+        return this.addonContextMenuOnMenuSelectedHook!.Original(addon, selectedIdx, a3);
     }
 }
 

@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 using Dalamud.Configuration.Internal;
@@ -177,10 +178,18 @@ internal class Profile
     /// <returns>Null if this profile does not declare the plugin, true if the profile declares the plugin and wants it enabled, false if the profile declares the plugin and does not want it enabled.</returns>
     public bool? WantsPlugin(Guid workingPluginId)
     {
+        // A loop, not FirstOrDefault: the installer asks this for every row it draws, every frame.
         lock (this)
         {
-            var entry = this.modelV1.Plugins.FirstOrDefault(x => x.WorkingPluginId == workingPluginId);
-            return entry?.IsEnabled;
+            var plugins = this.modelV1.Plugins;
+            ArgumentNullException.ThrowIfNull(plugins, "source"); // what FirstOrDefault threw on a null list
+            foreach (var entry in CollectionsMarshal.AsSpan(plugins))
+            {
+                if (entry.WorkingPluginId == workingPluginId)
+                    return entry.IsEnabled;
+            }
+
+            return null;
         }
     }
 

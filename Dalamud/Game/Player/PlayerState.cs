@@ -4,7 +4,9 @@ using Dalamud.Data;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
 
+using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 
 using Lumina.Excel;
@@ -32,7 +34,19 @@ internal unsafe class PlayerState : IServiceType, IPlayerState
     public bool IsLoaded => CSPlayerState.Instance()->IsLoaded;
 
     /// <inheritdoc/>
-    public string CharacterName => this.IsLoaded ? CSPlayerState.Instance()->CharacterNameString : string.Empty;
+    public string CharacterName
+    {
+        get
+        {
+            if (!this.IsLoaded)
+                return string.Empty;
+
+            // 夾在 CS 的 FixedSizeArray64 緩衝區內再解碼：CharacterNameString 走的是
+            // CreateReadOnlySpanFromNullTerminated，沒有長度上限，緩衝區裡剛好沒有 NUL
+            // 時會一路往後掃出界（與 AddonArgs.AddonName／AddonEventEntry.AddonName 同一類）。
+            return NativeStringUtil.ReadFixedBuffer(CSPlayerState.Instance()->CharacterName);
+        }
+    }
 
     /// <inheritdoc/>
     public uint EntityId => this.IsLoaded ? CSPlayerState.Instance()->EntityId : default;
@@ -45,6 +59,14 @@ internal unsafe class PlayerState : IServiceType, IPlayerState
     {
         get
         {
+            // 在遊戲內時以玩家實體的欄位為準：台服併服角色的 AgentLobby.LobbyData
+            // 會間歇性殘留併服前的舊世界 id（市場的匯報會被標成已停運的世界）。
+            // 國際服兩者在遊戲內恒等價，此改動對它們是 no-op；登入畫面沒有 LocalPlayer，
+            // 仍退回 AgentLobby（那裡本來就是它的主場）。
+            var localPlayer = Control.GetLocalPlayer();
+            if (localPlayer != null && localPlayer->CurrentWorld != 0)
+                return LuminaUtils.CreateRef<World>(localPlayer->CurrentWorld);
+
             var agentLobby = AgentLobby.Instance();
             return agentLobby->IsLoggedIn
                 ? LuminaUtils.CreateRef<World>(agentLobby->LobbyData.CurrentWorldId)
@@ -57,6 +79,11 @@ internal unsafe class PlayerState : IServiceType, IPlayerState
     {
         get
         {
+            // 同 CurrentWorld：遊戲內以玩家實體為準，避開台服併服殘留舊世界 id 的大廳欄位。
+            var localPlayer = Control.GetLocalPlayer();
+            if (localPlayer != null && localPlayer->HomeWorld != 0)
+                return LuminaUtils.CreateRef<World>(localPlayer->HomeWorld);
+
             var agentLobby = AgentLobby.Instance();
             return agentLobby->IsLoggedIn
                 ? LuminaUtils.CreateRef<World>(agentLobby->LobbyData.HomeWorldId)

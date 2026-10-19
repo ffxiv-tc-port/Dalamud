@@ -122,6 +122,14 @@ public interface IGameObject : IEquatable<IGameObject>
     /// Gets a value indicating whether this actor is still valid in memory.
     /// </summary>
     /// <returns>True or false.</returns>
+    /// <remarks>
+    /// Despite the name, this is not a validity check on the object's memory: the implementation
+    /// only tests that this instance is non-null and that a character is currently loaded. It
+    /// cannot tell you whether <see cref="Address"/> still refers to the same actor, or to live
+    /// memory at all, so it is not a guard against dereferencing a stale address. Store
+    /// <see cref="GameObjectId"/> and re-resolve the object from <c>IObjectTable</c> on every
+    /// frame instead.
+    /// </remarks>
     public bool IsValid();
 }
 

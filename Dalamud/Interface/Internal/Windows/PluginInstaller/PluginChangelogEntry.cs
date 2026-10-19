@@ -14,7 +14,15 @@ internal class PluginChangelogEntry : IChangelogEntry
     /// </summary>
     /// <param name="plugin">The plugin manifest.</param>
     /// <param name="history">The changelog history entry.</param>
-    public PluginChangelogEntry(LocalPlugin plugin, DalamudChangelogManager.PluginHistory.PluginVersion history)
+    /// <param name="isAvailableUpdate">
+    /// Whether this entry describes a version that exists on the repository but is not the
+    /// one currently installed. Defaults to <c>false</c> so the installed-plugin call site
+    /// keeps its previous behaviour.
+    /// </param>
+    public PluginChangelogEntry(
+        LocalPlugin plugin,
+        DalamudChangelogManager.PluginHistory.PluginVersion history,
+        bool isAvailableUpdate = false)
     {
         this.Plugin = plugin;
 
@@ -22,6 +30,7 @@ internal class PluginChangelogEntry : IChangelogEntry
         this.Text = history.Changelog ?? Loc.Localize("ChangelogNoText", "No changelog for this version.");
         this.Author = history.PublishedBy;
         this.Date = history.PublishedAt;
+        this.IsAvailableUpdate = isAvailableUpdate;
     }
 
     /// <summary>
@@ -53,6 +62,12 @@ internal class PluginChangelogEntry : IChangelogEntry
     /// Gets the respective plugin.
     /// </summary>
     public LocalPlugin Plugin { get; private set; }
+
+    /// <summary>
+    /// Gets a value indicating whether this entry is a version published to the repository
+    /// that the user has not installed yet, rather than the version they are running.
+    /// </summary>
+    public bool IsAvailableUpdate { get; private set; }
 
     /// <inheritdoc/>
     public string Title => this.Plugin.Manifest.Name;

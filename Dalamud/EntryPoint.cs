@@ -36,6 +36,15 @@ public sealed class EntryPoint
     public static readonly LoggingLevelSwitch LogLevelSwitch = new(LogEventLevel.Verbose);
 
     /// <summary>
+    /// Whether log retention has already run in this process.
+    /// <see cref="InitLogging"/> is called more than once per session (once synchronously, again
+    /// once the configuration has been read, and again whenever the user toggles synchronous
+    /// logging), but the previous session's logs must only be archived once - otherwise every
+    /// re-init would spawn another archive holding a few seconds of the *current* session.
+    /// </summary>
+    private static int retentionApplied;
+
+    /// <summary>
     /// A delegate used during initialization of the CLR from Dalamud.Boot.
     /// </summary>
     /// <param name="infoPtr">Pointer to a serialized <see cref="DalamudStartInfo"/> data.</param>
@@ -103,22 +112,33 @@ public sealed class EntryPoint
         behaviour = new ReleaseRetentionBehaviour();
 #endif
 
-        behaviour.Apply(logPath, oldPath);
+        if (Interlocked.Exchange(ref retentionApplied, 1) == 0)
+            behaviour.Apply(logPath, oldPath);
 
         var config = new LoggerConfiguration()
                      .WriteTo.Sink(SerilogEventSink.Instance)
                      .MinimumLevel.ControlledBy(LogLevelSwitch);
 
-        const long maxLogSize = 100 * 1024 * 1024; // 100MB
+        // rollOnFileSizeLimit is what makes fileSizeLimitBytes a *rollover* point rather than a
+        // hard stop: without it Serilog silently stops writing once the limit is reached - no
+        // rollover, no exception, no warning - and everything logged from then until the game exits
+        // is lost. retainedFileCountLimit then bounds how much of the running session stays on disk.
+        // See Dalamud.Logging.Retention.RetentionBehaviour for the full disk budget.
         if (logSynchronously)
         {
-            config = config.WriteTo.File(logPath.FullName, fileSizeLimitBytes: maxLogSize);
+            config = config.WriteTo.File(
+                logPath.FullName,
+                fileSizeLimitBytes: RetentionBehaviour.MaxLogSizeBytes,
+                rollOnFileSizeLimit: true,
+                retainedFileCountLimit: RetentionBehaviour.RetainedLiveFileCountLimit);
         }
         else
         {
             config = config.WriteTo.Async(a => a.File(
                                               logPath.FullName,
-                                              fileSizeLimitBytes: maxLogSize,
+                                              fileSizeLimitBytes: RetentionBehaviour.MaxLogSizeBytes,
+                                              rollOnFileSizeLimit: true,
+                                              retainedFileCountLimit: RetentionBehaviour.RetainedLiveFileCountLimit,
                                               buffered: false,
                                               flushToDiskInterval: TimeSpan.FromSeconds(1)));
         }

@@ -8,6 +8,10 @@ namespace Dalamud.Interface.Utility.Raii;
 // when created with using variables.
 public static partial class ImRaii
 {
+    // What every EndConditionally without success is returned as: it has nothing to end, so one object serves all.
+    // It is disposed up front; a later Dispose returns at the first check and never writes to it.
+    private static readonly IEndObject FailedEnd = CreateFailedEnd();
+
     private static int disabledCount = 0;
 
     public static IEndObject Child(ImU8String strId)
@@ -23,58 +27,58 @@ public static partial class ImRaii
         => new EndUnconditionally(ImGui.EndChild, ImGui.BeginChild(strId, size, border, flags));
 
     public static IEndObject DragDropTarget()
-        => new EndConditionally(ImGui.EndDragDropTarget, ImGui.BeginDragDropTarget());
+        => Conditional(ImGui.EndDragDropTarget, ImGui.BeginDragDropTarget());
 
     public static IEndObject DragDropSource()
-        => new EndConditionally(ImGui.EndDragDropSource, ImGui.BeginDragDropSource());
+        => Conditional(ImGui.EndDragDropSource, ImGui.BeginDragDropSource());
 
     public static IEndObject DragDropSource(ImGuiDragDropFlags flags)
-        => new EndConditionally(ImGui.EndDragDropSource, ImGui.BeginDragDropSource(flags));
+        => Conditional(ImGui.EndDragDropSource, ImGui.BeginDragDropSource(flags));
 
     public static IEndObject Popup(ImU8String id)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopup(id));
+        => Conditional(ImGui.EndPopup, ImGui.BeginPopup(id));
 
     public static IEndObject Popup(ImU8String id, ImGuiWindowFlags flags)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopup(id, flags));
+        => Conditional(ImGui.EndPopup, ImGui.BeginPopup(id, flags));
 
     public static IEndObject PopupModal(ImU8String id)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupModal(id));
+        => Conditional(ImGui.EndPopup, ImGui.BeginPopupModal(id));
 
     public static IEndObject PopupModal(ImU8String id, ImGuiWindowFlags flags)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupModal(id, flags));
+        => Conditional(ImGui.EndPopup, ImGui.BeginPopupModal(id, flags));
 
     public static IEndObject PopupModal(ImU8String id, ref bool open)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupModal(id, ref open));
+        => Conditional(ImGui.EndPopup, ImGui.BeginPopupModal(id, ref open));
 
     public static IEndObject PopupModal(ImU8String id, ref bool open, ImGuiWindowFlags flags)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupModal(id, ref open, flags));
+        => Conditional(ImGui.EndPopup, ImGui.BeginPopupModal(id, ref open, flags));
 
     public static IEndObject ContextPopup(ImU8String id)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupContextWindow(id));
+        => Conditional(ImGui.EndPopup, ImGui.BeginPopupContextWindow(id));
 
     public static IEndObject ContextPopup(ImU8String id, ImGuiPopupFlags flags)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupContextWindow(id, flags));
+        => Conditional(ImGui.EndPopup, ImGui.BeginPopupContextWindow(id, flags));
 
     public static IEndObject ContextPopupItem(ImU8String id)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupContextItem(id));
+        => Conditional(ImGui.EndPopup, ImGui.BeginPopupContextItem(id));
 
     public static IEndObject ContextPopupItem(ImU8String id, ImGuiPopupFlags flags)
-        => new EndConditionally(ImGui.EndPopup, ImGui.BeginPopupContextItem(id, flags));
+        => Conditional(ImGui.EndPopup, ImGui.BeginPopupContextItem(id, flags));
 
     public static IEndObject Combo(ImU8String label, ImU8String previewValue)
-        => new EndConditionally(ImGui.EndCombo, ImGui.BeginCombo(label, previewValue));
+        => Conditional(ImGui.EndCombo, ImGui.BeginCombo(label, previewValue));
 
     public static IEndObject Combo(ImU8String label, ImU8String previewValue, ImGuiComboFlags flags)
-        => new EndConditionally(ImGui.EndCombo, ImGui.BeginCombo(label, previewValue, flags));
+        => Conditional(ImGui.EndCombo, ImGui.BeginCombo(label, previewValue, flags));
 
     public static IEndObject Menu(ImU8String label)
-        => new EndConditionally(ImGui.EndMenu, ImGui.BeginMenu(label));
+        => Conditional(ImGui.EndMenu, ImGui.BeginMenu(label));
 
     public static IEndObject MenuBar()
-        => new EndConditionally(ImGui.EndMenuBar, ImGui.BeginMenuBar());
+        => Conditional(ImGui.EndMenuBar, ImGui.BeginMenuBar());
 
     public static IEndObject MainMenuBar()
-        => new EndConditionally(ImGui.EndMainMenuBar, ImGui.BeginMainMenuBar());
+        => Conditional(ImGui.EndMainMenuBar, ImGui.BeginMainMenuBar());
 
     public static IEndObject Group()
     {
@@ -113,49 +117,49 @@ public static partial class ImRaii
     }
 
     public static IEndObject ListBox(ImU8String label)
-        => new EndConditionally(ImGui.EndListBox, ImGui.BeginListBox(label));
+        => Conditional(ImGui.EndListBox, ImGui.BeginListBox(label));
 
     public static IEndObject ListBox(ImU8String label, Vector2 size)
-        => new EndConditionally(ImGui.EndListBox, ImGui.BeginListBox(label, size));
+        => Conditional(ImGui.EndListBox, ImGui.BeginListBox(label, size));
 
     public static IEndObject Table(ImU8String table, int numColumns)
-        => new EndConditionally(ImGui.EndTable, ImGui.BeginTable(table, numColumns));
+        => Conditional(ImGui.EndTable, ImGui.BeginTable(table, numColumns));
 
     public static IEndObject Table(ImU8String table, int numColumns, ImGuiTableFlags flags)
-        => new EndConditionally(ImGui.EndTable, ImGui.BeginTable(table, numColumns, flags));
+        => Conditional(ImGui.EndTable, ImGui.BeginTable(table, numColumns, flags));
 
     public static IEndObject Table(ImU8String table, int numColumns, ImGuiTableFlags flags, Vector2 outerSize)
-        => new EndConditionally(ImGui.EndTable, ImGui.BeginTable(table, numColumns, flags, outerSize));
+        => Conditional(ImGui.EndTable, ImGui.BeginTable(table, numColumns, flags, outerSize));
 
     public static IEndObject Table(ImU8String table, int numColumns, ImGuiTableFlags flags, Vector2 outerSize, float innerWidth)
-        => new EndConditionally(ImGui.EndTable, ImGui.BeginTable(table, numColumns, flags, outerSize, innerWidth));
+        => Conditional(ImGui.EndTable, ImGui.BeginTable(table, numColumns, flags, outerSize, innerWidth));
 
     public static IEndObject TabBar(ImU8String label)
-        => new EndConditionally(ImGui.EndTabBar, ImGui.BeginTabBar(label));
+        => Conditional(ImGui.EndTabBar, ImGui.BeginTabBar(label));
 
     public static IEndObject TabBar(ImU8String label, ImGuiTabBarFlags flags)
-        => new EndConditionally(ImGui.EndTabBar, ImGui.BeginTabBar(label, flags));
+        => Conditional(ImGui.EndTabBar, ImGui.BeginTabBar(label, flags));
 
     public static IEndObject TabItem(ImU8String label)
-        => new EndConditionally(ImGui.EndTabItem, ImGui.BeginTabItem(label));
+        => Conditional(ImGui.EndTabItem, ImGui.BeginTabItem(label));
 
     public static unsafe IEndObject TabItem(byte* label, ImGuiTabItemFlags flags)
-        => new EndConditionally(ImGui.EndTabItem, ImGui.BeginTabItem(label, flags));
+        => Conditional(ImGui.EndTabItem, ImGui.BeginTabItem(label, flags));
 
     public static unsafe IEndObject TabItem(ImU8String label, ImGuiTabItemFlags flags)
-        => new EndConditionally(ImGui.EndTabItem, ImGui.BeginTabItem(label, flags));
+        => Conditional(ImGui.EndTabItem, ImGui.BeginTabItem(label, flags));
 
     public static IEndObject TabItem(ImU8String label, ref bool open)
-        => new EndConditionally(ImGui.EndTabItem, ImGui.BeginTabItem(label, ref open));
+        => Conditional(ImGui.EndTabItem, ImGui.BeginTabItem(label, ref open));
 
     public static IEndObject TabItem(ImU8String label, ref bool open, ImGuiTabItemFlags flags)
-        => new EndConditionally(ImGui.EndTabItem, ImGui.BeginTabItem(label, ref open, flags));
+        => Conditional(ImGui.EndTabItem, ImGui.BeginTabItem(label, ref open, flags));
 
     public static IEndObject TreeNode(ImU8String label)
-        => new EndConditionally(ImGui.TreePop, ImGui.TreeNodeEx(label));
+        => Conditional(ImGui.TreePop, ImGui.TreeNodeEx(label));
 
     public static IEndObject TreeNode(ImU8String label, ImGuiTreeNodeFlags flags)
-        => new EndConditionally(flags.HasFlag(ImGuiTreeNodeFlags.NoTreePushOnOpen) ? Nop : ImGui.TreePop, ImGui.TreeNodeEx(label, flags));
+        => Conditional(flags.HasFlag(ImGuiTreeNodeFlags.NoTreePushOnOpen) ? Nop : ImGui.TreePop, ImGui.TreeNodeEx(label, flags));
 
     public static IEndObject Disabled()
     {
@@ -167,7 +171,7 @@ public static partial class ImRaii
     public static IEndObject Disabled(bool disabled)
     {
         if (!disabled)
-            return new EndConditionally(Nop, false);
+            return FailedEnd;
 
         ImGui.BeginDisabled();
         ++disabledCount;
@@ -178,8 +182,14 @@ public static partial class ImRaii
     {
         var oldCount = disabledCount;
         if (oldCount == 0)
-            return new EndConditionally(Nop, false);
+            return FailedEnd;
 
+        return EnableAll(oldCount);
+    }
+
+    // Kept out of Enabled(): a method with a capturing local function allocates its closure on entry, early return or not.
+    private static IEndObject EnableAll(int oldCount)
+    {
         void Restore()
         {
             disabledCount += oldCount;
@@ -213,6 +223,17 @@ public static partial class ImRaii
         return new EndUnconditionally(Widget.EndFramedGroup, true);
     }
     */
+
+    // A successful result must be its own object: its Disposed flag is what keeps a second Dispose from ending twice.
+    internal static IEndObject Conditional(Action endAction, bool success)
+        => success ? new EndConditionally(endAction, true) : FailedEnd;
+
+    private static IEndObject CreateFailedEnd()
+    {
+        IEndObject end = new EndConditionally(Nop, false);
+        end.Dispose();
+        return end;
+    }
 
     // Used to avoid tree pops when flag for no push is set.
     private static void Nop()

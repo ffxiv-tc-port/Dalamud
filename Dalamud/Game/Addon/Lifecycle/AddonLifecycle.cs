@@ -8,7 +8,10 @@ using Dalamud.Hooking.Internal;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Logging.Internal;
+using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -165,6 +168,8 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
             if (!string.IsNullOrWhiteSpace(listener.AddonName) && !args.IsAddon(listener.AddonName))
                 continue;
 
+            var meter = listener.AllocationMeter;
+            var allocatedBefore = meter is null ? default : PluginAllocationMeter.Begin();
             try
             {
                 listener.FunctionDelegate.Invoke(eventType, args);
@@ -173,6 +178,8 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
             {
                 Log.Error(e, $"Exception in {blame} during {eventType} invoke.");
             }
+
+            meter?.End(allocatedBefore);
         }
     }
 
@@ -180,7 +187,7 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
     {
         // Hook the addon's ReceiveEvent function here, but only enable the hook if we have an active listener.
         // Disallows hooking the core internal event handler.
-        var addonName = addon->NameString;
+        var addonName = NativeStringUtil.GetAddonName(addon);
         var receiveEventAddress = (nint)addon->VirtualTable->ReceiveEvent;
         if (receiveEventAddress != this.disallowedReceiveEventAddress)
         {
@@ -262,7 +269,7 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
     {
         try
         {
-            var addonName = atkUnitBase[0]->NameString;
+            var addonName = NativeStringUtil.GetAddonName(atkUnitBase[0]);
             this.UnregisterReceiveEventHook(addonName);
         }
         catch (Exception e)
@@ -388,6 +395,16 @@ internal class AddonLifecyclePluginScoped : IInternalDisposableService, IAddonLi
     private readonly AddonLifecycle addonLifecycleService = Service<AddonLifecycle>.Get();
 
     private readonly List<AddonLifecycleEventListener> eventListeners = new();
+    private readonly PluginAllocationMeter allocationMeter;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AddonLifecyclePluginScoped"/> class.
+    /// </summary>
+    /// <param name="plugin">The plugin this instance belongs to.</param>
+    internal AddonLifecyclePluginScoped(LocalPlugin plugin)
+    {
+        this.allocationMeter = new PluginAllocationMeter(plugin.InternalName, PluginAllocationMeter.AddonEvents);
+    }
 
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
@@ -396,6 +413,8 @@ internal class AddonLifecyclePluginScoped : IInternalDisposableService, IAddonLi
         {
             this.addonLifecycleService.UnregisterListener(listener);
         }
+
+        this.allocationMeter.Retire();
     }
 
     /// <inheritdoc/>
@@ -410,7 +429,7 @@ internal class AddonLifecyclePluginScoped : IInternalDisposableService, IAddonLi
     /// <inheritdoc/>
     public void RegisterListener(AddonEvent eventType, string addonName, IAddonLifecycle.AddonEventDelegate handler)
     {
-        var listener = new AddonLifecycleEventListener(eventType, addonName, handler);
+        var listener = new AddonLifecycleEventListener(eventType, addonName, handler) { AllocationMeter = this.allocationMeter };
         this.eventListeners.Add(listener);
         this.addonLifecycleService.RegisterListener(listener);
     }

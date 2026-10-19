@@ -52,6 +52,13 @@ public static class Troubleshooting
         }
     }
 
+    /// <summary>Forgets <see cref="LastException"/>; called whenever a plugin unloads.</summary>
+    /// <remarks>
+    /// An exception thrown through an unloadable plugin keeps that plugin in memory through its stack trace. Nothing
+    /// reads this property, so it is cleared whichever plugin threw it.
+    /// </remarks>
+    internal static void ForgetLastException() => LastException = null;
+
     /// <summary>
     /// Log troubleshooting information in a parseable format to Serilog.
     /// </summary>
@@ -66,7 +73,8 @@ public static class Troubleshooting
         {
             var payload = new TroubleshootingPayload
             {
-                LoadedPlugins = pluginManager?.InstalledPlugins?.Select(x => x.Manifest as LocalPluginManifest)?.OrderByDescending(x => x.InternalName).ToArray(),
+                LoadedPlugins = pluginManager?.InstalledPlugins?.Select(x => x.Manifest as LocalPluginManifest)?.OrderByDescending(x => x.InternalName)
+                    .Select(x => new LoadedPluginEntry { InternalName = x.InternalName, AssemblyVersion = x.AssemblyVersion }).ToArray(),
                 PluginStates = pluginManager?.InstalledPlugins?.Where(x => !x.IsDev).ToDictionary(x => x.Manifest.InternalName, x => x.IsBanned ? "Banned" : x.State.ToString()),
                 EverStartedLoadingPlugins = pluginManager?.InstalledPlugins.Where(x => x.HasEverStartedLoad).Select(x => x.InternalName).ToList(),
                 DalamudVersion = Util.GetScmVersion(),
@@ -99,9 +107,18 @@ public static class Troubleshooting
         public string? Context { get; set; }
     }
 
+    // 每個插件只留讀 log 的工具會用的兩欄；鍵名與值的格式同完整 manifest 的同名欄位，舊的解析照樣讀得懂。
+    // 完整 manifest（描述、更新紀錄、下載網址…）讓這一行每次約 150 KB，而那些都在磁碟的 installedPlugins 裡。
+    private class LoadedPluginEntry
+    {
+        public string InternalName { get; set; }
+
+        public Version AssemblyVersion { get; set; }
+    }
+
     private class TroubleshootingPayload
     {
-        public LocalPluginManifest[]? LoadedPlugins { get; set; }
+        public LoadedPluginEntry[]? LoadedPlugins { get; set; }
 
         public Dictionary<string, string>? PluginStates { get; set; }
 

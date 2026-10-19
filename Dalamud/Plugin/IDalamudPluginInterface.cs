@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Net.Http;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading.Tasks;
@@ -294,6 +295,19 @@ public interface IDalamudPluginInterface : IServiceProvider
     /// </summary>
     /// <returns>directory with path of AppData/XIVLauncher/pluginConfig/PluginInternalName/loc.</returns>
     string GetPluginLocDirectory();
+
+    /// <summary>
+    /// Create an <see cref="HttpClient"/> that attaches the GitHub token configured in Dalamud
+    /// to requests aimed at the ffxiv-tc-port organisation's GitHub hosts.
+    /// </summary>
+    /// <remarks>
+    /// Authenticated: raw.githubusercontent.com paths whose first segment is that organisation,
+    /// and api.github.com paths under /repos/ffxiv-tc-port/. Every other host and owner is left
+    /// byte-for-byte unchanged, as is an Authorization header the caller set itself.
+    /// With no token configured no header is added, so the client behaves like a plain one.
+    /// </remarks>
+    /// <returns>A new client. The caller owns it and is responsible for disposing it.</returns>
+    HttpClient CreateGitHubHttpClient();
 
     /// <summary>
     /// Create a new object of the provided type using its default constructor, then inject objects and properties.

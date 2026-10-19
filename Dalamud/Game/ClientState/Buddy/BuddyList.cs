@@ -105,7 +105,7 @@ internal sealed partial class BuddyList : IServiceType, IBuddyList
     }
 
     /// <inheritdoc/>
-    public IBuddyMember? CreateBuddyMemberReference(IntPtr address)
+    public unsafe IBuddyMember? CreateBuddyMemberReference(IntPtr address)
     {
         if (address == IntPtr.Zero)
             return null;
@@ -113,11 +113,11 @@ internal sealed partial class BuddyList : IServiceType, IBuddyList
         if (!this.playerState.IsLoaded)
             return null;
 
-        var buddy = new BuddyMember(address);
-        if (buddy.ObjectId == InvalidObjectID)
+        // Same field BuddyMember.ObjectId reads, checked before allocating the wrapper.
+        if (((CSBuddy.BuddyMember*)address)->EntityId == InvalidObjectID)
             return null;
 
-        return buddy;
+        return new BuddyMember(address);
     }
 }
 

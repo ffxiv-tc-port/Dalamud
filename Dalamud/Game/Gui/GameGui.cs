@@ -108,7 +108,18 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
     /// <inheritdoc/>
     public bool OpenMapWithMapLink(MapLinkPayload mapLink)
-        => RaptureAtkModule.Instance()->OpenMapWithMapLink(mapLink.DataString);
+    {
+        // RaptureAtkModule.Instance() is a hand-written wrapper that walks
+        // Framework -> UIModule -> GetRaptureAtkModule(), returning null at each step if the previous
+        // one is null. It therefore legitimately returns null before the UI module exists. Reading
+        // through it raises an AccessViolationException, a corrupted-state exception that no
+        // try/catch can recover from, so bail out and report failure instead.
+        var raptureAtkModule = RaptureAtkModule.Instance();
+        if (raptureAtkModule == null)
+            return false;
+
+        return raptureAtkModule->OpenMapWithMapLink(mapLink.DataString);
+    }
 
     /// <inheritdoc/>
     public bool WorldToScreen(Vector3 worldPos, out Vector2 screenPos)
@@ -120,7 +131,20 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
         // Read current ViewProjectionMatrix plus game window size
         var windowPos = ImGuiHelpers.MainViewport.Pos;
         var viewProjectionMatrix = Control.Instance()->ViewProjectionMatrix;
+
+        // Device.Instance() resolves a [StaticAddress(..., isPointer: true)] slot: the pointer is null
+        // until the graphics device has been created, and reading Width/Height through it raises an
+        // AccessViolationException that no try/catch can recover from. Bail out through the same
+        // failure path the degenerate-W case below uses. Control.Instance() above deliberately gets no
+        // such check: without isPointer the static address *is* the struct, so it can only throw.
         var device = Device.Instance();
+        if (device == null)
+        {
+            screenPos = Vector2.Zero;
+            inView = false;
+            return false;
+        }
+
         float width = device->Width;
         float height = device->Height;
 
@@ -162,7 +186,19 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
             return false;
         }
 
-        var camera = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance()->CurrentCamera;
+        // CameraManager.Instance() resolves a [StaticAddress(..., isPointer: true)] slot that is null
+        // until the scene camera manager has been built. The camera == null check below is too late:
+        // evaluating CurrentCamera already dereferences the manager, an AccessViolationException that
+        // no try/catch can recover from. Take the manager out first and fail through the exact same
+        // path the null-camera case already uses.
+        var cameraManager = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
+        if (cameraManager == null)
+        {
+            worldPos = Vector3.Zero;
+            return false;
+        }
+
+        var camera = cameraManager->CurrentCamera;
         if (camera == null)
         {
             worldPos = Vector3.Zero;
@@ -254,7 +290,17 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
     /// Indicates if the game is in the lobby scene (title screen, chara select, chara make, aesthetician etc.).
     /// </summary>
     /// <returns>A value indicating whether the game is in the lobby scene.</returns>
-    internal bool IsInLobby() => RaptureAtkModule.Instance()->CurrentUIScene.StartsWith("LobbyMain"u8);
+    internal bool IsInLobby()
+    {
+        // See OpenMapWithMapLink for why Instance() can be null here. If the module does not exist
+        // yet the game has not even reached the lobby, so report true: every caller uses this to
+        // gate rendering of character data that is equally unavailable in that state.
+        var raptureAtkModule = RaptureAtkModule.Instance();
+        if (raptureAtkModule == null)
+            return true;
+
+        return raptureAtkModule->CurrentUIScene.StartsWith("LobbyMain"u8);
+    }
 
     /// <summary>
     /// Sets the current background music.
@@ -267,7 +313,19 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
     /// Resets the current background music.
     /// </summary>
     /// <param name="sceneId">The BGM scene index.</param>
-    internal void ResetBgm(uint sceneId = 2) => BGMSystem.Instance()->ResetBGM(sceneId);
+    internal void ResetBgm(uint sceneId = 2)
+    {
+        // BGMSystem.Instance() resolves a [StaticAddress(..., isPointer: true)] slot that is null until
+        // the game has built the BGM system. ResetBGM is a [MemberFunction], so a null "this" is handed
+        // straight to native code: an AccessViolationException that no try/catch can recover from.
+        // Nothing can observe whether this ran (the method returns void and both callers ignore it),
+        // so skipping quietly is the correct no-op.
+        var bgmSystem = BGMSystem.Instance();
+        if (bgmSystem == null)
+            return;
+
+        bgmSystem->ResetBGM(sceneId);
+    }
 
     /// <summary>
     /// Reset the stored "UI hide" state.
@@ -338,7 +396,14 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
     {
         this.setUiVisibilityHook.Original(thisPtr, uiVisible);
 
-        this.GameUiHidden = !RaptureAtkModule.Instance()->IsUiVisible;
+        // See OpenMapWithMapLink for why Instance() can be null here. Leave GameUiHidden at its
+        // previous value and skip the event rather than dereferencing null; the next toggle will
+        // resynchronise it.
+        var raptureAtkModule = RaptureAtkModule.Instance();
+        if (raptureAtkModule == null)
+            return;
+
+        this.GameUiHidden = !raptureAtkModule->IsUiVisible;
         this.UiHideToggled?.InvokeSafely(this, this.GameUiHidden);
 
         Log.Debug("GameUiHidden: {0}", this.GameUiHidden);

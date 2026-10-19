@@ -208,6 +208,22 @@ internal unsafe class ObjectVTableHook : IDisposable
 
         /// <inheritdoc/>
         public override void Disable() => hook.ResetVtableEntry(methodIndex);
+
+        /// <inheritdoc/>
+        public override void Dispose()
+        {
+            if (this.IsDisposed)
+                return;
+
+            // Hook<T>.Dispose only flips IsDisposed; unlike every other backend (Reloaded, MinHook,
+            // FunctionPointerVariable) it does not unhook. Consumers snapshot the hook field and skip
+            // the original once IsDisposed is set, so leaving the vtable entry pointing at the detour
+            // makes those calls silently do nothing until the owning ObjectVTableHook is disposed too.
+            // Reset the entry first, so the slot always holds either a live detour or the original.
+            this.Disable();
+
+            base.Dispose();
+        }
     }
 }
 

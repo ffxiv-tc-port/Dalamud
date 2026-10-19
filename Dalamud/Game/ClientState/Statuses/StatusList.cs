@@ -110,6 +110,28 @@ public sealed unsafe partial class StatusList
 
         return (IntPtr)Unsafe.AsPointer(ref this.Struct->Status[index]);
     }
+
+    /// <summary>
+    /// Gets what the indexer gives for a slot that holds a status, and null for every other slot.
+    /// The checks are the indexer's, in its order; an empty slot is rejected before a wrapper is allocated.
+    /// </summary>
+    /// <param name="index">Status Index.</param>
+    /// <returns>The status, or null if the indexer gives null or the slot is empty.</returns>
+    private Status? GetOccupiedStatus(int index)
+    {
+        // Zero for an index outside the list, which is also where the indexer gives up.
+        var addr = this.GetStatusAddress(index);
+        if (addr == IntPtr.Zero)
+            return null;
+
+        if (!Service<PlayerState>.Get().IsLoaded)
+            return null;
+
+        if (((FFXIVClientStructs.FFXIV.Client.Game.Status*)addr)->StatusId == 0)
+            return null;
+
+        return new Status(addr);
+    }
 }
 
 /// <summary>
@@ -134,9 +156,9 @@ public sealed partial class StatusList : IReadOnlyCollection<Status>, ICollectio
     {
         for (var i = 0; i < this.Length; i++)
         {
-            var status = this[i];
+            var status = this.GetOccupiedStatus(i);
 
-            if (status == null || status.StatusId == 0)
+            if (status == null)
                 continue;
 
             yield return status;

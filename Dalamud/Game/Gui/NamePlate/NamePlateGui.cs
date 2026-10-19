@@ -73,11 +73,31 @@ internal sealed class NamePlateGui : IInternalDisposableService, INamePlateGui
     public unsafe void RequestRedraw()
     {
         var addon = (AddonNamePlate*)(nint)this.gameGui.GetAddonByName("NamePlate");
-        if (addon != null)
-        {
-            addon->DoFullUpdate = 1;
-            AtkStage.Instance()->GetNumberArrayData(NumberArrayType.NamePlate)->SetValue(NumberArrayFullUpdateIndex, 1);
-        }
+        if (addon == null)
+            return;
+
+        // AtkStage.Instance() resolves a [StaticAddress(..., isPointer: true)] slot that is null until
+        // the stage has been created, and the array getters may return null in their own right.
+        // Dereferencing any link of that chain raises an AccessViolationException, which try/catch
+        // cannot catch. Resolve the whole chain up front and only write once every link is known good,
+        // so a missing array cannot leave DoFullUpdate half-applied.
+        var stage = AtkStage.Instance();
+        if (stage == null)
+            return;
+
+        // GetNumberArrayData(NumberArrayType) is just GetNumberArrayData()[(int)type], i.e. it
+        // dereferences the table pointer before indexing it; splitting the two steps costs nothing
+        // and removes that unverified dereference.
+        var numberArrays = stage->GetNumberArrayData();
+        if (numberArrays == null)
+            return;
+
+        var numberData = numberArrays[(int)NumberArrayType.NamePlate];
+        if (numberData == null)
+            return;
+
+        addon->DoFullUpdate = 1;
+        numberData->SetValue(NumberArrayFullUpdateIndex, 1);
     }
 
     /// <inheritdoc/>

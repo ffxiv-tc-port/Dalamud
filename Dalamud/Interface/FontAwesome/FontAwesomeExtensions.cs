@@ -9,6 +9,12 @@ namespace Dalamud.Interface;
 /// </summary>
 public static class FontAwesomeExtensions
 {
+    // Every defined icon except None lies in the private use area; strings are built on first use.
+    private const int IconStringCacheFirst = 0xE000;
+    private const int IconStringCacheLast = 0xF8FF;
+
+    private static readonly string?[] IconStringCache = new string?[IconStringCacheLast - IconStringCacheFirst + 1];
+
     /// <summary>
     /// Convert the FontAwesomeIcon to a <see cref="char"/> type.
     /// </summary>
@@ -26,7 +32,13 @@ public static class FontAwesomeExtensions
     /// <returns>The converted icon.</returns>
     public static string ToIconString(this FontAwesomeIcon icon)
     {
-        return string.Empty + (char)icon;
+        var c = (char)icon;
+        var index = c - IconStringCacheFirst;
+        if ((uint)index >= (uint)IconStringCache.Length)
+            return c.ToString();
+
+        // Racing threads may each build a string; any of them is equal, so the last write simply wins.
+        return IconStringCache[index] ??= c.ToString();
     }
 
     /// <summary>

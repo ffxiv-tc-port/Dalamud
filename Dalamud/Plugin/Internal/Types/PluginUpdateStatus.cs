@@ -79,6 +79,7 @@ internal class PluginUpdateStatus
         StatusKind.FailedDownload => Loc.Localize("InstallerUpdateStatusFailedDownload", "Download failed"),
         StatusKind.FailedUnload => Loc.Localize("InstallerUpdateStatusFailedUnload", "Unload failed"),
         StatusKind.FailedLoad => Loc.Localize("InstallerUpdateStatusFailedLoad", "Load failed"),
+        StatusKind.AlreadyUpToDate => Loc.Localize("InstallerUpdateStatusAlreadyUpToDate", "已是最新版本"),
         StatusKind.Success => Loc.Localize("InstallerUpdateStatusSuccess", "Success"),
         _ => "???",
     };

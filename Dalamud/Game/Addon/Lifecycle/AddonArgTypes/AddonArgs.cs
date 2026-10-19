@@ -1,4 +1,5 @@
 using Dalamud.Game.NativeWrapper;
+using Dalamud.Utility;
 
 namespace Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 
@@ -46,10 +47,8 @@ public abstract unsafe class AddonArgs
         if (name.Length is 0 or > 32)
             return false;
 
-        if (string.IsNullOrEmpty(this.Addon.Name))
-            return false;
-
-        return name == this.Addon.Name;
+        // Same result as name == this.Addon.Name (a non-empty name never equals an empty one); runs per listener per event.
+        return NativeStringUtil.AddonNameEquals(this.Addon.Struct, name);
     }
 
     /// <summary>
@@ -69,11 +68,10 @@ public abstract unsafe class AddonArgs
     {
         if (this.Addon.IsNull) return InvalidAddon;
 
-        var name = this.Addon.Name;
-
-        if (string.IsNullOrEmpty(name))
+        // The name decodes empty exactly when its first byte is NUL: checked without decoding, so the cache saves the string.
+        if (this.Addon.Struct->Name[0] == 0)
             return InvalidAddon;
 
-        return this.addonName ??= name;
+        return this.addonName ??= this.Addon.Name;
     }
 }

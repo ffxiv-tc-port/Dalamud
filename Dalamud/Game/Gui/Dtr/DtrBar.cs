@@ -264,6 +264,8 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
             toRemove.Storage->Dtor(true);
             toRemove.Storage = null;
         }
+
+        toRemove.AppliedText = null;
     }
 
     /// <summary>
@@ -297,7 +299,10 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
         {
             found = this.entries[i].Title == title;
             if (found)
+            {
                 this.entries[i].Dirty = true;
+                this.entries[i].AppliedText = null;
+            }
         }
 
         this.entriesLock.ExitReadLock();
@@ -385,19 +390,29 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
                 if (nodeHidden)
                     node->ToggleVisibility(true);
 
-                if (data is { Added: true, Text: not null, TextNode: not null } && (data.Dirty || nodeHidden))
+                var text = data.Text;
+                if (data is { Added: true, TextNode: not null } && text is not null && (data.Dirty || nodeHidden))
                 {
-                    if (data.Storage == null)
+                    // Plugins that set the same text every frame would otherwise re-encode and re-measure every frame.
+                    if (nodeHidden)
+                        data.AppliedText = null;
+
+                    var encoded = data.EncodeIfChanged(text);
+                    if (encoded is not null)
                     {
-                        data.Storage = Utf8String.CreateEmpty();
+                        if (data.Storage == null)
+                        {
+                            data.Storage = Utf8String.CreateEmpty();
+                        }
+
+                        data.Storage->SetString(encoded);
+                        node->SetText(data.Storage->StringPtr);
+
+                        ushort w = 0, h = 0;
+                        node->GetTextDrawSize(&w, &h, node->NodeText.StringPtr);
+                        node->SetWidth(w);
+                        data.AppliedText = encoded;
                     }
-
-                    data.Storage->SetString(data.Text.EncodeWithNullTerminator());
-                    node->SetText(data.Storage->StringPtr);
-
-                    ushort w = 0, h = 0;
-                    node->GetTextDrawSize(&w, &h, node->NodeText.StringPtr);
-                    node->SetWidth(w);
                 }
 
                 var elementWidth = data.TextNode->Width + this.configuration.DtrSpacing;
@@ -438,6 +453,11 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
         for (var index = 0; index < addon->UldManager.NodeListCount; index++)
         {
             var node = addon->UldManager.NodeList[index];
+
+            // NodeListCount only bounds the array; individual slots may still be null.
+            // Dereferencing one is an AccessViolation, which cannot be caught.
+            if (node == null) continue;
+
             if (node->IsVisible())
             {
                 var nodeId = node->NodeId;
@@ -491,7 +511,12 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
     {
         for (var i = 0; i < dtr->UldManager.NodeListCount; i++)
         {
-            if (dtr->UldManager.NodeList[i]->NodeId > 1000)
+            var node = dtr->UldManager.NodeList[i];
+
+            // NodeListCount only bounds the array; individual slots may still be null.
+            if (node == null) continue;
+
+            if (node->NodeId > 1000)
                 return true;
         }
 
@@ -526,19 +551,20 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
 
         var lastChild = dtr->RootNode->ChildNode;
         while (lastChild->PrevSiblingNode != null) lastChild = lastChild->PrevSiblingNode;
-        Log.Debug($"Found last sibling: {(ulong)lastChild:X}");
+        Log.Verbose($"Found last sibling: {(ulong)lastChild:X}");
         lastChild->PrevSiblingNode = (AtkResNode*)node;
         node->ParentNode = lastChild->ParentNode;
         node->NextSiblingNode = lastChild;
 
         dtr->RootNode->ChildCount = (ushort)(dtr->RootNode->ChildCount + 1);
-        Log.Debug("Set last sibling of DTR and updated child count");
+        Log.Verbose("Set last sibling of DTR and updated child count");
 
         dtr->UldManager.UpdateDrawNodeList();
         dtr->UpdateCollisionNodeList(false);
-        Log.Debug("Updated node draw list");
+        Log.Verbose("Updated node draw list");
 
         data.Dirty = true;
+        data.AppliedText = null;
         return true;
     }
 
@@ -569,10 +595,10 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
         data.TextNode = null;
 
         dtr->RootNode->ChildCount = (ushort)(dtr->RootNode->ChildCount - 1);
-        Log.Debug("Set last sibling of DTR and updated child count");
+        Log.Verbose("Set last sibling of DTR and updated child count");
         dtr->UldManager.UpdateDrawNodeList();
         dtr->UpdateCollisionNodeList(false);
-        Log.Debug("Updated node draw list");
+        Log.Verbose("Updated node draw list");
     }
 
     private AtkTextNode* MakeNode(uint nodeId)

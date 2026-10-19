@@ -60,6 +60,12 @@
         <!-- CS1702  - Runtime policy may be needed -->
     </PropertyGroup>
 
+    <ItemGroup Label="Runtime configuration">
+        <!-- Thread pool threads never retire: a retiring thread that touched a [ThreadStatic] of an unloaded plugin
+             frees a TLS handle in whichever plugin reused the index and corrupts the GC heap (dotnet/runtime#135441). -->
+        <RuntimeHostConfigurationOption Include="System.Threading.ThreadPool.ThreadTimeoutMs" Value="-1" />
+    </ItemGroup>
+
     <ItemGroup>
         <PackageReference Include="BitFaster.Caching" />
         <PackageReference Include="CheapLoc" />

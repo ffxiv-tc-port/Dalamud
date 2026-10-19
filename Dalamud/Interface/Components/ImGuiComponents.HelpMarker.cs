@@ -1,5 +1,4 @@
 using Dalamud.Bindings.ImGui;
-using Dalamud.Interface.Utility.Raii;
 using FFXIVClientStructs.FFXIV.Common.Math;
 
 namespace Dalamud.Interface.Components;
@@ -23,29 +22,51 @@ public static partial class ImGuiComponents
     /// <param name="color">The color of the icon.</param>
     public static void HelpMarker(string helpText, FontAwesomeIcon icon, Vector4? color = null)
     {
-        using var col = new ImRaii.Color();
-
-        if (color.HasValue)
+        var colorCount = 0;
+        try
         {
-            col.Push(ImGuiCol.TextDisabled, color.Value);
-        }
-
-        ImGui.SameLine();
-
-        using (ImRaii.PushFont(UiBuilder.IconFont))
-        {
-            ImGui.TextDisabled(icon.ToIconString());
-        }
-
-        if (ImGui.IsItemHovered())
-        {
-            using (ImRaii.Tooltip())
+            if (color.HasValue)
             {
-                using (ImRaii.TextWrapPos(ImGui.GetFontSize() * 35.0f))
+                PushColorTracked(ImGuiCol.TextDisabled, color.Value, ref colorCount);
+            }
+
+            ImGui.SameLine();
+
+            var iconChar = icon.ToIconChar();
+            PushFontTracked(UiBuilder.IconFont);
+            try
+            {
+                ImGui.TextDisabled(new ReadOnlySpan<char>(in iconChar));
+            }
+            finally
+            {
+                PopFontTracked();
+            }
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                try
                 {
-                    ImGui.Text(helpText);
+                    ImGui.PushTextWrapPos(ImGui.GetFontSize() * 35.0f);
+                    try
+                    {
+                        ImGui.Text(helpText);
+                    }
+                    finally
+                    {
+                        ImGui.PopTextWrapPos();
+                    }
+                }
+                finally
+                {
+                    ImGui.EndTooltip();
                 }
             }
+        }
+        finally
+        {
+            PopColorsTracked(colorCount);
         }
     }
 }

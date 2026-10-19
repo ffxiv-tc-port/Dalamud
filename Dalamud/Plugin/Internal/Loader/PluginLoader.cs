@@ -4,6 +4,10 @@
 using System.Reflection;
 using System.Runtime.Loader;
 
+using Dalamud.Utility.Internal;
+
+using Serilog;
+
 namespace Dalamud.Plugin.Internal.Loader;
 
 /// <summary>
@@ -74,7 +78,7 @@ internal class PluginLoader : IDisposable
             throw new InvalidOperationException("Reload cannot be used because IsUnloadable is false");
         }
 
-        this.context.Unload();
+        this.UnloadContext();
         this.context = (ManagedLoadContext)this.contextBuilder.Build();
 
         GC.Collect();
@@ -114,7 +118,7 @@ internal class PluginLoader : IDisposable
         this.disposed = true;
 
         if (this.context.IsCollectible)
-            this.context.Unload();
+            this.UnloadContext();
     }
 
     private static AssemblyLoadContextBuilder CreateLoadContextBuilder(LoaderConfig config)
@@ -155,6 +159,22 @@ internal class PluginLoader : IDisposable
         // See there for more details.
 
         return builder;
+    }
+
+    private void UnloadContext()
+    {
+        GeneratedTypeOwners.MarkUnloading(this.context);
+        try
+        {
+            this.config.BeforeUnload?.Invoke(this.context);
+        }
+        catch (Exception ex)
+        {
+            // Unload regardless: at worst a cache keeps this context in memory.
+            Log.Warning(ex, "Could not release cached references to {Context} before unloading it", this.context.Name);
+        }
+
+        this.context.Unload();
     }
 
     private void EnsureNotDisposed()

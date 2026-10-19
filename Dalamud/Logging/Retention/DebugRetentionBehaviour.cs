@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 
 namespace Dalamud.Logging.Retention;
 
@@ -7,9 +7,21 @@ namespace Dalamud.Logging.Retention;
 /// </summary>
 internal class DebugRetentionBehaviour : RetentionBehaviour
 {
+    /// <summary>
+    /// Total size budget for archived logs. Smaller than the release budget because a development
+    /// checkout is rebuilt and relaunched constantly, so the archive would otherwise fill up with
+    /// dozens of near-identical short sessions.
+    /// </summary>
+    private const long MaxArchivedBytes = 128L * 1024 * 1024;
+
+    /// <summary>
+    /// Maximum number of archived logs to keep.
+    /// </summary>
+    private const int MaxArchivedCount = 10;
+
     /// <inheritdoc/>
     public override void Apply(FileInfo logFile, FileInfo rolloverFile)
     {
-        CullLogFile(logFile, 1 * 1024 * 1024, rolloverFile, 10 * 1024 * 1024);
+        ArchiveAndPrune(logFile, rolloverFile, MaxArchivedBytes, MaxArchivedCount);
     }
 }
