@@ -16,6 +16,7 @@ using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Hooking;
 using Dalamud.Networking.Http;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 using FFXIVClientStructs.FFXIV.Client.Network;
@@ -33,21 +34,25 @@ namespace Dalamud.Game.Network.Internal;
 [ServiceManager.EarlyLoadedService]
 internal unsafe class NetworkHandlers : IInternalDisposableService
 {
+    private const string MarketFeature = "市場資料（查價、購買）的上傳與插件事件";
+
     private readonly IMarketBoardUploader uploader;
 
-    private readonly IDisposable handleMarketBoardItemRequest;
-    private readonly IDisposable handleMarketTaxRates;
-    private readonly IDisposable handleMarketBoardPurchaseHandler;
+    // Null when that upload has nothing to feed it (see FindHookTargets).
+    private readonly IDisposable? handleMarketBoardItemRequest;
+    private readonly IDisposable? handleMarketTaxRates;
+    private readonly IDisposable? handleMarketBoardPurchaseHandler;
 
     private readonly NetworkHandlersAddressResolver addressResolver;
 
-    private readonly Hook<PublicContentDirector.Delegates.HandleEnterContentInfoPacket> cfPopHook;
-    private readonly Hook<PacketDispatcher.Delegates.HandleMarketBoardPurchasePacket> mbPurchaseHook;
-    private readonly Hook<InfoProxyItemSearch.Delegates.ProcessItemHistory> mbHistoryHook;
-    private readonly Hook<CustomTalkReceiveResponse> customTalkHook; // used for marketboard taxes
-    private readonly Hook<PacketDispatcher.Delegates.HandleMarketBoardItemRequestStartPacket> mbItemRequestStartHook;
-    private readonly Hook<InfoProxyItemSearch.Delegates.AddPage> mbOfferingsHook;
-    private readonly Hook<InfoProxyItemSearch.Delegates.SendPurchaseRequestPacket> mbSendPurchaseRequestHook;
+    // Null when the address is missing or misplaced; the five market hooks are all present or all null.
+    private readonly Hook<PublicContentDirector.Delegates.HandleEnterContentInfoPacket>? cfPopHook;
+    private readonly Hook<PacketDispatcher.Delegates.HandleMarketBoardPurchasePacket>? mbPurchaseHook;
+    private readonly Hook<InfoProxyItemSearch.Delegates.ProcessItemHistory>? mbHistoryHook;
+    private readonly Hook<CustomTalkReceiveResponse>? customTalkHook; // used for marketboard taxes
+    private readonly Hook<PacketDispatcher.Delegates.HandleMarketBoardItemRequestStartPacket>? mbItemRequestStartHook;
+    private readonly Hook<InfoProxyItemSearch.Delegates.AddPage>? mbOfferingsHook;
+    private readonly Hook<InfoProxyItemSearch.Delegates.SendPurchaseRequestPacket>? mbSendPurchaseRequestHook;
 
     [ServiceManager.ServiceDependency]
     private readonly DalamudConfiguration configuration = Service<DalamudConfiguration>.Get();
@@ -143,45 +148,62 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
             }
         });
 
-        this.handleMarketBoardItemRequest = this.HandleMarketBoardItemRequest();
-        this.handleMarketTaxRates = this.HandleMarketTaxRates();
-        this.handleMarketBoardPurchaseHandler = this.HandleMarketBoardPurchaseHandler();
+        var targets = HookTargets.For(nameof(NetworkHandlers), sigScanner);
+        var hooks = FindHookTargets(targets, this.addressResolver);
+        targets.ReportDisabled();
 
-        this.mbPurchaseHook =
-            Hook<PacketDispatcher.Delegates.HandleMarketBoardPurchasePacket>.FromAddress(
-                PacketDispatcher.Addresses.HandleMarketBoardPurchasePacket.Value,
-                this.MarketPurchasePacketDetour);
-        this.mbPurchaseHook.Enable();
+        // Without the market hooks nothing would ever reach these; without the tax hook, nothing reaches that one.
+        this.handleMarketBoardItemRequest = hooks.Market ? this.HandleMarketBoardItemRequest() : null;
+        this.handleMarketTaxRates = hooks.CustomTalk != 0 ? this.HandleMarketTaxRates() : null;
+        this.handleMarketBoardPurchaseHandler = hooks.Market ? this.HandleMarketBoardPurchaseHandler() : null;
 
-        this.mbHistoryHook =
-            Hook<InfoProxyItemSearch.Delegates.ProcessItemHistory>.FromAddress(
-                InfoProxyItemSearch.Addresses.ProcessItemHistory.Value,
-                this.MarketHistoryPacketDetour);
-        this.mbHistoryHook.Enable();
+        if (hooks.Market)
+        {
+            this.mbPurchaseHook =
+                Hook<PacketDispatcher.Delegates.HandleMarketBoardPurchasePacket>.FromAddress(
+                    hooks.Purchase,
+                    this.MarketPurchasePacketDetour);
+            this.mbPurchaseHook.Enable();
 
-        this.customTalkHook =
-            Hook<CustomTalkReceiveResponse>.FromAddress(
-                this.addressResolver.CustomTalkEventResponsePacketHandler,
-                this.CustomTalkReceiveResponseDetour);
-        this.customTalkHook.Enable();
+            this.mbHistoryHook =
+                Hook<InfoProxyItemSearch.Delegates.ProcessItemHistory>.FromAddress(
+                    hooks.History,
+                    this.MarketHistoryPacketDetour);
+            this.mbHistoryHook.Enable();
+        }
 
-        this.mbItemRequestStartHook = Hook<PacketDispatcher.Delegates.HandleMarketBoardItemRequestStartPacket>.FromAddress(
-            PacketDispatcher.Addresses.HandleMarketBoardItemRequestStartPacket.Value,
-            this.MarketItemRequestStartDetour);
-        this.mbItemRequestStartHook.Enable();
+        if (hooks.CustomTalk != 0)
+        {
+            this.customTalkHook =
+                Hook<CustomTalkReceiveResponse>.FromAddress(
+                    hooks.CustomTalk,
+                    this.CustomTalkReceiveResponseDetour);
+            this.customTalkHook.Enable();
+        }
 
-        this.mbOfferingsHook = Hook<InfoProxyItemSearch.Delegates.AddPage>.FromAddress(
-            (nint)InfoProxyItemSearch.StaticVirtualTablePointer->AddPage,
-            this.MarketBoardOfferingsDetour);
-        this.mbOfferingsHook.Enable();
+        if (hooks.Market)
+        {
+            this.mbItemRequestStartHook = Hook<PacketDispatcher.Delegates.HandleMarketBoardItemRequestStartPacket>.FromAddress(
+                hooks.ItemRequestStart,
+                this.MarketItemRequestStartDetour);
+            this.mbItemRequestStartHook.Enable();
 
-        this.mbSendPurchaseRequestHook = Hook<InfoProxyItemSearch.Delegates.SendPurchaseRequestPacket>.FromAddress(
-            InfoProxyItemSearch.Addresses.SendPurchaseRequestPacket.Value,
-            this.MarketBoardSendPurchaseRequestDetour);
-        this.mbSendPurchaseRequestHook.Enable();
+            this.mbOfferingsHook = Hook<InfoProxyItemSearch.Delegates.AddPage>.FromAddress(
+                hooks.Offerings,
+                this.MarketBoardOfferingsDetour);
+            this.mbOfferingsHook.Enable();
 
-        this.cfPopHook = Hook<PublicContentDirector.Delegates.HandleEnterContentInfoPacket>.FromAddress(PublicContentDirector.Addresses.HandleEnterContentInfoPacket.Value, this.CfPopDetour);
-        this.cfPopHook.Enable();
+            this.mbSendPurchaseRequestHook = Hook<InfoProxyItemSearch.Delegates.SendPurchaseRequestPacket>.FromAddress(
+                hooks.SendPurchaseRequest,
+                this.MarketBoardSendPurchaseRequestDetour);
+            this.mbSendPurchaseRequestHook.Enable();
+        }
+
+        if (hooks.CfPop != 0)
+        {
+            this.cfPopHook = Hook<PublicContentDirector.Delegates.HandleEnterContentInfoPacket>.FromAddress(hooks.CfPop, this.CfPopDetour);
+            this.cfPopHook.Enable();
+        }
     }
 
     private delegate nint MarketBoardPurchasePacketHandler(nint a1, nint packetRef);
@@ -258,6 +280,54 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
     }
 
     /// <summary>
+    /// Checks the addresses of this service's hooks. The five market hooks feed one upload (start, history, listing
+    /// pages, purchase request and result) and are kept only together, so no partial set is ever uploaded.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <param name="address">The resolved signatures.</param>
+    /// <returns>The addresses, 0 where left out.</returns>
+    internal static HookAddresses FindHookTargets(HookTargets targets, NetworkHandlersAddressResolver address)
+    {
+        var itemSearch = targets.VirtualTable(InfoProxyItemSearch.StaticVirtualTablePointer);
+        var market = DecideMarket(
+            targets,
+            new(
+                targets.Function("HandleMarketBoardPurchasePacket", MarketFeature, PacketDispatcher.Addresses.HandleMarketBoardPurchasePacket.Value),
+                targets.Function("ProcessItemHistory", MarketFeature, InfoProxyItemSearch.Addresses.ProcessItemHistory.Value),
+                targets.Function("HandleMarketBoardItemRequestStartPacket", MarketFeature, PacketDispatcher.Addresses.HandleMarketBoardItemRequestStartPacket.Value),
+                targets.Slot("InfoProxyItemSearch.AddPage", MarketFeature, itemSearch, itemSearch == null ? 0 : (nint)itemSearch->AddPage),
+                targets.Function("SendPurchaseRequestPacket", MarketFeature, InfoProxyItemSearch.Addresses.SendPurchaseRequestPacket.Value),
+                0,
+                0));
+
+        return market with
+        {
+            CustomTalk = targets.Function("CustomTalkEventResponsePacketHandler", "市場稅率的上傳", address.CustomTalkEventResponsePacketHandler, HookTargets.SignatureNotFound),
+            CfPop = targets.Function("HandleEnterContentInfoPacket", "副本匹配完成事件（CfPop）", PublicContentDirector.Addresses.HandleEnterContentInfoPacket.Value),
+        };
+    }
+
+    /// <summary>
+    /// Keeps the five market hooks only together.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <param name="checkedAddresses">The market addresses after their checks, 0 where left out.</param>
+    /// <returns>The same addresses, or all five 0.</returns>
+    internal static HookAddresses DecideMarket(HookTargets targets, HookAddresses checkedAddresses)
+    {
+        var a = checkedAddresses;
+        return targets.AllOrNone(
+                   MarketFeature,
+                   ("HandleMarketBoardPurchasePacket", a.Purchase),
+                   ("ProcessItemHistory", a.History),
+                   ("HandleMarketBoardItemRequestStartPacket", a.ItemRequestStart),
+                   ("InfoProxyItemSearch.AddPage", a.Offerings),
+                   ("SendPurchaseRequestPacket", a.SendPurchaseRequest))
+                   ? a
+                   : a with { Purchase = 0, History = 0, ItemRequestStart = 0, Offerings = 0, SendPurchaseRequest = 0 };
+    }
+
+    /// <summary>
     /// Disposes of managed and unmanaged resources.
     /// </summary>
     /// <param name="shouldDispose">Whether to execute the disposal.</param>
@@ -266,17 +336,17 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         if (!shouldDispose)
             return;
 
-        this.handleMarketBoardItemRequest.Dispose();
-        this.handleMarketTaxRates.Dispose();
-        this.handleMarketBoardPurchaseHandler.Dispose();
+        this.handleMarketBoardItemRequest?.Dispose();
+        this.handleMarketTaxRates?.Dispose();
+        this.handleMarketBoardPurchaseHandler?.Dispose();
 
-        this.mbPurchaseHook.Dispose();
-        this.mbHistoryHook.Dispose();
-        this.customTalkHook.Dispose();
-        this.mbItemRequestStartHook.Dispose();
-        this.mbOfferingsHook.Dispose();
-        this.mbSendPurchaseRequestHook.Dispose();
-        this.cfPopHook.Dispose();
+        this.mbPurchaseHook?.Dispose();
+        this.mbHistoryHook?.Dispose();
+        this.customTalkHook?.Dispose();
+        this.mbItemRequestStartHook?.Dispose();
+        this.mbOfferingsHook?.Dispose();
+        this.mbSendPurchaseRequestHook?.Dispose();
+        this.cfPopHook?.Dispose();
 
         if (this.uploadGuard.BuildSummary() is { } summary)
             Log.Information("{MbUploadGuardLine:l}", summary);
@@ -335,7 +405,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
 
     private unsafe nint CfPopDetour(PublicContentDirector.EnterContentInfoPacket* packetData)
     {
-        var result = this.cfPopHook.OriginalDisposeSafe(packetData);
+        var result = this.cfPopHook!.OriginalDisposeSafe(packetData);
 
         try
         {
@@ -513,7 +583,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
             Log.Error(ex, "MarketPurchasePacketHandler threw an exception");
         }
 
-        this.mbPurchaseHook.OriginalDisposeSafe(targetId, packetData);
+        this.mbPurchaseHook!.OriginalDisposeSafe(targetId, packetData);
     }
 
     private void MarketHistoryPacketDetour(InfoProxyItemSearch* a1, nint packetData)
@@ -532,7 +602,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
             Log.Error(ex, "MarketHistoryPacketDetour threw an exception");
         }
 
-        this.mbHistoryHook.OriginalDisposeSafe(a1, packetData);
+        this.mbHistoryHook!.OriginalDisposeSafe(a1, packetData);
     }
 
     private void CustomTalkReceiveResponseDetour(nuint a1, ushort eventId, byte responseId, uint* args, byte argCount)
@@ -548,7 +618,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
             Log.Error(ex, "CustomTalkReceiveResponseDetour threw an exception");
         }
 
-        this.customTalkHook.OriginalDisposeSafe(a1, eventId, responseId, args, argCount);
+        this.customTalkHook!.OriginalDisposeSafe(a1, eventId, responseId, args, argCount);
     }
 
     private void MarketItemRequestStartDetour(uint targetId, nint packetRef)
@@ -563,7 +633,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
             Log.Error(ex, "MarketItemRequestStartDetour threw an exception");
         }
 
-        this.mbItemRequestStartHook.OriginalDisposeSafe(targetId, packetRef);
+        this.mbItemRequestStartHook!.OriginalDisposeSafe(targetId, packetRef);
     }
 
     private void MarketBoardOfferingsDetour(InfoProxyItemSearch* a1, nint packetRef)
@@ -583,7 +653,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
             Log.Error(ex, "MarketBoardOfferingsDetour threw an exception");
         }
 
-        this.mbOfferingsHook.OriginalDisposeSafe(a1, packetRef);
+        this.mbOfferingsHook!.OriginalDisposeSafe(a1, packetRef);
     }
 
     private bool MarketBoardSendPurchaseRequestDetour(InfoProxyItemSearch* infoProxyItemSearch)
@@ -599,7 +669,28 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
             Log.Error(ex, "MarketBoardSendPurchaseRequestDetour threw an exception");
         }
 
-        return this.mbSendPurchaseRequestHook.OriginalDisposeSafe(infoProxyItemSearch);
+        return this.mbSendPurchaseRequestHook!.OriginalDisposeSafe(infoProxyItemSearch);
+    }
+
+    /// <summary>The addresses of this service's hooks, 0 where left out.</summary>
+    /// <param name="Purchase">PacketDispatcher.HandleMarketBoardPurchasePacket.</param>
+    /// <param name="History">InfoProxyItemSearch.ProcessItemHistory.</param>
+    /// <param name="ItemRequestStart">PacketDispatcher.HandleMarketBoardItemRequestStartPacket.</param>
+    /// <param name="Offerings">InfoProxyItemSearch.AddPage.</param>
+    /// <param name="SendPurchaseRequest">InfoProxyItemSearch.SendPurchaseRequestPacket.</param>
+    /// <param name="CustomTalk">The custom talk response handler (tax rates).</param>
+    /// <param name="CfPop">PublicContentDirector.HandleEnterContentInfoPacket.</param>
+    internal readonly record struct HookAddresses(
+        nint Purchase,
+        nint History,
+        nint ItemRequestStart,
+        nint Offerings,
+        nint SendPurchaseRequest,
+        nint CustomTalk,
+        nint CfPop)
+    {
+        /// <summary>Gets a value indicating whether the market hooks are all present.</summary>
+        public bool Market => this.Purchase != 0 && this.History != 0 && this.ItemRequestStart != 0 && this.Offerings != 0 && this.SendPurchaseRequest != 0;
     }
 
     private readonly record struct UploaderInfo(bool Upload, ulong UploaderId, uint WorldId);
