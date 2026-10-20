@@ -34,32 +34,36 @@ internal unsafe class AddonEventManager : IInternalDisposableService
 
     private readonly AddonLifecycleEventListener finalizeEventListener;
 
-    private readonly Hook<AtkUnitManager.Delegates.UpdateCursor> onUpdateCursor;
+    // Null when the address is missing or misplaced: cursor changes requested by plugins are then ignored.
+    private readonly Hook<AtkUnitManager.Delegates.UpdateCursor>? onUpdateCursor;
 
     private readonly ConcurrentDictionary<Guid, PluginEventController> pluginEventControllers;
 
     private AtkCursor.CursorType? cursorOverride;
 
     [ServiceManager.ServiceConstructor]
-    private AddonEventManager()
+    private AddonEventManager(TargetSigScanner sigScanner)
     {
         this.pluginEventControllers = new ConcurrentDictionary<Guid, PluginEventController>();
         this.pluginEventControllers.TryAdd(DalamudInternalKey, new PluginEventController());
 
         this.cursorOverride = null;
 
-        this.onUpdateCursor = Hook<AtkUnitManager.Delegates.UpdateCursor>.FromAddress(AtkUnitManager.Addresses.UpdateCursor.Value, this.UpdateCursorDetour);
+        var targets = HookTargets.For(nameof(AddonEventManager), sigScanner);
+        var updateCursor = FindHookTarget(targets);
+        this.onUpdateCursor = updateCursor != 0 ? Hook<AtkUnitManager.Delegates.UpdateCursor>.FromAddress(updateCursor, this.UpdateCursorDetour) : null;
+        targets.ReportDisabled();
 
         this.finalizeEventListener = new AddonLifecycleEventListener(AddonEvent.PreFinalize, string.Empty, this.OnAddonFinalize);
         this.addonLifecycle.RegisterListener(this.finalizeEventListener);
 
-        this.onUpdateCursor.Enable();
+        this.onUpdateCursor?.Enable();
     }
 
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
     {
-        this.onUpdateCursor.Dispose();
+        this.onUpdateCursor?.Dispose();
 
         foreach (var (_, pluginEventController) in this.pluginEventControllers)
         {
@@ -68,6 +72,14 @@ internal unsafe class AddonEventManager : IInternalDisposableService
 
         this.addonLifecycle.UnregisterListener(this.finalizeEventListener);
     }
+
+    /// <summary>
+    /// Checks the address of the cursor hook.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <returns>AtkUnitManager.UpdateCursor, or 0 if left out.</returns>
+    internal static nint FindHookTarget(HookTargets targets)
+        => targets.Function("AtkUnitManager.UpdateCursor", "插件變更滑鼠游標", AtkUnitManager.Addresses.UpdateCursor.Value);
 
     /// <summary>
     /// Registers an event handler for the specified addon, node, and type.
