@@ -29,14 +29,18 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
     /// <summary>
     /// The hook that fires when the game creates a fly text element.
     /// </summary>
-    private readonly Hook<AddonFlyText.Delegates.CreateFlyText> createFlyTextHook;
+    // Null when the address is missing or misplaced: FlyTextCreated then never fires.
+    private readonly Hook<AddonFlyText.Delegates.CreateFlyText>? createFlyTextHook;
 
     [ServiceManager.ServiceConstructor]
     private unsafe FlyTextGui(TargetSigScanner sigScanner)
     {
-        this.createFlyTextHook = Hook<AddonFlyText.Delegates.CreateFlyText>.FromAddress(AddonFlyText.Addresses.CreateFlyText.Value, this.CreateFlyTextDetour);
+        var targets = HookTargets.For(nameof(FlyTextGui), sigScanner);
+        var createFlyText = FindHookTarget(targets);
+        this.createFlyTextHook = createFlyText != 0 ? Hook<AddonFlyText.Delegates.CreateFlyText>.FromAddress(createFlyText, this.CreateFlyTextDetour) : null;
+        targets.ReportDisabled();
 
-        this.createFlyTextHook.Enable();
+        this.createFlyTextHook?.Enable();
     }
 
     /// <inheritdoc/>
@@ -47,7 +51,7 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
     /// </summary>
     void IInternalDisposableService.DisposeService()
     {
-        this.createFlyTextHook.Dispose();
+        this.createFlyTextHook?.Dispose();
     }
 
     /// <inheritdoc/>
@@ -106,6 +110,14 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
 
         flytext->AddFlyText(actorIndex, 1, numArray, numOffset, 10, strArray, strOffset, 2, 0);
     }
+
+    /// <summary>
+    /// Checks the address of the fly text hook.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <returns>AddonFlyText.CreateFlyText, or 0 if left out.</returns>
+    internal static nint FindHookTarget(HookTargets targets)
+        => targets.Function("AddonFlyText.CreateFlyText", "戰鬥飛字事件（插件讀取或修改飛字）", AddonFlyText.Addresses.CreateFlyText.Value);
 
     private unsafe nint CreateFlyTextDetour(
         AddonFlyText* thisPtr,
@@ -205,7 +217,7 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
             {
                 Log.Verbose("[FlyText] Calling flytext with original args.");
                 originalDone = true;
-                return this.createFlyTextHook.Original(thisPtr, kind, val1, val2, text2, color, icon,
+                return this.createFlyTextHook!.Original(thisPtr, kind, val1, val2, text2, color, icon,
                                                        damageTypeIcon, text1, yOffset);
             }
 
@@ -216,7 +228,7 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
             Log.Verbose("[FlyText] Allocated and set strings.");
 
             originalDone = true;
-            retVal = this.createFlyTextHook.Original(
+            retVal = this.createFlyTextHook!.Original(
                 thisPtr,
                 (int)tmpKind,
                 tmpVal1,
@@ -248,7 +260,7 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
         {
             CreateFlyTextFault.Report(e);
             if (!originalDone)
-                retVal = this.createFlyTextHook.Original(thisPtr, kind, val1, val2, text2, color, icon, damageTypeIcon, text1, yOffset);
+                retVal = this.createFlyTextHook!.Original(thisPtr, kind, val1, val2, text2, color, icon, damageTypeIcon, text1, yOffset);
         }
 
         return retVal;
