@@ -49,9 +49,10 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
     private readonly ConcurrentQueue<XivChatEntry> chatQueue = new();
     private readonly Dictionary<(string PluginName, uint CommandId), Action<uint, SeString>> dalamudLinkHandlers = new();
 
-    private readonly Hook<PrintMessageDelegate> printMessageHook;
-    private readonly Hook<InventoryItem.Delegates.Copy> inventoryItemCopyHook;
-    private readonly Hook<LogViewer.Delegates.HandleLinkClick> handleLinkClickHook;
+    // Null when the address is missing or misplaced (see FindHookTargets).
+    private readonly Hook<PrintMessageDelegate>? printMessageHook;
+    private readonly Hook<InventoryItem.Delegates.Copy>? inventoryItemCopyHook;
+    private readonly Hook<LogViewer.Delegates.HandleLinkClick>? handleLinkClickHook;
 
     [ServiceManager.ServiceDependency]
     private readonly DalamudConfiguration configuration = Service<DalamudConfiguration>.Get();
@@ -59,16 +60,22 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
     private ImmutableDictionary<(string PluginName, uint CommandId), Action<uint, SeString>>? dalamudLinkHandlersCopy;
     private uint dalamudChatHandlerId = 1000;
 
-    [ServiceManager.ServiceConstructor]
-    private ChatGui()
-    {
-        this.printMessageHook = Hook<PrintMessageDelegate>.FromAddress(RaptureLogModule.Addresses.PrintMessage.Value, this.HandlePrintMessageDetour);
-        this.inventoryItemCopyHook = Hook<InventoryItem.Delegates.Copy>.FromAddress((nint)InventoryItem.StaticVirtualTablePointer->Copy, this.InventoryItemCopyDetour);
-        this.handleLinkClickHook = Hook<LogViewer.Delegates.HandleLinkClick>.FromAddress(LogViewer.Addresses.HandleLinkClick.Value, this.HandleLinkClickDetour);
+    // Framework thread only.
+    private bool queueDropLogged;
 
-        this.printMessageHook.Enable();
-        this.inventoryItemCopyHook.Enable();
-        this.handleLinkClickHook.Enable();
+    [ServiceManager.ServiceConstructor]
+    private ChatGui(TargetSigScanner sigScanner)
+    {
+        var targets = HookTargets.For(nameof(ChatGui), sigScanner);
+        var (printMessage, inventoryItemCopy, handleLinkClick) = FindHookTargets(targets);
+        this.printMessageHook = printMessage != 0 ? Hook<PrintMessageDelegate>.FromAddress(printMessage, this.HandlePrintMessageDetour) : null;
+        this.inventoryItemCopyHook = inventoryItemCopy != 0 ? Hook<InventoryItem.Delegates.Copy>.FromAddress(inventoryItemCopy, this.InventoryItemCopyDetour) : null;
+        this.handleLinkClickHook = handleLinkClick != 0 ? Hook<LogViewer.Delegates.HandleLinkClick>.FromAddress(handleLinkClick, this.HandleLinkClickDetour) : null;
+        targets.ReportDisabled();
+
+        this.printMessageHook?.Enable();
+        this.inventoryItemCopyHook?.Enable();
+        this.handleLinkClickHook?.Enable();
     }
 
     [UnmanagedFunctionPointer(CallingConvention.ThisCall)]
@@ -120,9 +127,9 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
     /// </summary>
     void IInternalDisposableService.DisposeService()
     {
-        this.printMessageHook.Dispose();
-        this.inventoryItemCopyHook.Dispose();
-        this.handleLinkClickHook.Dispose();
+        this.printMessageHook?.Dispose();
+        this.inventoryItemCopyHook?.Dispose();
+        this.handleLinkClickHook?.Dispose();
     }
 
     #region DalamudSeString
@@ -219,6 +226,19 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
         if (this.chatQueue.IsEmpty)
             return;
 
+        // Lines are printed through the hook's Original; without it they are dropped, not kept forever.
+        if (this.printMessageHook == null)
+        {
+            this.chatQueue.Clear();
+            if (!this.queueDropLogged)
+            {
+                this.queueDropLogged = true;
+                Log.Warning("Chat lines queued by Dalamud and plugins are dropped this session: the PrintMessage hook is not installed");
+            }
+
+            return;
+        }
+
         var sb = LSeStringBuilder.SharedPool.Get();
         Span<byte> namebuf = stackalloc byte[256];
         using var sender = new Utf8String();
@@ -261,6 +281,20 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
         }
 
         LSeStringBuilder.SharedPool.Return(sb);
+    }
+
+    /// <summary>
+    /// Checks the addresses of this service's hooks.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <returns>PrintMessage, InventoryItem.Copy and HandleLinkClick, 0 where left out.</returns>
+    internal static (nint PrintMessage, nint InventoryItemCopy, nint HandleLinkClick) FindHookTargets(HookTargets targets)
+    {
+        var inventoryItem = targets.VirtualTable(InventoryItem.StaticVirtualTablePointer);
+        return (
+            targets.Function("PrintMessage", "聊天訊息（插件讀取、修改與印出）", RaptureLogModule.Addresses.PrintMessage.Value),
+            targets.Slot("InventoryItem.Copy", "聊天物品連結的記錄", inventoryItem, inventoryItem == null ? 0 : (nint)inventoryItem->Copy),
+            targets.Function("HandleLinkClick", "點選插件的聊天連結", LogViewer.Addresses.HandleLinkClick.Value));
     }
 
     /// <summary>
@@ -365,7 +399,7 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
 
     private void InventoryItemCopyDetour(InventoryItem* thisPtr, InventoryItem* otherPtr)
     {
-        this.inventoryItemCopyHook.Original(thisPtr, otherPtr);
+        this.inventoryItemCopyHook!.Original(thisPtr, otherPtr);
 
         try
         {
@@ -475,7 +509,7 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
         if (isHandled)
             return 0;
 
-        var messageId = this.printMessageHook.Original(manager, chatType, sender, message, timestamp, silent);
+        var messageId = this.printMessageHook!.Original(manager, chatType, sender, message, timestamp, silent);
 
         if (unhandledSender != null && unhandledMessage != null)
         {
@@ -499,7 +533,7 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
     {
         if (linkData == null || linkData->Payload == null || (Payload.EmbeddedInfoType)(linkData->LinkType + 1) != Payload.EmbeddedInfoType.DalamudLink)
         {
-            this.handleLinkClickHook.Original(thisPtr, linkData);
+            this.handleLinkClickHook!.Original(thisPtr, linkData);
             return;
         }
 
