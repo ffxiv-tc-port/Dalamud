@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace Dalamud.Game.Addon.Lifecycle;
@@ -5,8 +7,14 @@ namespace Dalamud.Game.Addon.Lifecycle;
 /// <summary>
 /// AddonLifecycleService memory address resolver.
 /// </summary>
+/// <remarks>
+/// A signature that does not match leaves its address 0 and its name in <see cref="NotFound"/> instead of throwing:
+/// AddonLifecycle is an early-loaded service, and a throw there stops every Dalamud service from loading.
+/// </remarks>
 internal unsafe class AddonLifecycleAddressResolver : BaseAddressResolver
 {
+    private readonly List<string> notFound = new();
+
     /// <summary>
     /// Gets the address of the addon setup hook invoked by the AtkUnitManager.
     /// There are two callsites for this vFunc, we need to hook both of them to catch both normal UI and special UI cases like dialogue.
@@ -42,15 +50,29 @@ internal unsafe class AddonLifecycleAddressResolver : BaseAddressResolver
     public nint AddonOnRequestedUpdate { get; private set; }
 
     /// <summary>
+    /// Gets the names of the addresses whose signature did not match; each of those is 0.
+    /// </summary>
+    public IReadOnlyList<string> NotFound => this.notFound;
+
+    /// <summary>
     /// Scan for and setup any configured address pointers.
     /// </summary>
     /// <param name="sig">The signature scanner to facilitate setup.</param>
     protected override void Setup64Bit(ISigScanner sig)
     {
-        this.AddonSetup = sig.ScanText("4C 8B 88 ?? ?? ?? ?? 66 44 39 BB");
-        this.AddonFinalize = sig.ScanText("E8 ?? ?? ?? ?? 48 83 EF 01 75 D5");
-        this.AddonDraw = sig.ScanText("FF 90 ?? ?? ?? ?? 83 EB 01 79 C4 48 81 EF ?? ?? ?? ?? 48 83 ED 01");
-        this.AddonUpdate = sig.ScanText("FF 90 ?? ?? ?? ?? 40 88 AF ?? ?? ?? ?? 45 33 D2");
-        this.AddonOnRequestedUpdate = sig.ScanText("FF 90 A0 01 00 00 48 8B 5C 24 30");
+        this.AddonSetup = this.Scan(sig, nameof(this.AddonSetup), "4C 8B 88 ?? ?? ?? ?? 66 44 39 BB");
+        this.AddonFinalize = this.Scan(sig, nameof(this.AddonFinalize), "E8 ?? ?? ?? ?? 48 83 EF 01 75 D5");
+        this.AddonDraw = this.Scan(sig, nameof(this.AddonDraw), "FF 90 ?? ?? ?? ?? 83 EB 01 79 C4 48 81 EF ?? ?? ?? ?? 48 83 ED 01");
+        this.AddonUpdate = this.Scan(sig, nameof(this.AddonUpdate), "FF 90 ?? ?? ?? ?? 40 88 AF ?? ?? ?? ?? 45 33 D2");
+        this.AddonOnRequestedUpdate = this.Scan(sig, nameof(this.AddonOnRequestedUpdate), "FF 90 A0 01 00 00 48 8B 5C 24 30");
+    }
+
+    private nint Scan(ISigScanner sig, string name, string signature)
+    {
+        if (sig.TryScanText(signature, out var address))
+            return address;
+
+        this.notFound.Add(name);
+        return 0;
     }
 }
