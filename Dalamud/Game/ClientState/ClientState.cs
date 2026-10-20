@@ -35,13 +35,18 @@ namespace Dalamud.Game.ClientState;
 [ServiceManager.EarlyLoadedService]
 internal sealed class ClientState : IInternalDisposableService, IClientState
 {
+    private const string ClassJobLevelFeature = "職業與等級變更事件";
+    private const string InstanceFeature = "區域分線編號";
+
     private static readonly ModuleLog Log = new("ClientState");
 
     private readonly GameLifecycle lifecycle;
     private readonly ClientStateAddressResolver address;
     private readonly Hook<HandleZoneInitPacketDelegate> handleZoneInitPacketHook;
-    private readonly Hook<UIModule.Delegates.HandlePacket> uiModuleHandlePacketHook;
-    private readonly Hook<SetCurrentInstanceDelegate> setCurrentInstanceHook;
+
+    // Null when the address is missing or misplaced (see FindHookTargets): the event it drives never fires.
+    private readonly Hook<UIModule.Delegates.HandlePacket>? uiModuleHandlePacketHook;
+    private readonly Hook<SetCurrentInstanceDelegate>? setCurrentInstanceHook;
 
     [ServiceManager.ServiceDependency]
     private readonly Framework framework = Service<Framework>.Get();
@@ -75,14 +80,18 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
         this.ClientLanguage = (ClientLanguage)dalamud.StartInfo.Language;
 
         this.handleZoneInitPacketHook = Hook<HandleZoneInitPacketDelegate>.FromAddress(this.AddressResolver.HandleZoneInitPacket, this.HandleZoneInitPacketDetour);
-        this.uiModuleHandlePacketHook = Hook<UIModule.Delegates.HandlePacket>.FromAddress((nint)UIModule.StaticVirtualTablePointer->HandlePacket, this.UIModuleHandlePacketDetour);
-        this.setCurrentInstanceHook = Hook<SetCurrentInstanceDelegate>.FromAddress(this.AddressResolver.SetCurrentInstance, this.SetCurrentInstanceDetour);
+
+        var targets = HookTargets.For(nameof(ClientState), sigScanner);
+        var (handlePacket, setCurrentInstance) = FindHookTargets(targets, this.address);
+        this.uiModuleHandlePacketHook = handlePacket != 0 ? Hook<UIModule.Delegates.HandlePacket>.FromAddress(handlePacket, this.UIModuleHandlePacketDetour) : null;
+        this.setCurrentInstanceHook = setCurrentInstance != 0 ? Hook<SetCurrentInstanceDelegate>.FromAddress(setCurrentInstance, this.SetCurrentInstanceDetour) : null;
+        targets.ReportDisabled();
 
         this.networkHandlers.CfPop += this.NetworkHandlersOnCfPop;
 
         this.handleZoneInitPacketHook.Enable();
-        this.uiModuleHandlePacketHook.Enable();
-        this.setCurrentInstanceHook.Enable();
+        this.uiModuleHandlePacketHook?.Enable();
+        this.setCurrentInstanceHook?.Enable();
 
         this.framework.RunOnTick(this.Setup);
     }
@@ -267,15 +276,29 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
     void IInternalDisposableService.DisposeService()
     {
         this.handleZoneInitPacketHook.Dispose();
-        this.uiModuleHandlePacketHook.Dispose();
+        this.uiModuleHandlePacketHook?.Dispose();
         // Created in Setup(), which is deferred to a framework tick: null when the unload lands before
         // that tick (aborted boot) or Setup() threw. An NRE here would be swallowed by Service<T>.Unset
         // and skip the rest of this method, leaving setCurrentInstanceHook enabled and the handlers subscribed.
         this.onLogoutHook?.Dispose();
-        this.setCurrentInstanceHook.Dispose();
+        this.setCurrentInstanceHook?.Dispose();
 
         this.framework.Update -= this.OnFrameworkUpdate;
         this.networkHandlers.CfPop -= this.NetworkHandlersOnCfPop;
+    }
+
+    /// <summary>
+    /// Checks the addresses of the hooks this service can run without; ZoneInit is not among them.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <param name="address">The resolved signatures.</param>
+    /// <returns>UIModule.HandlePacket and SetCurrentInstance, 0 where left out.</returns>
+    internal static unsafe (nint HandlePacket, nint SetCurrentInstance) FindHookTargets(HookTargets targets, ClientStateAddressResolver address)
+    {
+        var uiModule = targets.VirtualTable(UIModule.StaticVirtualTablePointer);
+        return (
+            targets.Slot("UIModule.HandlePacket", ClassJobLevelFeature, uiModule, uiModule == null ? 0 : (nint)uiModule->HandlePacket),
+            targets.Function("SetCurrentInstance", InstanceFeature, address.SetCurrentInstance, HookTargets.SignatureNotFound));
     }
 
     /// <summary>
@@ -353,7 +376,7 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
     private unsafe void UIModuleHandlePacketDetour(
         UIModule* thisPtr, UIModulePacketType type, uint uintParam, void* packet)
     {
-        this.uiModuleHandlePacketHook.Original(thisPtr, type, uintParam, packet);
+        this.uiModuleHandlePacketHook!.Original(thisPtr, type, uintParam, packet);
 
         switch (type)
         {
@@ -400,7 +423,7 @@ internal sealed class ClientState : IInternalDisposableService, IClientState
 
     private unsafe void SetCurrentInstanceDetour(NetworkModuleProxy* thisPtr, short instanceId)
     {
-        this.setCurrentInstanceHook.Original(thisPtr, instanceId);
+        this.setCurrentInstanceHook!.Original(thisPtr, instanceId);
         this.Instance = (uint)instanceId;
     }
 
