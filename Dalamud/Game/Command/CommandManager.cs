@@ -26,6 +26,9 @@ namespace Dalamud.Game.Command;
 [ServiceManager.EarlyLoadedService]
 internal sealed unsafe class CommandManager : IInternalDisposableService, ICommandManager
 {
+    /// <summary>Ends the notice instead of pointing at /xllog: without the hook no typed command reaches Dalamud.</summary>
+    internal const string CommandsOffHint = "打字的 / 指令（含 /xllog、/xlplugins、/xlsettings）這次都無效；要開 Dalamud 請改用 ESC 系統選單裡的 Dalamud 項目或標題畫面的選單。";
+
     private static readonly ModuleLog Log = new("Command");
 
     private static readonly DetourFault DebugCommandFault = new("CommandManager.TryInvokeDebugCommand", "執行插件指令");
@@ -41,12 +44,15 @@ internal sealed unsafe class CommandManager : IInternalDisposableService, IComma
     private int changeCount;
 
     [ServiceManager.ServiceConstructor]
-    private CommandManager(Dalamud dalamud)
+    private CommandManager(Dalamud dalamud, TargetSigScanner sigScanner)
     {
-        this.tryInvokeDebugCommandHook = Hook<ShellCommands.Delegates.TryInvokeDebugCommand>.FromAddress(
-            (nint)ShellCommands.MemberFunctionPointers.TryInvokeDebugCommand,
-            this.OnTryInvokeDebugCommand);
-        this.tryInvokeDebugCommandHook.Enable();
+        var targets = HookTargets.For(nameof(CommandManager), sigScanner);
+        var tryInvokeDebugCommand = FindHookTarget(targets);
+        this.tryInvokeDebugCommandHook = tryInvokeDebugCommand != 0
+                                             ? Hook<ShellCommands.Delegates.TryInvokeDebugCommand>.FromAddress(tryInvokeDebugCommand, this.OnTryInvokeDebugCommand)
+                                             : null;
+        targets.ReportDisabled(CommandsOffHint);
+        this.tryInvokeDebugCommandHook?.Enable();
 
         this.console.Invoke += this.ConsoleOnInvoke;
     }
@@ -239,6 +245,14 @@ internal sealed unsafe class CommandManager : IInternalDisposableService, IComma
         this.console.Invoke -= this.ConsoleOnInvoke;
         this.tryInvokeDebugCommandHook?.Dispose();
     }
+
+    /// <summary>
+    /// Checks the address of the command hook.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <returns>ShellCommands.TryInvokeDebugCommand, or 0 if left out.</returns>
+    internal static nint FindHookTarget(HookTargets targets)
+        => targets.Function("ShellCommands.TryInvokeDebugCommand", "輸入 / 指令", (nint)ShellCommands.MemberFunctionPointers.TryInvokeDebugCommand);
 
     private bool ConsoleOnInvoke(string arg)
     {
