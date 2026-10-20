@@ -23,6 +23,11 @@ public class MarketBoardPurchase : IMarketBoardPurchase
     public uint ItemQuantity { get; private set; }
 
     /// <summary>
+    /// Gets the result code; 0 means the purchase went through.
+    /// </summary>
+    internal uint Status { get; private set; }
+
+    /// <summary>
     /// Reads market board purchase information from the struct at the provided pointer.
     /// </summary>
     /// <param name="dataPtr">A pointer to a struct containing market board purchase information from the server.</param>
@@ -35,7 +40,7 @@ public class MarketBoardPurchase : IMarketBoardPurchase
         var output = new MarketBoardPurchase();
 
         output.CatalogId = reader.ReadUInt32();
-        reader.ReadBytes(0x4); // Padding
+        output.Status = reader.ReadUInt32();
         output.ItemQuantity = reader.ReadUInt32();
 
         return output;

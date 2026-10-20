@@ -56,6 +56,10 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         static () => Environment.TickCount64,
         static line => Log.Information("{MbUploadGuardLine:l}", line));
 
+    private readonly MarketBoardRequestPairer pairer = new(
+        static () => Environment.TickCount64,
+        static line => Log.Information("{MbPairGuardLine:l}", line));
+
     private bool disposing;
 
     [ServiceManager.ServiceConstructor]
@@ -210,6 +214,10 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
 
     private event Action<nint>? MarketBoardPurchaseRequestSent;
 
+    private event Action<MarketBoardRequestPairer.Completed>? MarketBoardQueryCompleted;
+
+    private event Action<MarketBoardPurchaseHandler>? MarketBoardPurchaseMatched;
+
     /// <summary>
     /// Gets an observable to track marketboard purchase events.
     /// </summary>
@@ -272,6 +280,8 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
 
         if (this.uploadGuard.BuildSummary() is { } summary)
             Log.Information("{MbUploadGuardLine:l}", summary);
+        if (this.pairer.BuildSummary() is { } pairSummary)
+            Log.Information("{MbPairGuardLine:l}", pairSummary);
     }
 
     // 讀的欄位跟 PlayerState.CurrentWorld／HomeWorld 同一批；不保存指標。
@@ -377,133 +387,30 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         return result;
     }
 
-    private IObservable<List<MarketBoardCurrentOfferings.MarketBoardItemListing>> OnMarketBoardListingsBatch(
-        IObservable<MarketBoardItemRequest> start)
-    {
-        var offeringsObservable = this.MbOfferingsObservable.Publish().RefCount();
-
-        void LogEndObserved(MarketBoardCurrentOfferings offerings)
-        {
-            Log.Verbose(
-                "Observed end of request {RequestId}",
-                offerings.RequestId);
-        }
-
-        void LogOfferingsObserved(MarketBoardCurrentOfferings offerings)
-        {
-            Log.Verbose(
-                "Observed element of request {RequestId} with {NumListings} listings",
-                offerings.RequestId,
-                offerings.InternalItemListings.Count);
-        }
-
-        IObservable<MarketBoardCurrentOfferings> UntilBatchEnd(MarketBoardItemRequest request)
-        {
-            var totalPackets = Convert.ToInt32(Math.Ceiling((double)request.AmountToArrive / 10));
-            if (totalPackets == 0)
-            {
-                return Observable.Empty<MarketBoardCurrentOfferings>();
-            }
-
-            return offeringsObservable
-                   .Where(offerings => offerings.InternalItemListings.All(l => l.CatalogId != 0))
-                   .Skip(totalPackets - 1)
-                   .Do(LogEndObserved);
-        }
-
-        // When a start packet is observed, begin observing a window of listings packets
-        // according to the count described by the start packet. Aggregate the listings
-        // packets, and then flatten them to the listings themselves.
-        return offeringsObservable
-               .Do(LogOfferingsObserved)
-               .Window(start, UntilBatchEnd)
-               .SelectMany(
-                   o => o.Aggregate(
-                       new List<MarketBoardCurrentOfferings.MarketBoardItemListing>(),
-                       (agg, next) =>
-                       {
-                           agg.AddRange(next.InternalItemListings);
-                           return agg;
-                       }));
-    }
-
-    private IObservable<(uint CatalogId, List<MarketBoardHistory.MarketBoardHistoryListing> Sales)> OnMarketBoardSalesBatch(
-        IObservable<MarketBoardItemRequest> start)
-    {
-        var historyObservable = this.MbHistoryObservable.Publish().RefCount();
-
-        void LogHistoryObserved(MarketBoardHistory history)
-        {
-            Log.Verbose(
-                "Observed history for item {CatalogId} with {NumSales} sales",
-                history.CatalogId,
-                history.InternalHistoryListings.Count);
-        }
-
-        IObservable<MarketBoardHistory> UntilBatchEnd(MarketBoardItemRequest request)
-        {
-            return historyObservable
-                   .Where(history => history.CatalogId != 0)
-                   .Take(1);
-        }
-
-        // When a start packet is observed, begin observing a window of history packets.
-        // We should only get one packet, which the window closing function ensures.
-        // This packet is flattened to its sale entries and emitted.
-        uint catalogId = 0;
-        return historyObservable
-               .Do(LogHistoryObserved)
-               .Window(start, UntilBatchEnd)
-               .SelectMany(
-                   o => o.Aggregate(
-                       new List<MarketBoardHistory.MarketBoardHistoryListing>(),
-                       (agg, next) =>
-                       {
-                           catalogId = next.CatalogId;
-
-                           agg.AddRange(next.InternalHistoryListings);
-                           return agg;
-                       }))
-               .Select(o => (catalogId, o));
-    }
-
+    // 契約：MarketBoardQueryCompleted 只在遊戲執行緒的封包 detour 裡觸發，ResolveUploader 因此在遊戲執行緒讀世界。
     private IDisposable HandleMarketBoardItemRequest()
     {
-        void LogStartObserved(MarketBoardItemRequest request)
-        {
-            Log.Verbose("Observed start of request for item with {NumListings} expected listings", request.AmountToArrive);
-        }
-
-        var startObservable = this.MbItemRequestObservable
-                                  .Where(request => request.Ok)
-                                  .Do(LogStartObserved)
-                                  .Publish()
-                                  .RefCount();
-        return Observable.When(
-                             startObservable
-                                 .And(this.OnMarketBoardSalesBatch(startObservable))
-                                 .And(this.OnMarketBoardListingsBatch(startObservable))
-                                 .Then((request, sales, listings) => (request, sales, listings, Uploader: this.ResolveUploader(MarketBoardUploadGuard.Kind.Listings, sales.CatalogId))))
+        return Observable.Create<MarketBoardRequestPairer.Completed>(observer =>
+                         {
+                             this.MarketBoardQueryCompleted += observer.OnNext;
+                             return () => { this.MarketBoardQueryCompleted -= observer.OnNext; };
+                         })
+                         .Select(query => (query, Uploader: this.ResolveUploader(MarketBoardUploadGuard.Kind.Listings, query.CatalogId)))
                          .Where(data => data.Uploader.Upload)
                          .Where(this.ShouldUpload)
                          .SubscribeOn(ThreadPoolScheduler.Instance)
                          .Subscribe(
                              data =>
                              {
-                                 var (request, sales, listings, uploaderInfo) = data;
-                                 this.UploadMarketBoardData(request, sales, listings, uploaderInfo.UploaderId, uploaderInfo.WorldId);
+                                 var (query, uploaderInfo) = data;
+                                 this.UploadMarketBoardData(query, uploaderInfo.UploaderId, uploaderInfo.WorldId);
                              },
                              ex => Log.Error(ex, "Failed to handle Market Board item request event"));
     }
 
-    private void UploadMarketBoardData(
-        MarketBoardItemRequest request,
-        (uint CatalogId, ICollection<MarketBoardHistory.MarketBoardHistoryListing> Sales) sales,
-        ICollection<MarketBoardCurrentOfferings.MarketBoardItemListing> listings,
-        ulong uploaderId,
-        uint worldId)
+    private void UploadMarketBoardData(MarketBoardRequestPairer.Completed query, ulong uploaderId, uint worldId)
     {
-        var catalogId = sales.CatalogId;
+        var (request, catalogId, sales, listings) = query;
         if (listings.Count != request.AmountToArrive)
         {
             Log.Error(
@@ -516,11 +423,11 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
             "Market Board request resolved, starting upload: item#{CatalogId} listings#{ListingsObserved} sales#{SalesObserved}",
             catalogId,
             listings.Count,
-            sales.Sales.Count);
+            sales.Count);
 
         request.CatalogId = catalogId;
         request.Listings.AddRange(listings);
-        request.History.AddRange(sales.Sales);
+        request.History.AddRange(sales);
 
         Task.Run(() => this.uploader.Upload(request, uploaderId, worldId))
             .ContinueWith(
@@ -558,36 +465,32 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
                        ex => Log.Error(ex, "Failed to handle Market Board tax data event"));
     }
 
+    // 契約：MarketBoardPurchaseMatched 只在遊戲執行緒的封包 detour 裡觸發。
     private IDisposable HandleMarketBoardPurchaseHandler()
     {
-        return this.MbPurchaseSentObservable
-                   .Zip(this.MbPurchaseObservable, (handler, purchase) => (handler, purchase, Uploader: this.ResolveUploader(MarketBoardUploadGuard.Kind.Purchase, handler.CatalogId)))
+        return Observable.Create<MarketBoardPurchaseHandler>(observer =>
+                   {
+                       this.MarketBoardPurchaseMatched += observer.OnNext;
+                       return () => { this.MarketBoardPurchaseMatched -= observer.OnNext; };
+                   })
+                   .Select(handler => (handler, Uploader: this.ResolveUploader(MarketBoardUploadGuard.Kind.Purchase, handler.CatalogId)))
                    .Where(data => data.Uploader.Upload)
                    .Where(this.ShouldUpload)
                    .SubscribeOn(ThreadPoolScheduler.Instance)
                    .Subscribe(
                        data =>
                        {
-                           var (handler, purchase, uploaderInfo) = data;
-
-                           var sameQty = purchase.ItemQuantity == handler.ItemQuantity;
-                           var itemMatch = purchase.CatalogId == handler.CatalogId;
-                           var itemMatchHq = purchase.CatalogId == handler.CatalogId + 1_000_000;
-
-                           // Transaction succeeded
-                           if (sameQty && (itemMatch || itemMatchHq))
-                           {
-                               Log.Verbose(
-                                   "Bought {PurchaseItemQuantity}x {HandlerCatalogId} for {HandlerPricePerUnit} gils, listing id is {HandlerListingId}",
-                                   purchase.ItemQuantity,
-                                   handler.CatalogId,
-                                   handler.PricePerUnit * purchase.ItemQuantity,
-                                   handler.ListingId);
-                               Task.Run(() => this.uploader.UploadPurchase(handler, uploaderInfo.UploaderId, uploaderInfo.WorldId))
-                                   .ContinueWith(
-                                       task => Log.Error(task.Exception, "Market Board purchase data upload failed"),
-                                       TaskContinuationOptions.OnlyOnFaulted);
-                           }
+                           var (handler, uploaderInfo) = data;
+                           Log.Verbose(
+                               "Bought {PurchaseItemQuantity}x {HandlerCatalogId} for {HandlerPricePerUnit} gils, listing id is {HandlerListingId}",
+                               handler.ItemQuantity,
+                               handler.CatalogId,
+                               handler.PricePerUnit * handler.ItemQuantity,
+                               handler.ListingId);
+                           Task.Run(() => this.uploader.UploadPurchase(handler, uploaderInfo.UploaderId, uploaderInfo.WorldId))
+                               .ContinueWith(
+                                   task => Log.Error(task.Exception, "Market Board purchase data upload failed"),
+                                   TaskContinuationOptions.OnlyOnFaulted);
                        },
                        ex => Log.Error(ex, "Failed to handle Market Board purchase event"));
     }
@@ -602,6 +505,8 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         try
         {
             this.MarketBoardPurchaseReceived?.InvokeSafely(packetData);
+            if (this.pairer.OnPurchaseResult(MarketBoardPurchase.Read(packetData)) is { } bought)
+                this.MarketBoardPurchaseMatched?.InvokeSafely(bought);
         }
         catch (Exception ex)
         {
@@ -616,6 +521,11 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         try
         {
             this.MarketBoardHistoryReceived?.InvokeSafely(packetData);
+
+            // a1 是遊戲這一次呼叫傳進來的 this（呼叫端已判非 null），只讀不存。
+            var searched = a1 != null ? a1->SearchItemId : 0u;
+            if (this.pairer.OnHistory(MarketBoardHistory.Read(packetData), searched) is { } done)
+                this.MarketBoardQueryCompleted?.InvokeSafely(done);
         }
         catch (Exception ex)
         {
@@ -646,6 +556,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         try
         {
             this.MarketBoardItemRequestStartReceived?.InvokeSafely(packetRef);
+            this.pairer.OnStart(MarketBoardItemRequest.Read(packetRef));
         }
         catch (Exception ex)
         {
@@ -660,6 +571,12 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         try
         {
             this.MarketBoardOfferingsReceived?.InvokeSafely(packetRef);
+
+            // 與遊戲自己的判斷相同：分頁的請求序號不等於目前序號就是舊查詢的分頁，遊戲會丟掉它。
+            var page = MarketBoardCurrentOfferings.Read(packetRef);
+            var current = a1 != null && a1->InfoProxyPageInterface.CurrentRequestId == (byte)page.RequestId;
+            if (this.pairer.OnPage(page, current) is { } done)
+                this.MarketBoardQueryCompleted?.InvokeSafely(done);
         }
         catch (Exception ex)
         {
@@ -674,6 +591,8 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         try
         {
             this.MarketBoardPurchaseRequestSent?.InvokeSafely((nint)infoProxyItemSearch + 0x5680);
+            if (infoProxyItemSearch != null)
+                this.pairer.OnPurchaseSent(MarketBoardPurchaseHandler.Read((nint)infoProxyItemSearch + 0x5680));
         }
         catch (Exception ex)
         {
