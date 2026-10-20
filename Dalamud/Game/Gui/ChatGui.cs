@@ -46,6 +46,8 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
 
     private static readonly DetourFault PrintMessageFault = new("ChatGui.PrintMessage", "處理聊天訊息（插件攔截或修改）");
 
+    private static readonly DetourFault LinkStripFault = new("ChatGui.PrintMessage.LinkStrip", "移除聊天訊息裡的插件連結");
+
     private readonly ConcurrentQueue<XivChatEntry> chatQueue = new();
     private readonly Dictionary<(string PluginName, uint CommandId), Action<uint, SeString>> dalamudLinkHandlers = new();
 
@@ -62,6 +64,9 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
 
     // Framework thread only.
     private bool queueDropLogged;
+
+    // PrintMessage detour only.
+    private bool linkStripLogged;
 
     [ServiceManager.ServiceConstructor]
     private ChatGui(TargetSigScanner sigScanner)
@@ -509,6 +514,9 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
         if (isHandled)
             return 0;
 
+        if (this.handleLinkClickHook == null && !this.TryStripDalamudLinks(sender, message))
+            return 0;
+
         var messageId = this.printMessageHook!.Original(manager, chatType, sender, message, timestamp, silent);
 
         if (unhandledSender != null && unhandledMessage != null)
@@ -527,6 +535,37 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
         }
 
         return messageId;
+    }
+
+    // Without the HandleLinkClick hook a click on a Dalamud link would reach the game's own handler, so the line loses
+    // its links (not their text) before the game stores it. Plugins still saw it whole. False when the links could not
+    // be removed: the line is then not printed.
+    private bool TryStripDalamudLinks(Utf8String* sender, Utf8String* message)
+    {
+        try
+        {
+            var strippedSender = sender == null ? null : DalamudLinkStripper.Strip(sender->AsSpan());
+            var strippedMessage = message == null ? null : DalamudLinkStripper.Strip(message->AsSpan());
+            if (strippedSender == null && strippedMessage == null)
+                return true;
+
+            if (!this.linkStripLogged)
+            {
+                this.linkStripLogged = true;
+                Log.Warning("Dalamud chat links are removed from lines printed to the game's chat log this session: the HandleLinkClick hook is not installed");
+            }
+
+            if (strippedSender != null)
+                sender->SetString(strippedSender);
+            if (strippedMessage != null)
+                message->SetString(strippedMessage);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LinkStripFault.Report(ex);
+            return false;
+        }
     }
 
     private void HandleLinkClickDetour(LogViewer* thisPtr, LinkData* linkData)
