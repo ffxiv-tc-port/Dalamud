@@ -121,7 +121,7 @@ namespace Dalamud.Test.Game.Gui
             var terminated = parsed.EncodeWithNullTerminator();
 
             var after = handler(parsed);
-            var skip = ChatGui.EncodesTo(after, terminated);
+            var skip = SeString.EncodesTo(after, terminated);
             var oracle = after.EncodeWithNullTerminator().AsSpan().SequenceEqual(terminated);
 
             Assert.True(skip == oracle, name);
@@ -134,9 +134,9 @@ namespace Dalamud.Test.Game.Gui
             var empty = SeString.Parse(ReadOnlySpan<byte>.Empty);
             var terminated = empty.EncodeWithNullTerminator();
 
-            Assert.True(ChatGui.EncodesTo(empty, terminated));
-            Assert.False(ChatGui.EncodesTo(empty.Append(new TextPayload("a")), terminated));
-            Assert.False(ChatGui.EncodesTo(SeString.Empty, []));
+            Assert.True(SeString.EncodesTo(empty, terminated));
+            Assert.False(SeString.EncodesTo(empty.Append(new TextPayload("a")), terminated));
+            Assert.False(SeString.EncodesTo(SeString.Empty, []));
         }
 
         [Fact]
@@ -145,10 +145,10 @@ namespace Dalamud.Test.Game.Gui
             var full = new SeString(new TextPayload("ab"), new TextPayload("cd"));
             var terminated = full.EncodeWithNullTerminator();
 
-            Assert.False(ChatGui.EncodesTo(new SeString(new TextPayload("ab")), terminated));
-            Assert.False(ChatGui.EncodesTo(new SeString(new TextPayload("ab"), new TextPayload("cd"), new TextPayload("e")), terminated));
-            Assert.False(ChatGui.EncodesTo(full, terminated.Take(terminated.Length - 1).Append((byte)1).ToArray()));
-            Assert.True(ChatGui.EncodesTo(new SeString(new TextPayload("abcd")), terminated));
+            Assert.False(SeString.EncodesTo(new SeString(new TextPayload("ab")), terminated));
+            Assert.False(SeString.EncodesTo(new SeString(new TextPayload("ab"), new TextPayload("cd"), new TextPayload("e")), terminated));
+            Assert.False(SeString.EncodesTo(full, terminated.Take(terminated.Length - 1).Append((byte)1).ToArray()));
+            Assert.True(SeString.EncodesTo(new SeString(new TextPayload("abcd")), terminated));
         }
 
         [Fact]
@@ -158,9 +158,9 @@ namespace Dalamud.Test.Game.Gui
             var terminated = parsed.EncodeWithNullTerminator();
             parsed.Payloads.Insert(1, null!);
 
-            Assert.Throws<NullReferenceException>(() => ChatGui.EncodesTo(parsed, terminated));
+            Assert.Throws<NullReferenceException>(() => SeString.EncodesTo(parsed, terminated));
             Assert.Throws<NullReferenceException>(() => parsed.EncodeWithNullTerminator());
-            Assert.Throws<NullReferenceException>(() => ChatGui.EncodesTo(null!, terminated));
+            Assert.Throws<NullReferenceException>(() => SeString.EncodesTo(null!, terminated));
         }
 
         [Fact]

@@ -185,8 +185,9 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
                 return IntPtr.Zero;
             }
 
-            var maybeModifiedText1 = tmpText1.EncodeWithNullTerminator();
-            var maybeModifiedText2 = tmpText2.EncodeWithNullTerminator();
+            // Unchanged bytes reuse the first encoding, so only a text that differs is encoded again.
+            var maybeModifiedText1 = SeString.EncodesTo(tmpText1, originalText1) ? originalText1 : tmpText1.EncodeWithNullTerminator();
+            var maybeModifiedText2 = SeString.EncodesTo(tmpText2, originalText2) ? originalText2 : tmpText2.EncodeWithNullTerminator();
 
             // Check if any values have changed
             var dirty = (int)tmpKind != kind ||

@@ -258,31 +258,6 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
     }
 
     /// <summary>
-    /// Whether <c>text.EncodeWithNullTerminator()</c> would return exactly <paramref name="terminated"/>, without building it.
-    /// </summary>
-    /// <remarks>
-    /// Compares what <see cref="Payload.Encode"/> returns now, so it sees every change a fresh encoding would see (and
-    /// misses the same ones). Throws where the full encoding would throw first; stops at the first differing payload.
-    /// </remarks>
-    /// <param name="text">The possibly modified string.</param>
-    /// <param name="terminated">An earlier <c>EncodeWithNullTerminator()</c> result.</param>
-    /// <returns>True if the bytes are identical.</returns>
-    internal static bool EncodesTo(SeString text, byte[] terminated)
-    {
-        var offset = 0;
-        var end = terminated.Length - 1;
-        foreach (var payload in text.Payloads)
-        {
-            var bytes = payload.Encode();
-            if (bytes is null || bytes.Length > end - offset || !bytes.AsSpan().SequenceEqual(terminated.AsSpan(offset, bytes.Length)))
-                return false;
-            offset += bytes.Length;
-        }
-
-        return offset == end && terminated[end] == 0;
-    }
-
-    /// <summary>
     /// Create a link handler.
     /// </summary>
     /// <param name="pluginName">The name of the plugin handling the link.</param>
@@ -445,8 +420,8 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
 
             // Unchanged bytes reuse the first encoding (the comparisons below then see equal data); only a side that
             // differs is encoded again. Payloads are encoded in the same order either way.
-            var possiblyModifiedSenderData = EncodesTo(parsedSender, terminatedSender) ? terminatedSender : parsedSender.EncodeWithNullTerminator();
-            var possiblyModifiedMessageData = EncodesTo(parsedMessage, terminatedMessage) ? terminatedMessage : parsedMessage.EncodeWithNullTerminator();
+            var possiblyModifiedSenderData = SeString.EncodesTo(parsedSender, terminatedSender) ? terminatedSender : parsedSender.EncodeWithNullTerminator();
+            var possiblyModifiedMessageData = SeString.EncodesTo(parsedMessage, terminatedMessage) ? terminatedMessage : parsedMessage.EncodeWithNullTerminator();
 
             // The Verbose lines are built only when written: a plugin may modify every message.
             if (!terminatedSender.SequenceEqual(possiblyModifiedSenderData))

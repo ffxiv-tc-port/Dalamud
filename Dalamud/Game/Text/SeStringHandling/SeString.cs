@@ -508,6 +508,31 @@ public class SeString
         return this.TextValue;
     }
 
+    /// <summary>
+    /// Whether <c>text.EncodeWithNullTerminator()</c> would return exactly <paramref name="terminated"/>, without building it.
+    /// </summary>
+    /// <remarks>
+    /// Compares what <see cref="Payload.Encode"/> returns now, so it sees every change a fresh encoding would see (and
+    /// misses the same ones). Throws where the full encoding would throw first; stops at the first differing payload.
+    /// </remarks>
+    /// <param name="text">The possibly modified string.</param>
+    /// <param name="terminated">An earlier <c>EncodeWithNullTerminator()</c> result.</param>
+    /// <returns>True if the bytes are identical.</returns>
+    internal static bool EncodesTo(SeString text, byte[] terminated)
+    {
+        var offset = 0;
+        var end = terminated.Length - 1;
+        foreach (var payload in text.Payloads)
+        {
+            var bytes = payload.Encode();
+            if (bytes is null || bytes.Length > end - offset || !bytes.AsSpan().SequenceEqual(terminated.AsSpan(offset, bytes.Length)))
+                return false;
+            offset += bytes.Length;
+        }
+
+        return offset == end && terminated[end] == 0;
+    }
+
     private static string GetMapLinkNameString(string placeName, int? instance, string coordinateString)
     {
         var instanceString = string.Empty;
