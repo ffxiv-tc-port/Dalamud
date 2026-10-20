@@ -183,7 +183,7 @@ internal static class CoreAddressPreflight
         /// <summary>Reads the layout of the real module (not the scanner's copy).</summary>
         /// <param name="scanner">The scanner.</param>
         /// <returns>The layout.</returns>
-        public static ModuleLayout Of(TargetSigScanner scanner)
+        public static ModuleLayout Of(ISigScanner scanner)
         {
             var moduleBase = scanner.Module.BaseAddress;
             return new(
