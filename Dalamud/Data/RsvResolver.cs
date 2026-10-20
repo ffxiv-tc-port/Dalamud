@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Dalamud.Hooking;
 using Dalamud.Logging.Internal;
 using Dalamud.Memory;
+using Dalamud.Utility.Internal;
 using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
 using Lumina.Text.ReadOnly;
 
@@ -14,6 +15,8 @@ namespace Dalamud.Data;
 internal sealed unsafe class RsvResolver : IDisposable
 {
     private static readonly ModuleLog Log = new("RsvProvider");
+
+    private static readonly DetourFault AddRsvStringFault = new("RsvResolver.AddRsvString", "記錄遊戲的 RSV 字串");
 
     private readonly Hook<LayoutWorld.Delegates.AddRsvString> addRsvStringHook;
 
@@ -40,12 +43,21 @@ internal sealed unsafe class RsvResolver : IDisposable
         this.addRsvStringHook.Dispose();
     }
 
+    // Original is called exactly once, outside the try block.
     private bool AddRsvStringDetour(LayoutWorld* @this, byte* rsvString, byte* resolvedString, nuint resolvedStringSize)
     {
-        var rsv = new ReadOnlySeString(MemoryHelper.ReadRawNullTerminated((nint)rsvString));
-        var resolved = new ReadOnlySeString(new ReadOnlySpan<byte>(resolvedString, (int)resolvedStringSize).ToArray());
-        Log.Debug($"Resolving RSV \"{rsv}\" to \"{resolved}\".");
-        this.Lookup[rsv] = resolved;
+        try
+        {
+            var rsv = new ReadOnlySeString(MemoryHelper.ReadRawNullTerminated((nint)rsvString));
+            var resolved = new ReadOnlySeString(new ReadOnlySpan<byte>(resolvedString, (int)resolvedStringSize).ToArray());
+            Log.Debug($"Resolving RSV \"{rsv}\" to \"{resolved}\".");
+            this.Lookup[rsv] = resolved;
+        }
+        catch (Exception ex)
+        {
+            AddRsvStringFault.Report(ex);
+        }
+
         return this.addRsvStringHook.Original(@this, rsvString, resolvedString, resolvedStringSize);
     }
 }

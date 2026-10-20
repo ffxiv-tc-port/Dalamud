@@ -8,6 +8,7 @@ using Dalamud.IoC.Internal;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
@@ -25,6 +26,8 @@ internal unsafe class AddonEventManager : IInternalDisposableService
     public static readonly Guid DalamudInternalKey = Guid.NewGuid();
 
     private static readonly ModuleLog Log = new("AddonEventManager");
+
+    private static readonly DetourFault UpdateCursorFault = new("AddonEventManager.UpdateCursor", "變更滑鼠游標（插件設定）");
 
     [ServiceManager.ServiceDependency]
     private readonly AddonLifecycle addonLifecycle = Service<AddonLifecycle>.Get();
@@ -181,7 +184,7 @@ internal unsafe class AddonEventManager : IInternalDisposableService
         }
         catch (Exception e)
         {
-            Log.Error(e, "Exception in UpdateCursorDetour.");
+            UpdateCursorFault.Report(e);
         }
 
         this.onUpdateCursor!.Original(thisPtr);

@@ -12,6 +12,7 @@ using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Client.UI;
@@ -26,6 +27,8 @@ namespace Dalamud.Game.Command;
 internal sealed unsafe class CommandManager : IInternalDisposableService, ICommandManager
 {
     private static readonly ModuleLog Log = new("Command");
+
+    private static readonly DetourFault DebugCommandFault = new("CommandManager.TryInvokeDebugCommand", "執行插件指令");
 
     private readonly ConcurrentDictionary<string, IReadOnlyCommandInfo> commandMap = new();
     private readonly ConcurrentDictionary<(string, IReadOnlyCommandInfo), string> commandAssemblyNameMap = new();
@@ -247,7 +250,15 @@ internal sealed unsafe class CommandManager : IInternalDisposableService, IComma
         var result = this.tryInvokeDebugCommandHook!.OriginalDisposeSafe(self, command, uiModule);
         if (result != -1) return result;
 
-        return this.ProcessCommand(command->ToString()) ? 0 : result;
+        try
+        {
+            return this.ProcessCommand(command->ToString()) ? 0 : result;
+        }
+        catch (Exception ex)
+        {
+            DebugCommandFault.Report(ex);
+            return result;
+        }
     }
 
     /// <inheritdoc />

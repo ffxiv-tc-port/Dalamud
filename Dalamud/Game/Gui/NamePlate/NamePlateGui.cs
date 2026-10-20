@@ -7,6 +7,7 @@ using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -30,6 +31,8 @@ internal sealed class NamePlateGui : IInternalDisposableService, INamePlateGui
     /// An empty null-terminated string pointer allocated in unmanaged memory, used to tag removed fields.
     /// </summary>
     internal static readonly nint EmptyStringPointer = CreateEmptyStringPointer();
+
+    private static readonly DetourFault UpdateFault = new("NamePlateGui.OnRequestedUpdate", "更新名牌（插件修改名牌）");
 
     [ServiceManager.ServiceDependency]
     private readonly GameGui gameGui = Service<GameGui>.Get();
@@ -261,6 +264,11 @@ internal sealed class NamePlateGui : IInternalDisposableService, INamePlateGui
                     this.OnPostDataUpdate?.InvokeSafely(this.context, activeHandlers);
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            // Escaping into the game would crash it; the finally block still calls Original if nothing did yet.
+            UpdateFault.Report(ex);
         }
         finally
         {

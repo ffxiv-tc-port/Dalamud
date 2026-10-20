@@ -8,6 +8,7 @@ using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Memory;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -22,6 +23,8 @@ namespace Dalamud.Game.Gui.FlyText;
 [ServiceManager.EarlyLoadedService]
 internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
 {
+    private static readonly DetourFault CreateFlyTextFault = new("FlyTextGui.CreateFlyText", "顯示戰鬥飛字（插件修改）");
+
     /// <summary>
     /// The hook that fires when the game creates a fly text element.
     /// </summary>
@@ -116,6 +119,9 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
         float yOffset)
     {
         var retVal = nint.Zero;
+
+        // Set right before Original is called or deliberately skipped; the catch block calls it only if neither happened.
+        var originalDone = false;
         try
         {
             Log.Verbose("[FlyText] Enter CreateFlyText detour!");
@@ -169,6 +175,7 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
 
                 // Returning null to AddFlyText from CreateFlyText will result
                 // in the operation being dropped entirely.
+                originalDone = true;
                 return IntPtr.Zero;
             }
 
@@ -190,6 +197,7 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
             if (!dirty)
             {
                 Log.Verbose("[FlyText] Calling flytext with original args.");
+                originalDone = true;
                 return this.createFlyTextHook.Original(thisPtr, kind, val1, val2, text2, color, icon,
                                                        damageTypeIcon, text1, yOffset);
             }
@@ -200,6 +208,7 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
             Marshal.Copy(maybeModifiedText2, 0, pText2, maybeModifiedText2.Length);
             Log.Verbose("[FlyText] Allocated and set strings.");
 
+            originalDone = true;
             retVal = this.createFlyTextHook.Original(
                 thisPtr,
                 (int)tmpKind,
@@ -230,7 +239,9 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
         }
         catch (Exception e)
         {
-            Log.Error(e, "Exception occurred in CreateFlyTextDetour!");
+            CreateFlyTextFault.Report(e);
+            if (!originalDone)
+                retVal = this.createFlyTextHook.Original(thisPtr, kind, val1, val2, text2, color, icon, damageTypeIcon, text1, yOffset);
         }
 
         return retVal;

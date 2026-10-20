@@ -10,6 +10,7 @@ using Dalamud.IoC.Internal;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
@@ -33,6 +34,10 @@ namespace Dalamud.Game.Gui;
 internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 {
     private static readonly ModuleLog Log = new("GameGui");
+
+    private static readonly DetourFault UiVisibilityFault = new("GameGui.SetUiVisibility", "切換介面顯示（通知插件）");
+
+    private static readonly DetourFault Utf8StringFault = new("GameGui.Utf8StringFromSequence", "建立遊戲字串");
 
     private readonly GameGuiAddressResolver address;
 
@@ -396,17 +401,24 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
     {
         this.setUiVisibilityHook.Original(thisPtr, uiVisible);
 
-        // See OpenMapWithMapLink for why Instance() can be null here. Leave GameUiHidden at its
-        // previous value and skip the event rather than dereferencing null; the next toggle will
-        // resynchronise it.
-        var raptureAtkModule = RaptureAtkModule.Instance();
-        if (raptureAtkModule == null)
-            return;
+        try
+        {
+            // See OpenMapWithMapLink for why Instance() can be null here. Leave GameUiHidden at its
+            // previous value and skip the event rather than dereferencing null; the next toggle will
+            // resynchronise it.
+            var raptureAtkModule = RaptureAtkModule.Instance();
+            if (raptureAtkModule == null)
+                return;
 
-        this.GameUiHidden = !raptureAtkModule->IsUiVisible;
-        this.UiHideToggled?.InvokeSafely(this, this.GameUiHidden);
+            this.GameUiHidden = !raptureAtkModule->IsUiVisible;
+            this.UiHideToggled?.InvokeSafely(this, this.GameUiHidden);
 
-        Log.Debug("GameUiHidden: {0}", this.GameUiHidden);
+            Log.Debug("GameUiHidden: {0}", this.GameUiHidden);
+        }
+        catch (Exception ex)
+        {
+            UiVisibilityFault.Report(ex);
+        }
     }
 
     private char HandleImmDetour(IntPtr framework, char a2, byte a3)
@@ -420,12 +432,27 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
                    : result;
     }
 
+    // The string is constructed exactly once: by Original, or for a null source by Ctor instead.
     private Utf8String* Utf8StringFromSequenceDetour(Utf8String* thisPtr, byte* sourcePtr, nuint sourceLen)
     {
         if (sourcePtr != null)
+        {
             this.utf8StringFromSequenceHook.Original(thisPtr, sourcePtr, sourceLen);
-        else
+            return thisPtr;
+        }
+
+        try
+        {
             thisPtr->Ctor(); // this is in ClientStructs but you could do it manually too
+        }
+        catch (Exception ex)
+        {
+            // Ctor throws before touching the string, so it is still unconstructed. An empty sequence from a
+            // valid pointer builds the same empty string.
+            Utf8StringFault.Report(ex);
+            var empty = (byte)0;
+            this.utf8StringFromSequenceHook.Original(thisPtr, &empty, 0);
+        }
 
         return thisPtr; // this function shouldn't need to return but the original asm moves this into rax before returning so be safe?
     }

@@ -33,6 +33,9 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
 
     private static readonly ModuleLog Log = new("ContextMenu");
 
+    private static readonly DetourFault OpenAddonFault = new("ContextMenu.OpenAddon", "開啟右鍵選單（加入插件項目）");
+    private static readonly DetourFault MenuSelectedFault = new("ContextMenu.MenuSelected", "點選插件的右鍵選單項目");
+
     // Both null when the layout could not be derived: then no menu is ever touched.
     private readonly Hook<AtkModuleVf22OpenAddonByAgentDelegate>? atkModuleVf22OpenAddonByAgentHook;
     private readonly Hook<AddonContextMenuOnMenuSelectedDelegate>? addonContextMenuOnMenuSelectedHook;
@@ -400,10 +403,64 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
         this.SetupGenericMenu(8, 0, 6, 5, items, ref valueCount, ref values);
     }
 
+    // Original is called exactly once, outside every try block. If preparing our items fails, the game opens the menu
+    // with its own values, and no Dalamud callbacks are left behind for OnMenuSelected to act on.
     private ushort AtkModuleVf22OpenAddonByAgentDetour(AtkModule* module, byte* addonName, int valueCount, AtkValue* values, AgentInterface* agent, nint a7, bool a8)
     {
         var oldValues = values;
+        var oldValueCount = valueCount;
 
+        try
+        {
+            this.PrepareOpenAddon(addonName, agent, ref valueCount, ref values);
+        }
+        catch (Exception ex)
+        {
+            OpenAddonFault.Report(ex);
+            this.AbandonPreparedMenu(oldValues, values, valueCount);
+            values = oldValues;
+            valueCount = oldValueCount;
+        }
+
+        var ret = this.atkModuleVf22OpenAddonByAgentHook!.Original(module, addonName, valueCount, values, agent, a7, a8);
+
+        if (values != oldValues)
+        {
+            try
+            {
+                this.FreeExpandedContextMenuArray(values, valueCount);
+            }
+            catch (Exception ex)
+            {
+                OpenAddonFault.Report(ex);
+            }
+        }
+
+        return ret;
+    }
+
+    // Never throws.
+    private void AbandonPreparedMenu(AtkValue* oldValues, AtkValue* values, int valueCount)
+    {
+        this.MenuCallbackIds.Clear();
+        this.SelectedItems = null;
+        this.SubmenuItems = null;
+
+        if (values == oldValues)
+            return;
+
+        try
+        {
+            this.FreeExpandedContextMenuArray(values, valueCount);
+        }
+        catch (Exception)
+        {
+            // Leaked: freeing is what failed.
+        }
+    }
+
+    private void PrepareOpenAddon(byte* addonName, AgentInterface* agent, ref int valueCount, ref AtkValue* values)
+    {
         if (MemoryHelper.EqualsZeroTerminatedString("ContextMenu", (nint)addonName))
         {
             this.MenuCallbackIds.Clear();
@@ -523,11 +580,6 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
         {
             this.MenuCallbackIds.Clear();
         }
-
-        var ret = this.atkModuleVf22OpenAddonByAgentHook!.Original(module, addonName, valueCount, values, agent, a7, a8);
-        if (values != oldValues)
-            this.FreeExpandedContextMenuArray(values, valueCount);
-        return ret;
     }
 
     private List<IMenuItem> FixupMenuList(List<IMenuItem> items, int nativeMenuSize)
@@ -620,40 +672,55 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
         }
         else
         {
-            var item = items[callbackId];
-            var openedSubmenu = false;
-
+            // A Dalamud item has no entry in the game's own menu, so Original is never called for it, not even when
+            // handling it fails: the index would point past the game's event arrays.
             try
             {
-                if (item.OnClicked == null)
-                    throw new InvalidOperationException("Item has no OnClicked handler");
-                item.OnClicked.InvokeSafely(new MenuItemClickedArgs(
-                    (name, submenuItems) =>
-                    {
-                        short x, y;
-                        addon->AtkUnitBase.GetPosition(&x, &y);
-                        this.OpenSubmenu(name ?? item.Name, submenuItems, x, y);
-                        openedSubmenu = true;
-                    },
-                    this.SelectedParentAddon,
-                    this.SelectedAgent,
-                    this.SelectedMenuType ?? default,
-                    this.SelectedEventInterfaces));
+                this.HandleItemClicked(addon, items, callbackId);
             }
-            catch (Exception e)
+            catch (Exception ex)
             {
-                Log.Error(e, "Error while handling context menu click");
+                MenuSelectedFault.Report(ex);
             }
 
-            // Close with click sound
-            if (!openedSubmenu)
-                addon->AtkUnitBase.FireCallbackInt(-2);
             return false;
         }
 
 original:
         // Eventually handled by inventory context here: 14022BBD0 (6.51)
         return this.addonContextMenuOnMenuSelectedHook!.Original(addon, selectedIdx, a3);
+    }
+
+    private void HandleItemClicked(AddonContextMenu* addon, IReadOnlyList<IMenuItem> items, int callbackId)
+    {
+        var item = items[callbackId];
+        var openedSubmenu = false;
+
+        try
+        {
+            if (item.OnClicked == null)
+                throw new InvalidOperationException("Item has no OnClicked handler");
+            item.OnClicked.InvokeSafely(new MenuItemClickedArgs(
+                (name, submenuItems) =>
+                {
+                    short x, y;
+                    addon->AtkUnitBase.GetPosition(&x, &y);
+                    this.OpenSubmenu(name ?? item.Name, submenuItems, x, y);
+                    openedSubmenu = true;
+                },
+                this.SelectedParentAddon,
+                this.SelectedAgent,
+                this.SelectedMenuType ?? default,
+                this.SelectedEventInterfaces));
+        }
+        catch (Exception e)
+        {
+            Log.Error(e, "Error while handling context menu click");
+        }
+
+        // Close with click sound
+        if (!openedSubmenu)
+            addon->AtkUnitBase.FireCallbackInt(-2);
     }
 }
 

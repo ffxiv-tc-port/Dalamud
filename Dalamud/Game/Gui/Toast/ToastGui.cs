@@ -8,6 +8,7 @@ using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Memory;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.UI;
 
@@ -22,6 +23,12 @@ namespace Dalamud.Game.Gui.Toast;
 internal sealed partial class ToastGui : IInternalDisposableService, IToastGui
 {
     private const uint QuestToastCheckmarkMagic = 60081;
+
+    private static readonly DetourFault NormalToastFault = new("ToastGui.ShowNormal", "顯示畫面提示（插件攔截或修改）");
+
+    private static readonly DetourFault QuestToastFault = new("ToastGui.ShowQuest", "顯示任務提示（插件攔截或修改）");
+
+    private static readonly DetourFault ErrorToastFault = new("ToastGui.ShowError", "顯示錯誤提示（插件攔截或修改）");
 
     private readonly ConcurrentQueue<(byte[] Message, ToastOptions Options)> normalQueue = new();
     private readonly ConcurrentQueue<(byte[] Message, QuestToastOptions Options)> questQueue = new();
@@ -136,45 +143,60 @@ internal sealed partial class ToastGui
         }
     }
 
+    // Original is called exactly once, outside the try block, unless there is no text or a handler took the toast.
     private unsafe void HandleNormalToastDetour(UIModule* thisPtr, byte* text, int layer, byte isTop, byte isFast, uint logMessageId)
     {
         if (text == null)
             return;
 
-        // call events
-        var isHandled = false;
-        var str = MemoryHelper.ReadSeStringNullTerminated((nint)text);
-        var options = new ToastOptions
+        byte[]? encoded = null;
+        byte top = 0, fast = 0;
+        try
         {
-            Position = (ToastPosition)isTop,
-            Speed = (ToastSpeed)isFast,
-        };
+            // call events
+            var isHandled = false;
+            var str = MemoryHelper.ReadSeStringNullTerminated((nint)text);
+            var options = new ToastOptions
+            {
+                Position = (ToastPosition)isTop,
+                Speed = (ToastSpeed)isFast,
+            };
 
-        foreach (var d in Delegate.EnumerateInvocationList(this.Toast))
+            foreach (var d in Delegate.EnumerateInvocationList(this.Toast))
+            {
+                try
+                {
+                    d.Invoke(ref str, ref options, ref isHandled);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Exception during raise of {handler}", d.Method);
+                }
+            }
+
+            // do nothing if handled
+            if (isHandled)
+                return;
+
+            encoded = str.EncodeWithNullTerminator();
+            top = (byte)(options.Position == ToastPosition.Top ? 1 : 0);
+            fast = (byte)(options.Speed == ToastSpeed.Fast ? 1 : 0);
+        }
+        catch (Exception ex)
         {
-            try
-            {
-                d.Invoke(ref str, ref options, ref isHandled);
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Exception during raise of {handler}", d.Method);
-            }
+            NormalToastFault.Report(ex);
+            encoded = null;
         }
 
-        // do nothing if handled
-        if (isHandled)
-            return;
-
-        fixed (byte* ptr = str.EncodeWithNullTerminator())
+        if (encoded == null)
         {
-            this.showNormalToastHook.Original(
-                thisPtr,
-                ptr,
-                layer,
-                (byte)(options.Position == ToastPosition.Top ? 1 : 0),
-                (byte)(options.Speed == ToastSpeed.Fast ? 1 : 0),
-                logMessageId);
+            this.showNormalToastHook.Original(thisPtr, text, layer, isTop, isFast, logMessageId);
+            return;
+        }
+
+        fixed (byte* ptr = encoded)
+        {
+            this.showNormalToastHook.Original(thisPtr, ptr, layer, top, fast, logMessageId);
         }
     }
 }
@@ -217,50 +239,69 @@ internal sealed partial class ToastGui
         }
     }
 
+    // Original is called exactly once, outside the try block, unless there is no text or a handler took the toast.
     private unsafe void HandleQuestToastDetour(UIModule* thisPtr, int position, byte* text, uint iconOrCheck1, byte playSound, uint iconOrCheck2, byte alsoPlaySound)
     {
         if (text == null)
             return;
 
-        // call events
-        var isHandled = false;
-        var str = SeString.Parse(text);
-        var options = new QuestToastOptions
+        byte[]? encoded = null;
+        UIModule* target = null;
+        int newPosition = 0;
+        uint ioc1 = 0, ioc2 = 0;
+        byte sound = 0;
+        try
         {
-            Position = (QuestToastPosition)position,
-            DisplayCheckmark = iconOrCheck1 == QuestToastCheckmarkMagic,
-            IconId = iconOrCheck1 == QuestToastCheckmarkMagic ? iconOrCheck2 : iconOrCheck1,
-            PlaySound = playSound == 1,
-        };
+            // call events
+            var isHandled = false;
+            var str = SeString.Parse(text);
+            var options = new QuestToastOptions
+            {
+                Position = (QuestToastPosition)position,
+                DisplayCheckmark = iconOrCheck1 == QuestToastCheckmarkMagic,
+                IconId = iconOrCheck1 == QuestToastCheckmarkMagic ? iconOrCheck2 : iconOrCheck1,
+                PlaySound = playSound == 1,
+            };
 
-        foreach (var d in Delegate.EnumerateInvocationList(this.QuestToast))
+            foreach (var d in Delegate.EnumerateInvocationList(this.QuestToast))
+            {
+                try
+                {
+                    d.Invoke(ref str, ref options, ref isHandled);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Exception during raise of {handler}", d.Method);
+                }
+            }
+
+            // do nothing if handled
+            if (isHandled)
+                return;
+
+            encoded = str.EncodeWithNullTerminator();
+            (ioc1, ioc2) = this.DetermineParameterOrder(options);
+            newPosition = (int)options.Position;
+            sound = (byte)(options.PlaySound ? 1 : 0);
+
+            // As before, the module is looked up here; if that throws, the game's own call goes through below.
+            target = UIModule.Instance();
+        }
+        catch (Exception ex)
         {
-            try
-            {
-                d.Invoke(ref str, ref options, ref isHandled);
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Exception during raise of {handler}", d.Method);
-            }
+            QuestToastFault.Report(ex);
+            encoded = null;
         }
 
-        // do nothing if handled
-        if (isHandled)
-            return;
-
-        var (ioc1, ioc2) = this.DetermineParameterOrder(options);
-
-        fixed (byte* ptr = str.EncodeWithNullTerminator())
+        if (encoded == null)
         {
-            this.showQuestToastHook.Original(
-                UIModule.Instance(),
-                (int)options.Position,
-                ptr,
-                ioc1,
-                (byte)(options.PlaySound ? 1 : 0),
-                ioc2,
-                0);
+            this.showQuestToastHook.Original(thisPtr, position, text, iconOrCheck1, playSound, iconOrCheck2, alsoPlaySound);
+            return;
+        }
+
+        fixed (byte* ptr = encoded)
+        {
+            this.showQuestToastHook.Original(target, newPosition, ptr, ioc1, sound, ioc2, 0);
         }
     }
 
@@ -297,32 +338,50 @@ internal sealed partial class ToastGui
         }
     }
 
+    // Original is called exactly once, outside the try block, unless there is no text or a handler took the toast.
     private unsafe void HandleErrorToastDetour(UIModule* thisPtr, byte* text, byte respectsHidingMaybe)
     {
         if (text == null)
             return;
 
-        // call events
-        var isHandled = false;
-        var str = SeString.Parse(text);
-
-        foreach (var d in Delegate.EnumerateInvocationList(this.ErrorToast))
+        byte[]? encoded = null;
+        try
         {
-            try
+            // call events
+            var isHandled = false;
+            var str = SeString.Parse(text);
+
+            foreach (var d in Delegate.EnumerateInvocationList(this.ErrorToast))
             {
-                d.Invoke(ref str, ref isHandled);
+                try
+                {
+                    d.Invoke(ref str, ref isHandled);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Exception during raise of {handler}", d.Method);
+                }
             }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Exception during raise of {handler}", d.Method);
-            }
+
+            // do nothing if handled
+            if (isHandled)
+                return;
+
+            encoded = str.EncodeWithNullTerminator();
+        }
+        catch (Exception ex)
+        {
+            ErrorToastFault.Report(ex);
+            encoded = null;
         }
 
-        // do nothing if handled
-        if (isHandled)
+        if (encoded == null)
+        {
+            this.showErrorToastHook.Original(thisPtr, text, respectsHidingMaybe);
             return;
+        }
 
-        fixed (byte* ptr = str.EncodeWithNullTerminator())
+        fixed (byte* ptr = encoded)
         {
             this.showErrorToastHook.Original(thisPtr, ptr, respectsHidingMaybe);
         }

@@ -7,6 +7,7 @@ using Dalamud.Game.Command;
 using Dalamud.Hooking;
 using Dalamud.Logging.Internal;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.System.Memory;
 using FFXIVClientStructs.FFXIV.Client.System.String;
@@ -116,6 +117,10 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
     private const string ExpectedSheetName = "Completion";
 
     private static readonly ModuleLog Log = new("DalamudCompletion");
+
+    private static readonly DetourFault UpdateFault = new("DalamudCompletion.Open", "在聊天輸入補全加入插件指令");
+
+    private static readonly DetourFault SelectionFault = new("DalamudCompletion.GetSelection", "選取聊天輸入補全的插件指令");
 
     [ServiceManager.ServiceDependency]
     private readonly CommandManager commandManager = Service<CommandManager>.Get();
@@ -412,23 +417,45 @@ internal sealed unsafe class DalamudCompletion : IInternalDisposableService
         return nint.Zero;
     }
 
+    // The three detours call Original exactly once, outside every try block.
     private bool OpenCompletionCoreDetour(AtkTextInput* thisPtr, Utf8String* rawWord, Utf8String* filteredWord)
     {
-        this.UpdateCompletionData();
+        this.TryUpdateCompletionData();
         return this.openCompletionCoreHook!.Original(thisPtr, rawWord, filteredWord);
     }
 
     private void OpenSuggestionsDetour(AtkTextInput* thisPtr)
     {
-        this.UpdateCompletionData();
+        this.TryUpdateCompletionData();
         this.openSuggestionsHook!.Original(thisPtr);
     }
 
     private int GetSelectionDetour(CompletionModule* thisPtr, CategoryData.CompletionDataStruct* dataStructs, int index, Utf8String* outputString, Utf8String* outputDisplayString)
     {
         var ret = this.getSelectionHook!.Original.Invoke(thisPtr, dataStructs, index, outputString, outputDisplayString);
-        this.HandleInsert(ret, outputString, outputDisplayString);
+        try
+        {
+            this.HandleInsert(ret, outputString, outputDisplayString);
+        }
+        catch (Exception ex)
+        {
+            SelectionFault.Report(ex);
+        }
+
         return ret;
+    }
+
+    // Never throws: on failure the game opens its completion list with whatever data it has.
+    private void TryUpdateCompletionData()
+    {
+        try
+        {
+            this.UpdateCompletionData();
+        }
+        catch (Exception ex)
+        {
+            UpdateFault.Report(ex);
+        }
     }
 
     private void UpdateCompletionData()

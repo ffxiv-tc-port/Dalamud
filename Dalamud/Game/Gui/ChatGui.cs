@@ -42,6 +42,8 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
 {
     private static readonly ModuleLog Log = new("ChatGui");
 
+    private static readonly DetourFault PrintMessageFault = new("ChatGui.PrintMessage", "處理聊天訊息（插件攔截或修改）");
+
     private readonly ConcurrentQueue<XivChatEntry> chatQueue = new();
     private readonly Dictionary<(string PluginName, uint CommandId), Action<uint, SeString>> dalamudLinkHandlers = new();
 
@@ -370,9 +372,13 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
         }
     }
 
+    // Original is called at most once, outside every try block: never when a handler took the message, otherwise
+    // exactly once, also when Dalamud's own handling fails (the message is then printed as the game passed it).
     private uint HandlePrintMessageDetour(RaptureLogModule* manager, XivChatType chatType, Utf8String* sender, Utf8String* message, int timestamp, byte silent)
     {
-        var messageId = 0u;
+        var isHandled = false;
+        SeString? unhandledSender = null;
+        SeString? unhandledMessage = null;
 
         try
         {
@@ -383,8 +389,6 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
             var terminatedMessage = parsedMessage.EncodeWithNullTerminator();
 
             // Call events
-            var isHandled = false;
-
             foreach (var action in Delegate.EnumerateInvocationList(this.CheckMessageHandled))
             {
                 try
@@ -431,19 +435,48 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
             if (isHandled)
             {
                 foreach (var d in Delegate.EnumerateInvocationList(this.ChatMessageHandled))
-                    d(chatType, timestamp, parsedSender, parsedMessage);
+                {
+                    try
+                    {
+                        d(chatType, timestamp, parsedSender, parsedMessage);
+                    }
+                    catch (Exception e)
+                    {
+                        Log.Error(e, "Could not invoke registered OnMessageHandledDelegate for {Name}", d.Method);
+                    }
+                }
             }
             else
             {
-                messageId = this.printMessageHook.Original(manager, chatType, sender, message, timestamp, silent);
-                foreach (var d in Delegate.EnumerateInvocationList(this.ChatMessageUnhandled))
-                    d(chatType, timestamp, parsedSender, parsedMessage);
+                unhandledSender = parsedSender;
+                unhandledMessage = parsedMessage;
             }
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Exception on OnChatMessage hook.");
-            messageId = this.printMessageHook.Original(manager, chatType, sender, message, timestamp, silent);
+            PrintMessageFault.Report(ex);
+            isHandled = false;
+            unhandledSender = null;
+        }
+
+        if (isHandled)
+            return 0;
+
+        var messageId = this.printMessageHook.Original(manager, chatType, sender, message, timestamp, silent);
+
+        if (unhandledSender != null && unhandledMessage != null)
+        {
+            foreach (var d in Delegate.EnumerateInvocationList(this.ChatMessageUnhandled))
+            {
+                try
+                {
+                    d(chatType, timestamp, unhandledSender, unhandledMessage);
+                }
+                catch (Exception e)
+                {
+                    Log.Error(e, "Could not invoke registered OnMessageUnhandledDelegate for {Name}", d.Method);
+                }
+            }
         }
 
         return messageId;

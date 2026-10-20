@@ -7,6 +7,7 @@ using Dalamud.Interface.Internal;
 using Dalamud.Interface.Windowing;
 using Dalamud.Logging.Internal;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -23,6 +24,8 @@ namespace Dalamud.Game.Internal;
 internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
 {
     private static readonly ModuleLog Log = new("DalamudAtkTweaks");
+
+    private static readonly DetourFault SystemMenuFault = new("DalamudAtkTweaks.OpenSystemMenu", "在系統選單加入 Dalamud 項目");
 
     private readonly Hook<AgentHUD.Delegates.OpenSystemMenu> hookAgentHudOpenSystemMenu;
 
@@ -66,6 +69,24 @@ internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
 
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService() => this.Dispose(true);
+
+    // NUL-terminated: SetManagedString reads up to the first NUL, and the builder's view excludes its terminator.
+    private static byte[] BuildEntryLabel(string text)
+    {
+        const int color = 539;
+
+        using var rssb = new RentedSeStringBuilder();
+        var view = rssb.Builder
+                       .PushColorType(color)
+                       .Append($"{SeIconChar.BoxedLetterD.ToIconString()} ")
+                       .PopColorType()
+                       .Append(text)
+                       .GetViewAsSpan();
+
+        var label = new byte[view.Length + 1];
+        view.CopyTo(label);
+        return label;
+    }
 
     private void Dispose(bool disposing)
     {
@@ -122,35 +143,53 @@ internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
         this.hookAtkUnitBaseReceiveGlobalEvent.Original(thisPtr, eventType, eventParam, atkEvent, atkEventData);
     }
 
+    // Original is called exactly once, outside the try block, unless focus management cancels the menu on purpose.
     private void AgentHudOpenSystemMenuDetour(AgentHUD* thisPtr, AtkValue* atkValueArgs, uint menuSize)
     {
-        if (WindowSystem.ShouldInhibitAtkCloseEvents && this.configuration.IsFocusManagementEnabled)
+        var sizeToOpen = menuSize;
+        try
         {
-            Log.Verbose($"Cancelling OpenSystemMenu due to WindowSystem {WindowSystem.FocusedWindowSystemNamespace}");
-            return;
+            if (WindowSystem.ShouldInhibitAtkCloseEvents && this.configuration.IsFocusManagementEnabled)
+            {
+                Log.Verbose($"Cancelling OpenSystemMenu due to WindowSystem {WindowSystem.FocusedWindowSystemNamespace}");
+                return;
+            }
+
+            sizeToOpen = this.AddDalamudEntries(atkValueArgs, menuSize);
+        }
+        catch (Exception ex)
+        {
+            SystemMenuFault.Report(ex);
         }
 
+        this.hookAgentHudOpenSystemMenu.Original(thisPtr, atkValueArgs, sizeToOpen);
+    }
+
+    // Returns the size to open the menu with: menuSize when nothing was added. Everything that can throw runs before
+    // the first write to the game's values, so a failure leaves them untouched.
+    private uint AddDalamudEntries(AtkValue* atkValueArgs, uint menuSize)
+    {
         var interfaceManager = Service<InterfaceManager>.GetNullable();
         if (interfaceManager == null)
-        {
-            this.hookAgentHudOpenSystemMenu.Original(thisPtr, atkValueArgs, menuSize);
-            return;
-        }
+            return menuSize;
 
         if (!this.configuration.DoButtonsSystemMenu || !interfaceManager.IsDispatchingEvents)
-        {
-            this.hookAgentHudOpenSystemMenu.Original(thisPtr, atkValueArgs, menuSize);
-            return;
-        }
+            return menuSize;
 
         // the max size (hardcoded) is 0x12/18, but the system menu currently uses 0xC/12
         // this is a just in case that doesnt really matter
         // see if we can add 2 entries
         if (menuSize >= 0x12)
+            return menuSize;
+
+        if (AtkValue.MemberFunctionPointers.ChangeType == null || AtkValue.MemberFunctionPointers.SetManagedString == null)
         {
-            this.hookAgentHudOpenSystemMenu.Original(thisPtr, atkValueArgs, menuSize);
-            return;
+            SystemMenuFault.Report("AtkValue.ChangeType or AtkValue.SetManagedString is not resolved");
+            return menuSize;
         }
+
+        var pluginsLabel = BuildEntryLabel(this.locDalamudPlugins);
+        var settingsLabel = BuildEntryLabel(this.locDalamudSettings);
 
         // atkValueArgs is actually an array of AtkValues used as args. all their UI code works like this.
         // in this case, menu size is stored in atkValueArgs[4], and the next 17 slots are the MainCommand
@@ -184,30 +223,14 @@ internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
         var secondStringEntry = &atkValueArgs[6 + 18];
         secondStringEntry->ChangeType(ValueType.String);
 
-        const int color = 539;
-
-        using var rssb = new RentedSeStringBuilder();
-
-        firstStringEntry->SetManagedString(rssb.Builder
-            .PushColorType(color)
-            .Append($"{SeIconChar.BoxedLetterD.ToIconString()} ")
-            .PopColorType()
-            .Append(this.locDalamudPlugins)
-            .GetViewAsSpan());
-
-        rssb.Builder.Clear();
-        secondStringEntry->SetManagedString(rssb.Builder
-            .PushColorType(color)
-            .Append($"{SeIconChar.BoxedLetterD.ToIconString()} ")
-            .PopColorType()
-            .Append(this.locDalamudSettings)
-            .GetViewAsSpan());
+        firstStringEntry->SetManagedString(pluginsLabel);
+        secondStringEntry->SetManagedString(settingsLabel);
 
         // open menu with new size
         var sizeEntry = &atkValueArgs[4];
         sizeEntry->UInt = menuSize + 2;
 
-        this.hookAgentHudOpenSystemMenu.Original(thisPtr, atkValueArgs, menuSize + 2);
+        return menuSize + 2;
     }
 
     private unsafe void UiModuleExecuteMainCommandDetour(UIModule* thisPtr, uint commandId)
