@@ -69,7 +69,7 @@ internal sealed class GameConfig : IInternalDisposableService, IGameConfig
             }
             catch (Exception ex)
             {
-                this.tcsInitialization.SetExceptionIfIncomplete(ex);
+                this.FailInitialization(ex);
             }
         });
     }
@@ -223,7 +223,25 @@ internal sealed class GameConfig : IInternalDisposableService, IGameConfig
         this.configChangeHook?.Disable();
         this.configChangeHook?.Dispose();
     }
-    
+
+    /// <summary>
+    /// Records a failed initialization. Sections already set stay usable; the others throw instead of blocking their
+    /// readers forever, which on the framework thread would freeze the game.
+    /// </summary>
+    /// <param name="cause">Why initialization failed.</param>
+    internal void FailInitialization(Exception cause)
+    {
+        Log.Error(cause, "[GameConfig] Initialization failed; game settings that were not read yet are unavailable this session");
+        this.tcsInitialization.SetExceptionIfIncomplete(cause);
+
+        var unavailable = new InvalidOperationException(
+            "Dalamud 無法讀取遊戲設定（GameConfig 初始化失敗，多半是遊戲改版所致）。 Game settings are unavailable this session.",
+            cause);
+        this.tcsSystem.SetExceptionIfIncomplete(unavailable);
+        this.tcsUiConfig.SetExceptionIfIncomplete(unavailable);
+        this.tcsUiControl.SetExceptionIfIncomplete(unavailable);
+    }
+
     private unsafe nint OnConfigChanged(ConfigBase* configBase, ConfigEntry* configEntry)
     {
         var returnValue = this.configChangeHook!.Original(configBase, configEntry);
