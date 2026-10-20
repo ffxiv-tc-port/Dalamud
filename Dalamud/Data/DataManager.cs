@@ -67,13 +67,13 @@ internal sealed class DataManager : IInternalDisposableService, IDataManager
                 }
                 catch (Exception ex)
                 {
+                    // Not Util.Fatal: its exit would end the game too. Failing this service stops Dalamud like any
+                    // other service failure, and the game keeps running without plugins.
                     Log.Error(ex, "Lumina GameData init failed");
-                    Util.Fatal(
-                        "Dalamud could not read required game data files. This likely means your game installation is corrupted or incomplete.\n\n" +
-                        "Please repair your installation by right-clicking the login button in XIVLauncher and choosing \"Repair game files\".",
-                        "Dalamud");
-
-                    return;
+                    throw new InvalidOperationException(
+                        "Dalamud 讀不到必要的遊戲資料檔（sqpack），遊戲安裝可能損壞或不完整，請用啟動器修復遊戲檔案。" +
+                        " Dalamud could not read required game data files; please repair the game installation.",
+                        ex);
                 }
 
                 Log.Information("Lumina is ready: {0}", this.GameData.DataPath);
@@ -127,6 +127,9 @@ internal sealed class DataManager : IInternalDisposableService, IDataManager
         catch (Exception ex)
         {
             Log.Error(ex, "Could not initialize Lumina");
+
+            // A failed constructor is never disposed by the service manager, so its hook would stay installed.
+            this.rsvResolver.Dispose();
             throw;
         }
     }
