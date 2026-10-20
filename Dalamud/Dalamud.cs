@@ -128,9 +128,18 @@ internal sealed unsafe class Dalamud : IServiceType
         SetExceptionHandler(this.DefaultExceptionFilter);
         Log.Debug($"SE default exception filter at {new IntPtr(this.DefaultExceptionFilter):X}");
 
-        var debugSig = "40 55 53 57 48 8D AC 24 70 AD FF FF";
-        this.DebugExceptionFilter = Service<TargetSigScanner>.Get().ScanText(debugSig);
-        Log.Debug($"SE debug exception filter at {this.DebugExceptionFilter.ToInt64():X}");
+        // The services are already loading: a throw here would end this thread with nobody left to unload them, so a
+        // missing filter only disables its developer menu item.
+        const string debugSig = "40 55 53 57 48 8D AC 24 70 AD FF FF";
+        if (scanner.TryScanText(debugSig, out var debugFilter))
+        {
+            this.DebugExceptionFilter = debugFilter;
+            Log.Debug($"SE debug exception filter at {this.DebugExceptionFilter.ToInt64():X}");
+        }
+        else
+        {
+            Log.Warning("SE debug exception filter not found; the developer menu cannot switch to it this session");
+        }
     }
 
     /// <summary>
@@ -143,6 +152,11 @@ internal sealed unsafe class Dalamud : IServiceType
     /// in which case nothing is hooked and there is nothing to unload.
     /// </summary>
     internal bool ServicesStarted { get; private set; }
+
+    /// <summary>
+    /// Gets a value indicating whether the game's debug exception filter was found.
+    /// </summary>
+    internal bool HasDebugExceptionFilter => this.DebugExceptionFilter != 0;
 
     /// <summary>
     /// Gets location of stored assets.
@@ -207,10 +221,18 @@ internal sealed unsafe class Dalamud : IServiceType
         SetExceptionHandler(this.DefaultExceptionFilter);
 
     /// <summary>
-    /// Replace the current exception handler with a debug one.
+    /// Replace the current exception handler with a debug one. Does nothing if the game's debug filter was not found.
     /// </summary>
-    internal void UseDebugExceptionHandler() =>
+    internal void UseDebugExceptionHandler()
+    {
+        if (!this.HasDebugExceptionFilter)
+        {
+            Log.Warning("SE debug exception filter was not found; keeping the current exception handler");
+            return;
+        }
+
         SetExceptionHandler(this.DebugExceptionFilter);
+    }
 
     /// <summary>
     /// Disable the current exception handler.

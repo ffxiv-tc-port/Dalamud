@@ -970,7 +970,8 @@ internal class DalamudInterface : IInternalDisposableService
                         this.dalamud.UseDefaultExceptionHandler();
                     }
 
-                    if (ImGui.MenuItem("使用遊戲調適用異常處理器"))
+                    var hasDebugFilter = this.dalamud.HasDebugExceptionFilter;
+                    if (ImGui.MenuItem(hasDebugFilter ? "使用遊戲調適用異常處理器" : "使用遊戲調適用異常處理器（這個遊戲版本找不到）", false, hasDebugFilter))
                     {
                         this.dalamud.UseDebugExceptionHandler();
                     }
