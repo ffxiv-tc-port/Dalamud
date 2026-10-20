@@ -5,6 +5,7 @@ using Dalamud.Hooking;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility.Internal;
 using FFXIVClientStructs.FFXIV.Client.System.Input;
 using Serilog;
 
@@ -32,9 +33,12 @@ internal unsafe class GamepadState : IInternalDisposableService, IGamepadState
     private int rightStickY;
 
     [ServiceManager.ServiceConstructor]
-    private GamepadState(ClientState clientState)
+    private GamepadState(ClientState clientState, TargetSigScanner sigScanner)
     {
-        this.gamepadPoll = Hook<PadDevice.Delegates.Poll>.FromAddress((nint)PadDevice.StaticVirtualTablePointer->Poll, this.GamepadPollDetour);
+        var targets = HookTargets.For(nameof(GamepadState), sigScanner);
+        var poll = FindHookTarget(targets);
+        this.gamepadPoll = poll != 0 ? Hook<PadDevice.Delegates.Poll>.FromAddress(poll, this.GamepadPollDetour) : null;
+        targets.ReportDisabled();
         this.gamepadPoll?.Enable();
     }
 
@@ -108,6 +112,17 @@ internal unsafe class GamepadState : IInternalDisposableService, IGamepadState
     {
         this.Dispose(true);
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Checks the PadDevice vtable slot this service hooks.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <returns>PadDevice.Poll, or 0 if left out.</returns>
+    internal static nint FindHookTarget(HookTargets targets)
+    {
+        var padDevice = targets.VirtualTable(PadDevice.StaticVirtualTablePointer);
+        return targets.Slot("PadDevice.Poll", "手把狀態（插件讀取、Dalamud 視窗的手把操作）", padDevice, padDevice == null ? 0 : (nint)padDevice->Poll);
     }
 
     private nint GamepadPollDetour(PadDevice* gamepadInput)
