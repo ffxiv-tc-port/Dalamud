@@ -289,6 +289,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
     private readonly Stopwatch stopwatch;
     private readonly HitchDetector hitchDetector;
     private readonly PluginAllocationMeter drawAllocations;
+    private readonly ImGuiStackMeter drawStacks;
     private readonly string namespaceName;
     private readonly InterfaceManager interfaceManager = Service<InterfaceManager>.Get();
     private readonly Framework framework = Service<Framework>.Get();
@@ -327,6 +328,8 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
             // 放在訂閱 Draw 之前：清理是後進先出，先退訂 Draw 才讓計數器退役。
             this.drawAllocations = new PluginAllocationMeter(plugin.InternalName, PluginAllocationMeter.Draw);
             this.scopedFinalizer.Add(this.drawAllocations.Retire);
+            this.drawStacks = ImGuiStackReport.Shared.CreateMeter(plugin.InternalName);
+            this.scopedFinalizer.Add(this.drawStacks.Retire);
 
             this.interfaceManager.Draw += this.OnDraw;
             this.scopedFinalizer.Add(() => this.interfaceManager.Draw -= this.OnDraw);
@@ -809,6 +812,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
 
         // 要使用者回報的診斷：量這個插件的 Draw 配置了多少記憶體，找週期性 GC 的來源。
         var allocatedBefore = PluginAllocationMeter.Begin();
+        var stacksBefore = ImGuiStackDepths.Capture();
         try
         {
             this.InvokeDrawHandlers();
@@ -822,6 +826,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
             this.hasErrorWindow = true;
         }
 
+        this.drawStacks.Record(stacksBefore, ImGuiStackDepths.Capture());
         this.drawAllocations.End(allocatedBefore);
         this.FrameCount++;
 

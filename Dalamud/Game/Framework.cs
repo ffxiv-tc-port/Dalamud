@@ -682,6 +682,7 @@ internal sealed class Framework : IInternalDisposableService, IFramework
             this.ipcJsonReport.Tick(now);
             this.faultSummary.Tick(now);
             AssertSiteCounter.Shared.Tick(now);
+            ImGuiStackReport.Shared.Tick(now);
             this.TickAllocationSampler(now);
         }
         catch (Exception ex)
@@ -785,6 +786,7 @@ internal sealed class Framework : IInternalDisposableService, IFramework
             this.faultSummary?.ReportUnfinished(now);
             this.allocationReport.ReportUnfinished(now);
             AssertSiteCounter.Shared.ReportUnfinished(now);
+            ImGuiStackReport.Shared.ReportUnfinished(now);
             if (!this.allocationSamplerFailed)
                 this.allocationSampler?.ReportUnfinished(now);
         }
