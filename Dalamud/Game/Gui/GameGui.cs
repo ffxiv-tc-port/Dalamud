@@ -41,14 +41,15 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
     private readonly GameGuiAddressResolver address;
 
-    private readonly Hook<AgentItemDetail.Delegates.Update> handleItemHoverHook;
-    private readonly Hook<AgentItemDetail.Delegates.ReceiveEvent> handleItemOutHook;
-    private readonly Hook<AgentActionDetail.Delegates.HandleActionHover> handleActionHoverHook;
-    private readonly Hook<AgentActionDetail.Delegates.ReceiveEvent> handleActionOutHook;
-    private readonly Hook<HandleImmDelegate> handleImmHook;
-    private readonly Hook<RaptureAtkModule.Delegates.SetUiVisibility> setUiVisibilityHook;
+    // Null when the address is missing or misplaced (see FindHookTargets); the string hook is required.
+    private readonly Hook<AgentItemDetail.Delegates.Update>? handleItemHoverHook;
+    private readonly Hook<AgentItemDetail.Delegates.ReceiveEvent>? handleItemOutHook;
+    private readonly Hook<AgentActionDetail.Delegates.HandleActionHover>? handleActionHoverHook;
+    private readonly Hook<AgentActionDetail.Delegates.ReceiveEvent>? handleActionOutHook;
+    private readonly Hook<HandleImmDelegate>? handleImmHook;
+    private readonly Hook<RaptureAtkModule.Delegates.SetUiVisibility>? setUiVisibilityHook;
     private readonly Hook<Utf8String.Delegates.Ctor_FromSequence> utf8StringFromSequenceHook;
-    private readonly Hook<RaptureAtkModule.Delegates.Update> raptureAtkModuleUpdateHook;
+    private readonly Hook<RaptureAtkModule.Delegates.Update>? raptureAtkModuleUpdateHook;
 
     [ServiceManager.ServiceConstructor]
     private GameGui(TargetSigScanner sigScanner)
@@ -59,30 +60,38 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
         Log.Verbose("===== G A M E G U I =====");
         Log.Verbose($"HandleImm address {Util.DescribeAddress(this.address.HandleImm)}");
 
-        this.handleItemHoverHook = Hook<AgentItemDetail.Delegates.Update>.FromAddress((nint)AgentItemDetail.StaticVirtualTablePointer->Update, this.HandleItemHoverDetour);
-        this.handleItemOutHook = Hook<AgentItemDetail.Delegates.ReceiveEvent>.FromAddress((nint)AgentItemDetail.StaticVirtualTablePointer->ReceiveEvent, this.HandleItemOutDetour);
+        // Required, unlike the hooks below: whatever builds a game string from a null source would crash without it.
+        var targets = HookTargets.For(nameof(GameGui), sigScanner);
+        var utf8StringFromSequence = Utf8String.Addresses.Ctor_FromSequence.Value;
+        if (!targets.InCode(utf8StringFromSequence, 1))
+            throw new InvalidOperationException($"Utf8String.Ctor_FromSequence (0x{utf8StringFromSequence:X}) is unresolved or not in the game's code; GameGui cannot start without it");
 
-        this.handleActionHoverHook = Hook<AgentActionDetail.Delegates.HandleActionHover>.FromAddress(AgentActionDetail.Addresses.HandleActionHover.Value, this.HandleActionHoverDetour);
-        this.handleActionOutHook = Hook<AgentActionDetail.Delegates.ReceiveEvent>.FromAddress((nint)AgentActionDetail.StaticVirtualTablePointer->ReceiveEvent, this.HandleActionOutDetour);
+        var hooks = FindHookTargets(targets, this.address);
+        this.handleItemHoverHook = hooks.ItemHover != 0 ? Hook<AgentItemDetail.Delegates.Update>.FromAddress(hooks.ItemHover, this.HandleItemHoverDetour) : null;
+        this.handleItemOutHook = hooks.ItemOut != 0 ? Hook<AgentItemDetail.Delegates.ReceiveEvent>.FromAddress(hooks.ItemOut, this.HandleItemOutDetour) : null;
 
-        this.handleImmHook = Hook<HandleImmDelegate>.FromAddress(this.address.HandleImm, this.HandleImmDetour);
+        this.handleActionHoverHook = hooks.ActionHover != 0 ? Hook<AgentActionDetail.Delegates.HandleActionHover>.FromAddress(hooks.ActionHover, this.HandleActionHoverDetour) : null;
+        this.handleActionOutHook = hooks.ActionOut != 0 ? Hook<AgentActionDetail.Delegates.ReceiveEvent>.FromAddress(hooks.ActionOut, this.HandleActionOutDetour) : null;
 
-        this.setUiVisibilityHook = Hook<RaptureAtkModule.Delegates.SetUiVisibility>.FromAddress((nint)RaptureAtkModule.StaticVirtualTablePointer->SetUiVisibility, this.SetUiVisibilityDetour);
+        this.handleImmHook = hooks.Imm != 0 ? Hook<HandleImmDelegate>.FromAddress(hooks.Imm, this.HandleImmDetour) : null;
 
-        this.utf8StringFromSequenceHook = Hook<Utf8String.Delegates.Ctor_FromSequence>.FromAddress(Utf8String.Addresses.Ctor_FromSequence.Value, this.Utf8StringFromSequenceDetour);
+        this.setUiVisibilityHook = hooks.SetUiVisibility != 0 ? Hook<RaptureAtkModule.Delegates.SetUiVisibility>.FromAddress(hooks.SetUiVisibility, this.SetUiVisibilityDetour) : null;
 
-        this.raptureAtkModuleUpdateHook = Hook<RaptureAtkModule.Delegates.Update>.FromFunctionPointerVariable(
-            new(&RaptureAtkModule.StaticVirtualTablePointer->Update),
-            this.RaptureAtkModuleUpdateDetour);
+        this.utf8StringFromSequenceHook = Hook<Utf8String.Delegates.Ctor_FromSequence>.FromAddress(utf8StringFromSequence, this.Utf8StringFromSequenceDetour);
 
-        this.handleItemHoverHook.Enable();
-        this.handleItemOutHook.Enable();
-        this.handleImmHook.Enable();
-        this.setUiVisibilityHook.Enable();
-        this.handleActionHoverHook.Enable();
-        this.handleActionOutHook.Enable();
+        this.raptureAtkModuleUpdateHook = hooks.UpdateSlot != 0
+                                              ? Hook<RaptureAtkModule.Delegates.Update>.FromFunctionPointerVariable(hooks.UpdateSlot, this.RaptureAtkModuleUpdateDetour)
+                                              : null;
+        targets.ReportDisabled();
+
+        this.handleItemHoverHook?.Enable();
+        this.handleItemOutHook?.Enable();
+        this.handleImmHook?.Enable();
+        this.setUiVisibilityHook?.Enable();
+        this.handleActionHoverHook?.Enable();
+        this.handleActionOutHook?.Enable();
         this.utf8StringFromSequenceHook.Enable();
-        this.raptureAtkModuleUpdateHook.Enable();
+        this.raptureAtkModuleUpdateHook?.Enable();
     }
 
     // Hooked delegates
@@ -281,14 +290,47 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
     /// </summary>
     void IInternalDisposableService.DisposeService()
     {
-        this.handleItemHoverHook.Dispose();
-        this.handleItemOutHook.Dispose();
-        this.handleImmHook.Dispose();
-        this.setUiVisibilityHook.Dispose();
-        this.handleActionHoverHook.Dispose();
-        this.handleActionOutHook.Dispose();
+        this.handleItemHoverHook?.Dispose();
+        this.handleItemOutHook?.Dispose();
+        this.handleImmHook?.Dispose();
+        this.setUiVisibilityHook?.Dispose();
+        this.handleActionHoverHook?.Dispose();
+        this.handleActionOutHook?.Dispose();
         this.utf8StringFromSequenceHook.Dispose();
-        this.raptureAtkModuleUpdateHook.Dispose();
+        this.raptureAtkModuleUpdateHook?.Dispose();
+    }
+
+    /// <summary>
+    /// Checks the addresses of the hooks this service can run without. A hover hook and the hook that clears it are
+    /// kept together: one without the other would leave a stale hovered item or action.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <param name="address">The resolved signatures.</param>
+    /// <returns>The functions, 0 where left out; for Update, the address of its vtable slot.</returns>
+    internal static HookAddresses FindHookTargets(HookTargets targets, GameGuiAddressResolver address)
+    {
+        const string hoveredItem = "滑鼠指向物品的偵測";
+        const string hoveredAction = "滑鼠指向技能的偵測";
+
+        var itemDetail = targets.VirtualTable(AgentItemDetail.StaticVirtualTablePointer);
+        var itemHover = targets.Slot("AgentItemDetail.Update", hoveredItem, itemDetail, itemDetail == null ? 0 : (nint)itemDetail->Update);
+        var itemOut = targets.Slot("AgentItemDetail.ReceiveEvent", hoveredItem, itemDetail, itemDetail == null ? 0 : (nint)itemDetail->ReceiveEvent);
+        if (!targets.AllOrNone(hoveredItem, ("AgentItemDetail.Update", itemHover), ("AgentItemDetail.ReceiveEvent", itemOut)))
+            itemHover = itemOut = 0;
+
+        var actionDetail = targets.VirtualTable(AgentActionDetail.StaticVirtualTablePointer);
+        var actionHover = targets.Function("HandleActionHover", hoveredAction, AgentActionDetail.Addresses.HandleActionHover.Value);
+        var actionOut = targets.Slot("AgentActionDetail.ReceiveEvent", hoveredAction, actionDetail, actionDetail == null ? 0 : (nint)actionDetail->ReceiveEvent);
+        if (!targets.AllOrNone(hoveredAction, ("HandleActionHover", actionHover), ("AgentActionDetail.ReceiveEvent", actionOut)))
+            actionHover = actionOut = 0;
+
+        var imm = targets.Function("HandleImm", "在 Dalamud 視窗打字時擋下遊戲的文字輸入", address.HandleImm, HookTargets.SignatureNotFound);
+
+        var atkModule = targets.VirtualTable(RaptureAtkModule.StaticVirtualTablePointer);
+        var setUiVisibility = targets.Slot("RaptureAtkModule.SetUiVisibility", "隱藏介面的偵測", atkModule, atkModule == null ? 0 : (nint)atkModule->SetUiVisibility);
+        var update = targets.Slot("RaptureAtkModule.Update", "介面更新事件（背包變動等）", atkModule, atkModule == null ? 0 : (nint)atkModule->Update);
+
+        return new(itemHover, itemOut, actionHover, actionOut, imm, setUiVisibility, update == 0 ? 0 : (nint)(&atkModule->Update));
     }
 
     /// <summary>
@@ -342,7 +384,7 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
     private void HandleItemHoverDetour(AgentItemDetail* thisPtr, uint frameCount)
     {
-        this.handleItemHoverHook.Original(thisPtr, frameCount);
+        this.handleItemHoverHook!.Original(thisPtr, frameCount);
 
         if (!thisPtr->IsAgentActive())
             return;
@@ -357,7 +399,7 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
     private AtkValue* HandleItemOutDetour(AgentItemDetail* thisPtr, AtkValue* returnValue, AtkValue* values, uint valueCount, ulong eventKind)
     {
-        var ret = this.handleItemOutHook.Original(thisPtr, returnValue, values, valueCount, eventKind);
+        var ret = this.handleItemOutHook!.Original(thisPtr, returnValue, values, valueCount, eventKind);
 
         if (values != null && valueCount == 1 && values->Int == -1)
         {
@@ -370,7 +412,7 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
     private void HandleActionHoverDetour(AgentActionDetail* hoverState, FFXIVClientStructs.FFXIV.Client.UI.Agent.ActionKind actionKind, uint actionId, int a4, bool a5, int a6, int a7)
     {
-        this.handleActionHoverHook.Original(hoverState, actionKind, actionId, a4, a5, a6, a7);
+        this.handleActionHoverHook!.Original(hoverState, actionKind, actionId, a4, a5, a6, a7);
         this.HoveredAction.ActionKind = (HoverActionKind)actionKind;
         this.HoveredAction.BaseActionID = actionId;
         this.HoveredAction.ActionID = hoverState->ActionId;
@@ -379,7 +421,7 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
     private AtkValue* HandleActionOutDetour(AgentActionDetail* agentActionDetail, AtkValue* a2, AtkValue* a3, uint a4, ulong a5)
     {
-        var retVal = this.handleActionOutHook.Original(agentActionDetail, a2, a3, a4, a5);
+        var retVal = this.handleActionOutHook!.Original(agentActionDetail, a2, a3, a4, a5);
 
         if (a3 != null && a4 == 1)
         {
@@ -399,7 +441,7 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
     private void SetUiVisibilityDetour(RaptureAtkModule* thisPtr, bool uiVisible)
     {
-        this.setUiVisibilityHook.Original(thisPtr, uiVisible);
+        this.setUiVisibilityHook!.Original(thisPtr, uiVisible);
 
         try
         {
@@ -423,7 +465,7 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
     private char HandleImmDetour(IntPtr framework, char a2, byte a3)
     {
-        var result = this.handleImmHook.Original(framework, a2, a3);
+        var result = this.handleImmHook!.Original(framework, a2, a3);
         if (!ImGuiHelpers.IsImGuiInitialized)
             return result;
 
@@ -465,13 +507,23 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
 
         var agentUpdateFlag = thisPtr->AgentUpdateFlag;
 
-        this.raptureAtkModuleUpdateHook.Original(thisPtr, delta);
+        this.raptureAtkModuleUpdateHook!.Original(thisPtr, delta);
 
         if (agentUpdateFlag != RaptureAtkModule.AgentUpdateFlags.None)
         {
             this.AgentUpdate.InvokeSafely((AgentUpdateFlag)agentUpdateFlag);
         }
     }
+
+    /// <summary>The addresses of GameGui's optional hooks, 0 where left out.</summary>
+    /// <param name="ItemHover">AgentItemDetail.Update.</param>
+    /// <param name="ItemOut">AgentItemDetail.ReceiveEvent.</param>
+    /// <param name="ActionHover">AgentActionDetail.HandleActionHover.</param>
+    /// <param name="ActionOut">AgentActionDetail.ReceiveEvent.</param>
+    /// <param name="Imm">HandleImm.</param>
+    /// <param name="SetUiVisibility">RaptureAtkModule.SetUiVisibility.</param>
+    /// <param name="UpdateSlot">RaptureAtkModule's vtable slot of Update.</param>
+    internal readonly record struct HookAddresses(nint ItemHover, nint ItemOut, nint ActionHover, nint ActionOut, nint Imm, nint SetUiVisibility, nint UpdateSlot);
 }
 
 /// <summary>
