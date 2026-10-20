@@ -448,7 +448,8 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
         catch (Exception ex)
         {
             // Ctor throws before touching the string, so it is still unconstructed. An empty sequence from a
-            // valid pointer builds the same empty string.
+            // valid pointer builds an empty string too, but reserving its terminator clears IsEmpty (+0x20) where
+            // Ctor sets it; that is also the state the game's own empty sequences leave.
             Utf8StringFault.Report(ex);
             var empty = (byte)0;
             this.utf8StringFromSequenceHook.Original(thisPtr, &empty, 0);
