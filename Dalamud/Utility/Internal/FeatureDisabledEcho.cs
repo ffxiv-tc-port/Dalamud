@@ -4,6 +4,8 @@ using System.Threading.Tasks;
 
 using Dalamud.Game;
 using Dalamud.Game.Gui;
+using Dalamud.Interface.ImGuiNotification;
+using Dalamud.Interface.ImGuiNotification.Internal;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Services;
 
@@ -17,7 +19,8 @@ namespace Dalamud.Utility.Internal;
 /// <remarks>
 /// <see cref="Report"/> may be called from any thread, including service constructors, and never throws; printing runs on the framework thread.
 /// Chat waits until the player has been logged in for <see cref="ChatDelayAfterLogin"/>; nothing is printed while the framework is unloading.
-/// Each key is printed at most once per session.
+/// Each key is printed at most once per session. Without a working chat (ChatGui failed, or its PrintMessage hook is
+/// not installed) and for a line whose printing throws, the line becomes an ImGui notification instead.
 /// </remarks>
 internal sealed class FeatureDisabledEcho
 {
@@ -35,6 +38,19 @@ internal sealed class FeatureDisabledEcho
 
     // Pump thread only.
     private DateTime? loggedInSince;
+
+    /// <summary>Whether chat can carry the notices.</summary>
+    internal enum ChatState
+    {
+        /// <summary>ChatGui is still loading; wait for it.</summary>
+        Pending,
+
+        /// <summary>Chat works.</summary>
+        Ready,
+
+        /// <summary>ChatGui failed or cannot print; use notifications.</summary>
+        Unavailable,
+    }
 
     /// <summary>Gets the process-wide instance.</summary>
     internal static FeatureDisabledEcho Instance { get; } = new();
@@ -78,17 +94,22 @@ internal sealed class FeatureDisabledEcho
     }
 
     /// <summary>
-    /// Prints what is due. Call from a single thread.
+    /// Delivers what is due. Call from a single thread.
     /// </summary>
-    /// <param name="unloading">Whether the framework is unloading; nothing is printed if so.</param>
+    /// <param name="unloading">Whether the framework is unloading; nothing is delivered if so.</param>
+    /// <param name="chat">Whether chat works.</param>
     /// <param name="loggedIn">Whether the player is logged in and chat can be printed to.</param>
     /// <param name="now">Current time.</param>
     /// <param name="printChat">Prints one chat line.</param>
-    /// <returns>How many chat lines were printed.</returns>
-    internal int Pump(bool unloading, bool loggedIn, DateTime now, Action<string> printChat)
+    /// <param name="notify">Shows one line as a notification; returns false if notifications are not available.</param>
+    /// <returns>How many lines were delivered or given up on.</returns>
+    internal int Pump(bool unloading, ChatState chat, bool loggedIn, DateTime now, Action<string> printChat, Func<string, bool> notify)
     {
-        if (Volatile.Read(ref this.pendingCount) == 0 || unloading)
+        if (Volatile.Read(ref this.pendingCount) == 0 || unloading || chat == ChatState.Pending)
             return 0;
+
+        if (chat == ChatState.Unavailable)
+            return this.PumpNotifications(notify);
 
         if (!loggedIn)
             this.loggedInSince = null;
@@ -102,28 +123,101 @@ internal sealed class FeatureDisabledEcho
         lock (this.gate)
             snapshot = this.pending.ToArray();
 
-        var printed = 0;
-        try
+        foreach (var line in snapshot)
         {
-            foreach (var line in snapshot)
+            try
             {
-                // Counted before printing, so a line that throws is dropped instead of repeating every frame.
-                printed++;
                 printChat(line);
             }
-        }
-        finally
-        {
-            lock (this.gate)
+            catch (Exception ex)
             {
-                this.pending.RemoveRange(0, printed);
-                Volatile.Write(ref this.pendingCount, this.pending.Count);
-                if (this.pending.Count == 0)
-                    this.loggedInSince = null;
+                Log.Error(ex, "Could not print a feature notice to chat; trying a notification");
+                TryNotify(line, notify);
             }
         }
 
-        return printed;
+        this.RemoveDelivered(snapshot.Length);
+        return snapshot.Length;
+    }
+
+    private static void TryNotify(string line, Func<string, bool> notify)
+    {
+        try
+        {
+            if (!notify(line))
+                Log.Warning("Feature notice lost, no chat and no notifications: {Line}", line);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Could not show a feature notice as a notification: {Line}", line);
+        }
+    }
+
+    private static bool ShowNotification(string line)
+    {
+        var notifications = Service<NotificationManager>.GetNullable(Service<NotificationManager>.ExceptionPropagationMode.None);
+        if (notifications == null)
+            return false;
+
+        // No expiry: the countdown would start before the interface can draw it.
+        notifications.AddNotification(new Notification
+        {
+            Title = "Dalamud 功能停用",
+            Content = line,
+            Type = NotificationType.Warning,
+            Minimized = false,
+            InitialDuration = TimeSpan.MaxValue,
+            ShowIndeterminateIfNoExpiry = false,
+        });
+        Log.Information("Feature notice shown as a notification: {Line}", line);
+        return true;
+    }
+
+    /// <summary>
+    /// Shows the pending lines as notifications, in order, stopping while notifications are not available yet.
+    /// </summary>
+    /// <param name="notify">Shows one line; returns false if notifications are not available.</param>
+    /// <returns>How many lines were delivered or given up on.</returns>
+    private int PumpNotifications(Func<string, bool> notify)
+    {
+        string[] snapshot;
+        lock (this.gate)
+            snapshot = this.pending.ToArray();
+
+        var done = 0;
+        foreach (var line in snapshot)
+        {
+            bool shown;
+            try
+            {
+                shown = notify(line);
+            }
+            catch (Exception ex)
+            {
+                // Dropped, so a line that throws does not repeat every frame.
+                Log.Error(ex, "Could not show a feature notice as a notification: {Line}", line);
+                shown = true;
+            }
+
+            if (!shown)
+                break;
+
+            done++;
+        }
+
+        this.RemoveDelivered(done);
+        return done;
+    }
+
+    private void RemoveDelivered(int count)
+    {
+        lock (this.gate)
+        {
+            this.pending.RemoveRange(0, count);
+            Volatile.Write(ref this.pendingCount, this.pending.Count);
+            if (this.pending.Count == 0)
+                this.loggedInSince = null;
+        }
     }
 
     private void EnsureSubscribed()
@@ -148,17 +242,23 @@ internal sealed class FeatureDisabledEcho
         try
         {
             var clientState = Service<ClientStateService>.GetNullable(Service<ClientStateService>.ExceptionPropagationMode.None);
-            var chatGui = Service<ChatGui>.GetNullable(Service<ChatGui>.ExceptionPropagationMode.None);
+            var chatTask = Service<ChatGui>.GetAsync();
+            var chatGui = chatTask.IsCompletedSuccessfully ? chatTask.Result : null;
+            var chat = chatGui is { IsPrintAvailable: true } ? ChatState.Ready
+                       : chatGui != null || chatTask.IsFaulted || chatTask.IsCanceled ? ChatState.Unavailable
+                       : ChatState.Pending;
 
             this.Pump(
                 framework.IsFrameworkUnloading,
-                chatGui != null && clientState is { IsLoggedIn: true },
+                chat,
+                clientState is { IsLoggedIn: true },
                 DateTime.UtcNow,
                 line =>
                 {
                     chatGui!.PrintError(line);
                     Log.Information("Feature notice printed to chat: {Line}", line);
-                });
+                },
+                ShowNotification);
         }
         catch (Exception ex)
         {

@@ -110,6 +110,12 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
     }
 
     /// <summary>
+    /// Gets a value indicating whether lines queued with Print* reach the chat log, i.e. the PrintMessage hook is
+    /// installed and enabled.
+    /// </summary>
+    internal bool IsPrintAvailable => this.printMessageHook is { IsEnabled: true };
+
+    /// <summary>
     /// Dispose of managed and unmanaged resources.
     /// </summary>
     void IInternalDisposableService.DisposeService()
