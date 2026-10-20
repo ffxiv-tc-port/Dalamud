@@ -77,6 +77,14 @@ internal sealed unsafe class Dalamud : IServiceType
         // Set up FFXIVClientStructs
         this.SetupClientStructsResolver(cacheDir);
 
+        if (!CoreAddressPreflight.Check(scanner, this.StartInfo.GameVersion, StartupDialog.ShowError))
+        {
+            KickoffGameThread();
+            return;
+        }
+
+        this.ServicesStarted = true;
+
         void KickoffGameThread()
         {
             Log.Verbose("=============== GAME THREAD KICKOFF ===============");
@@ -91,9 +99,7 @@ internal sealed unsafe class Dalamud : IServiceType
             if (Interlocked.CompareExchange(ref shownServiceError, 1, 0) != 0)
                 return;
 
-            Util.Fatal(
-                $"Dalamud failed to load all necessary services.\nThe game will continue, but you may not be able to use plugins.\n\n{t.Exception}",
-                "Dalamud", false);
+            Util.Fatal(ServiceFailureNotice.Format(t.Exception), ServiceFailureNotice.Caption, false);
         }
 
         ServiceManager.InitializeEarlyLoadableServices()
@@ -131,6 +137,12 @@ internal sealed unsafe class Dalamud : IServiceType
     /// Gets the start information for this Dalamud instance.
     /// </summary>
     internal DalamudStartInfo StartInfo { get; private set; }
+
+    /// <summary>
+    /// Gets a value indicating whether the services were started; false when the core address check stopped Dalamud,
+    /// in which case nothing is hooked and there is nothing to unload.
+    /// </summary>
+    internal bool ServicesStarted { get; private set; }
 
     /// <summary>
     /// Gets location of stored assets.

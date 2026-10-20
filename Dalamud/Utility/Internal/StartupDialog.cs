@@ -27,4 +27,16 @@ internal static class StartupDialog
                caption,
                MESSAGEBOX_STYLE.MB_YESNO | MESSAGEBOX_STYLE.MB_DEFBUTTON2 | MESSAGEBOX_STYLE.MB_ICONWARNING | OnTop)
            == MESSAGEBOX_RESULT.IDYES;
+
+    /// <summary>
+    /// Shows an error with a single OK button.
+    /// </summary>
+    /// <param name="text">The message.</param>
+    /// <param name="caption">The title.</param>
+    internal static void ShowError(string text, string caption)
+        => _ = Windows.Win32.PInvoke.MessageBox(
+               HWND.Null,
+               text,
+               caption,
+               MESSAGEBOX_STYLE.MB_OK | MESSAGEBOX_STYLE.MB_ICONERROR | OnTop);
 }

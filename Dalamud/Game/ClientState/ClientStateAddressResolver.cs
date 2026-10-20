@@ -5,6 +5,9 @@ namespace Dalamud.Game.ClientState;
 /// </summary>
 internal sealed class ClientStateAddressResolver : BaseAddressResolver
 {
+    /// <summary>The ZoneInit handler, also checked by <see cref="Utility.Internal.CoreAddressPreflight"/>.</summary>
+    internal const string HandleZoneInitPacketSignature = "E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 44 0F B6 45";
+
     // Static offsets
 
     /// <summary>
@@ -35,7 +38,7 @@ internal sealed class ClientStateAddressResolver : BaseAddressResolver
     /// <param name="sig">The signature scanner to facilitate setup.</param>
     protected override void Setup64Bit(ISigScanner sig)
     {
-        this.HandleZoneInitPacket = sig.ScanText("E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 44 0F B6 45");
+        this.HandleZoneInitPacket = sig.ScanText(HandleZoneInitPacketSignature);
         this.SetCurrentInstance = sig.ScanText("E8 ?? ?? ?? ?? 0F B6 55 ?? 48 8D 0D ?? ?? ?? ?? C0 EA"); // NetworkModuleProxy.SetCurrentInstance
 
         // These resolve to fixed offsets only, without the base address added in, so GetStaticAddressFromSig() can't be used.

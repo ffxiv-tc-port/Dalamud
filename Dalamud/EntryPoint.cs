@@ -226,6 +226,10 @@ public sealed class EntryPoint
                             Util.GetGitHashClientStructs(),
                             FFXIVClientStructs.ThisAssembly.Git.Commits);
 
+            // Nothing was hooked or loaded, so nothing will ever ask to unload.
+            if (!dalamud.ServicesStarted)
+                return;
+
             dalamud.WaitForUnload();
 
             try
