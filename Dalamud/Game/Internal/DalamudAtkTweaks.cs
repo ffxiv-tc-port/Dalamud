@@ -23,16 +23,19 @@ namespace Dalamud.Game.Internal;
 [ServiceManager.EarlyLoadedService]
 internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
 {
+    private const string SystemMenuFeature = "ESC 系統選單裡的 Dalamud 項目";
+
     private static readonly ModuleLog Log = new("DalamudAtkTweaks");
 
     private static readonly DetourFault SystemMenuFault = new("DalamudAtkTweaks.OpenSystemMenu", "在系統選單加入 Dalamud 項目");
 
-    private readonly Hook<AgentHUD.Delegates.OpenSystemMenu> hookAgentHudOpenSystemMenu;
+    // Null when the address is missing or misplaced (see FindHookTargets).
+    private readonly Hook<AgentHUD.Delegates.OpenSystemMenu>? hookAgentHudOpenSystemMenu;
 
     // TODO: Make this into events in Framework.Gui
-    private readonly Hook<UIModule.Delegates.ExecuteMainCommand> hookUiModuleExecuteMainCommand;
+    private readonly Hook<UIModule.Delegates.ExecuteMainCommand>? hookUiModuleExecuteMainCommand;
 
-    private readonly Hook<AtkUnitBase.Delegates.ReceiveGlobalEvent> hookAtkUnitBaseReceiveGlobalEvent;
+    private readonly Hook<AtkUnitBase.Delegates.ReceiveGlobalEvent>? hookAtkUnitBaseReceiveGlobalEvent;
 
     [ServiceManager.ServiceDependency]
     private readonly DalamudConfiguration configuration = Service<DalamudConfiguration>.Get();
@@ -48,18 +51,21 @@ internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
     [ServiceManager.ServiceConstructor]
     private DalamudAtkTweaks(TargetSigScanner sigScanner)
     {
-        this.hookAgentHudOpenSystemMenu = Hook<AgentHUD.Delegates.OpenSystemMenu>.FromAddress(AgentHUD.Addresses.OpenSystemMenu.Value, this.AgentHudOpenSystemMenuDetour);
-        this.hookUiModuleExecuteMainCommand = Hook<UIModule.Delegates.ExecuteMainCommand>.FromAddress((nint)UIModule.StaticVirtualTablePointer->ExecuteMainCommand, this.UiModuleExecuteMainCommandDetour);
-        this.hookAtkUnitBaseReceiveGlobalEvent = Hook<AtkUnitBase.Delegates.ReceiveGlobalEvent>.FromAddress((nint)AtkUnitBase.StaticVirtualTablePointer->ReceiveGlobalEvent, this.AtkUnitBaseReceiveGlobalEventDetour);
+        var targets = HookTargets.For(nameof(DalamudAtkTweaks), sigScanner);
+        var (openSystemMenu, executeMainCommand, receiveGlobalEvent) = FindHookTargets(targets);
+        this.hookAgentHudOpenSystemMenu = openSystemMenu != 0 ? Hook<AgentHUD.Delegates.OpenSystemMenu>.FromAddress(openSystemMenu, this.AgentHudOpenSystemMenuDetour) : null;
+        this.hookUiModuleExecuteMainCommand = executeMainCommand != 0 ? Hook<UIModule.Delegates.ExecuteMainCommand>.FromAddress(executeMainCommand, this.UiModuleExecuteMainCommandDetour) : null;
+        this.hookAtkUnitBaseReceiveGlobalEvent = receiveGlobalEvent != 0 ? Hook<AtkUnitBase.Delegates.ReceiveGlobalEvent>.FromAddress(receiveGlobalEvent, this.AtkUnitBaseReceiveGlobalEventDetour) : null;
+        targets.ReportDisabled();
 
         this.locDalamudPlugins = Loc.Localize("SystemMenuPlugins", "Dalamud Plugins");
         this.locDalamudSettings = Loc.Localize("SystemMenuSettings", "Dalamud Settings");
 
         // this.contextMenu.ContextMenuOpened += this.ContextMenuOnContextMenuOpened;
 
-        this.hookAgentHudOpenSystemMenu.Enable();
-        this.hookUiModuleExecuteMainCommand.Enable();
-        this.hookAtkUnitBaseReceiveGlobalEvent.Enable();
+        this.hookAgentHudOpenSystemMenu?.Enable();
+        this.hookUiModuleExecuteMainCommand?.Enable();
+        this.hookAtkUnitBaseReceiveGlobalEvent?.Enable();
     }
 
     /// <summary>Finalizes an instance of the <see cref="DalamudAtkTweaks"/> class.</summary>
@@ -69,6 +75,42 @@ internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
 
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService() => this.Dispose(true);
+
+    /// <summary>
+    /// Checks the addresses of this service's hooks. The two system menu hooks are kept together: the menu entries
+    /// alone would send the game main command ids it does not have.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <returns>OpenSystemMenu, ExecuteMainCommand and ReceiveGlobalEvent, 0 where left out.</returns>
+    internal static (nint OpenSystemMenu, nint ExecuteMainCommand, nint ReceiveGlobalEvent) FindHookTargets(HookTargets targets)
+    {
+        var uiModule = targets.VirtualTable(UIModule.StaticVirtualTablePointer);
+        var (openSystemMenu, executeMainCommand) = DecideSystemMenu(
+            targets,
+            targets.Function("AgentHUD.OpenSystemMenu", SystemMenuFeature, AgentHUD.Addresses.OpenSystemMenu.Value),
+            targets.Slot("UIModule.ExecuteMainCommand", SystemMenuFeature, uiModule, uiModule == null ? 0 : (nint)uiModule->ExecuteMainCommand));
+
+        var unitBase = targets.VirtualTable(AtkUnitBase.StaticVirtualTablePointer);
+        var receiveGlobalEvent = targets.Slot(
+            "AtkUnitBase.ReceiveGlobalEvent",
+            "Dalamud 視窗開著時按 ESC 不關遊戲視窗",
+            unitBase,
+            unitBase == null ? 0 : (nint)unitBase->ReceiveGlobalEvent);
+
+        return (openSystemMenu, executeMainCommand, receiveGlobalEvent);
+    }
+
+    /// <summary>
+    /// Keeps the system menu hooks only as a pair.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <param name="openSystemMenu">The checked OpenSystemMenu address, 0 if left out.</param>
+    /// <param name="executeMainCommand">The checked ExecuteMainCommand address, 0 if left out.</param>
+    /// <returns>Both addresses, or both 0.</returns>
+    internal static (nint OpenSystemMenu, nint ExecuteMainCommand) DecideSystemMenu(HookTargets targets, nint openSystemMenu, nint executeMainCommand)
+        => targets.AllOrNone(SystemMenuFeature, ("AgentHUD.OpenSystemMenu", openSystemMenu), ("UIModule.ExecuteMainCommand", executeMainCommand))
+               ? (openSystemMenu, executeMainCommand)
+               : (0, 0);
 
     // NUL-terminated: SetManagedString reads up to the first NUL, and the builder's view excludes its terminator.
     private static byte[] BuildEntryLabel(string text)
@@ -95,9 +137,9 @@ internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
 
         if (disposing)
         {
-            this.hookAgentHudOpenSystemMenu.Dispose();
-            this.hookUiModuleExecuteMainCommand.Dispose();
-            this.hookAtkUnitBaseReceiveGlobalEvent.Dispose();
+            this.hookAgentHudOpenSystemMenu?.Dispose();
+            this.hookUiModuleExecuteMainCommand?.Dispose();
+            this.hookAtkUnitBaseReceiveGlobalEvent?.Dispose();
 
             // this.contextMenu.ContextMenuOpened -= this.ContextMenuOnContextMenuOpened;
         }
@@ -140,7 +182,7 @@ internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
             return;
         }
 
-        this.hookAtkUnitBaseReceiveGlobalEvent.Original(thisPtr, eventType, eventParam, atkEvent, atkEventData);
+        this.hookAtkUnitBaseReceiveGlobalEvent!.Original(thisPtr, eventType, eventParam, atkEvent, atkEventData);
     }
 
     // Original is called exactly once, outside the try block, unless focus management cancels the menu on purpose.
@@ -162,7 +204,7 @@ internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
             SystemMenuFault.Report(ex);
         }
 
-        this.hookAgentHudOpenSystemMenu.Original(thisPtr, atkValueArgs, sizeToOpen);
+        this.hookAgentHudOpenSystemMenu!.Original(thisPtr, atkValueArgs, sizeToOpen);
     }
 
     // Returns the size to open the menu with: menuSize when nothing was added. Everything that can throw runs before
@@ -246,7 +288,7 @@ internal sealed unsafe class DalamudAtkTweaks : IInternalDisposableService
                 dalamudInterface?.OpenSettings();
                 break;
             default:
-                this.hookUiModuleExecuteMainCommand.Original(thisPtr, commandId);
+                this.hookUiModuleExecuteMainCommand!.Original(thisPtr, commandId);
                 break;
         }
     }
