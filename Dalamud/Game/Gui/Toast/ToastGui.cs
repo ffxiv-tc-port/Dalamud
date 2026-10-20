@@ -34,23 +34,31 @@ internal sealed partial class ToastGui : IInternalDisposableService, IToastGui
     private readonly ConcurrentQueue<(byte[] Message, QuestToastOptions Options)> questQueue = new();
     private readonly ConcurrentQueue<byte[]> errorQueue = new();
 
-    private readonly Hook<ShowNormalToastDelegate> showNormalToastHook;
-    private readonly Hook<ShowQuestToastDelegate> showQuestToastHook;
-    private readonly Hook<ShowErrorToastDelegate> showErrorToastHook;
+    // Null when the slot is missing or misplaced (see FindHookTargets): that kind of toast is neither seen nor shown.
+    private readonly Hook<ShowNormalToastDelegate>? showNormalToastHook;
+    private readonly Hook<ShowQuestToastDelegate>? showQuestToastHook;
+    private readonly Hook<ShowErrorToastDelegate>? showErrorToastHook;
+
+    // Framework thread only: the kinds whose dropped toasts were already logged.
+    private readonly HashSet<string> dropLogged = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ToastGui"/> class.
     /// </summary>
+    /// <param name="sigScanner">The game's scanner, for where the game's sections are.</param>
     [ServiceManager.ServiceConstructor]
-    private unsafe ToastGui()
+    private unsafe ToastGui(TargetSigScanner sigScanner)
     {
-        this.showNormalToastHook = Hook<ShowNormalToastDelegate>.FromAddress((nint)UIModule.StaticVirtualTablePointer->ShowWideText, this.HandleNormalToastDetour);
-        this.showQuestToastHook = Hook<ShowQuestToastDelegate>.FromAddress((nint)UIModule.StaticVirtualTablePointer->ShowText, this.HandleQuestToastDetour);
-        this.showErrorToastHook = Hook<ShowErrorToastDelegate>.FromAddress((nint)UIModule.StaticVirtualTablePointer->ShowErrorText, this.HandleErrorToastDetour);
+        var targets = HookTargets.For(nameof(ToastGui), sigScanner);
+        var (normal, quest, error) = FindHookTargets(targets);
+        this.showNormalToastHook = normal != 0 ? Hook<ShowNormalToastDelegate>.FromAddress(normal, this.HandleNormalToastDetour) : null;
+        this.showQuestToastHook = quest != 0 ? Hook<ShowQuestToastDelegate>.FromAddress(quest, this.HandleQuestToastDetour) : null;
+        this.showErrorToastHook = error != 0 ? Hook<ShowErrorToastDelegate>.FromAddress(error, this.HandleErrorToastDetour) : null;
+        targets.ReportDisabled();
 
-        this.showNormalToastHook.Enable();
-        this.showQuestToastHook.Enable();
-        this.showErrorToastHook.Enable();
+        this.showNormalToastHook?.Enable();
+        this.showQuestToastHook?.Enable();
+        this.showErrorToastHook?.Enable();
     }
 
     #region Marshal delegates
@@ -81,9 +89,23 @@ internal sealed partial class ToastGui : IInternalDisposableService, IToastGui
     /// </summary>
     void IInternalDisposableService.DisposeService()
     {
-        this.showNormalToastHook.Dispose();
-        this.showQuestToastHook.Dispose();
-        this.showErrorToastHook.Dispose();
+        this.showNormalToastHook?.Dispose();
+        this.showQuestToastHook?.Dispose();
+        this.showErrorToastHook?.Dispose();
+    }
+
+    /// <summary>
+    /// Checks the UIModule vtable slots this service hooks.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <returns>ShowWideText, ShowText and ShowErrorText, 0 where left out.</returns>
+    internal static unsafe (nint Normal, nint Quest, nint Error) FindHookTargets(HookTargets targets)
+    {
+        var uiModule = targets.VirtualTable(UIModule.StaticVirtualTablePointer);
+        return (
+            targets.Slot("UIModule.ShowWideText", "畫面中央提示（插件攔截或顯示）", uiModule, uiModule == null ? 0 : (nint)uiModule->ShowWideText),
+            targets.Slot("UIModule.ShowText", "任務提示（插件攔截或顯示）", uiModule, uiModule == null ? 0 : (nint)uiModule->ShowText),
+            targets.Slot("UIModule.ShowErrorText", "錯誤提示（插件攔截或顯示）", uiModule, uiModule == null ? 0 : (nint)uiModule->ShowErrorText));
     }
 
     /// <summary>
@@ -105,6 +127,17 @@ internal sealed partial class ToastGui : IInternalDisposableService, IToastGui
         {
             this.ShowError(error);
         }
+    }
+
+    // Toasts are shown through the hook's Original; without it they are dropped.
+    private bool CanShow(object? hook, string kind)
+    {
+        if (hook != null)
+            return true;
+
+        if (this.dropLogged.Add(kind))
+            Log.Warning("{Kind} toasts queued by Dalamud and plugins are dropped this session: the hook is not installed", kind);
+        return false;
     }
 }
 
@@ -129,6 +162,9 @@ internal sealed partial class ToastGui
 
     private unsafe void ShowNormal(byte[] bytes, ToastOptions? options = null)
     {
+        if (!this.CanShow(this.showNormalToastHook, "Normal"))
+            return;
+
         options ??= new ToastOptions();
 
         fixed (byte* ptr = bytes.NullTerminate())
@@ -190,13 +226,13 @@ internal sealed partial class ToastGui
 
         if (encoded == null)
         {
-            this.showNormalToastHook.Original(thisPtr, text, layer, isTop, isFast, logMessageId);
+            this.showNormalToastHook!.Original(thisPtr, text, layer, isTop, isFast, logMessageId);
             return;
         }
 
         fixed (byte* ptr = encoded)
         {
-            this.showNormalToastHook.Original(thisPtr, ptr, layer, top, fast, logMessageId);
+            this.showNormalToastHook!.Original(thisPtr, ptr, layer, top, fast, logMessageId);
         }
     }
 }
@@ -222,6 +258,9 @@ internal sealed partial class ToastGui
 
     private unsafe void ShowQuest(byte[] bytes, QuestToastOptions? options = null)
     {
+        if (!this.CanShow(this.showQuestToastHook, "Quest"))
+            return;
+
         options ??= new QuestToastOptions();
 
         var (ioc1, ioc2) = this.DetermineParameterOrder(options);
@@ -295,13 +334,13 @@ internal sealed partial class ToastGui
 
         if (encoded == null)
         {
-            this.showQuestToastHook.Original(thisPtr, position, text, iconOrCheck1, playSound, iconOrCheck2, alsoPlaySound);
+            this.showQuestToastHook!.Original(thisPtr, position, text, iconOrCheck1, playSound, iconOrCheck2, alsoPlaySound);
             return;
         }
 
         fixed (byte* ptr = encoded)
         {
-            this.showQuestToastHook.Original(target, newPosition, ptr, ioc1, sound, ioc2, 0);
+            this.showQuestToastHook!.Original(target, newPosition, ptr, ioc1, sound, ioc2, 0);
         }
     }
 
@@ -332,6 +371,9 @@ internal sealed partial class ToastGui
 
     private unsafe void ShowError(byte[] bytes)
     {
+        if (!this.CanShow(this.showErrorToastHook, "Error"))
+            return;
+
         fixed (byte* ptr = bytes.NullTerminate())
         {
             this.HandleErrorToastDetour(UIModule.Instance(), ptr, 0);
@@ -377,13 +419,13 @@ internal sealed partial class ToastGui
 
         if (encoded == null)
         {
-            this.showErrorToastHook.Original(thisPtr, text, respectsHidingMaybe);
+            this.showErrorToastHook!.Original(thisPtr, text, respectsHidingMaybe);
             return;
         }
 
         fixed (byte* ptr = encoded)
         {
-            this.showErrorToastHook.Original(thisPtr, ptr, respectsHidingMaybe);
+            this.showErrorToastHook!.Original(thisPtr, ptr, respectsHidingMaybe);
         }
     }
 }
