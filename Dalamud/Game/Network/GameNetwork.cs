@@ -6,6 +6,7 @@ using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.Network;
 
@@ -20,8 +21,9 @@ namespace Dalamud.Game.Network;
 internal sealed unsafe class GameNetwork : IInternalDisposableService
 {
     private readonly GameNetworkAddressResolver address;
-    private readonly Hook<PacketDispatcher.Delegates.OnReceivePacket> processZonePacketDownHook;
-    private readonly Hook<ProcessZonePacketUpDelegate> processZonePacketUpHook;
+    // Null when the address is missing or misplaced (see FindHookTargets): that direction raises no NetworkMessage.
+    private readonly Hook<PacketDispatcher.Delegates.OnReceivePacket>? processZonePacketDownHook;
+    private readonly Hook<ProcessZonePacketUpDelegate>? processZonePacketUpHook;
 
     private readonly HitchDetector hitchDetectorUp;
     private readonly HitchDetector hitchDetectorDown;
@@ -38,17 +40,19 @@ internal sealed unsafe class GameNetwork : IInternalDisposableService
         this.address = new GameNetworkAddressResolver();
         this.address.Setup(sigScanner);
 
-        var onReceivePacketAddress = (nint)PacketDispatcher.StaticVirtualTablePointer->OnReceivePacket;
+        var targets = HookTargets.For(nameof(GameNetwork), sigScanner);
+        var (onReceivePacketAddress, processZonePacketUpAddress) = FindHookTargets(targets, this.address);
 
         Log.Verbose("===== G A M E N E T W O R K =====");
         Log.Verbose($"OnReceivePacket address {Util.DescribeAddress(onReceivePacketAddress)}");
-        Log.Verbose($"ProcessZonePacketUp address {Util.DescribeAddress(this.address.ProcessZonePacketUp)}");
+        Log.Verbose($"ProcessZonePacketUp address {Util.DescribeAddress(processZonePacketUpAddress)}");
 
-        this.processZonePacketDownHook = Hook<PacketDispatcher.Delegates.OnReceivePacket>.FromAddress(onReceivePacketAddress, this.ProcessZonePacketDownDetour);
-        this.processZonePacketUpHook = Hook<ProcessZonePacketUpDelegate>.FromAddress(this.address.ProcessZonePacketUp, this.ProcessZonePacketUpDetour);
+        this.processZonePacketDownHook = onReceivePacketAddress != 0 ? Hook<PacketDispatcher.Delegates.OnReceivePacket>.FromAddress(onReceivePacketAddress, this.ProcessZonePacketDownDetour) : null;
+        this.processZonePacketUpHook = processZonePacketUpAddress != 0 ? Hook<ProcessZonePacketUpDelegate>.FromAddress(processZonePacketUpAddress, this.ProcessZonePacketUpDetour) : null;
+        targets.ReportDisabled();
 
-        this.processZonePacketDownHook.Enable();
-        this.processZonePacketUpHook.Enable();
+        this.processZonePacketDownHook?.Enable();
+        this.processZonePacketUpHook?.Enable();
     }
 
     /// <summary>
@@ -72,8 +76,22 @@ internal sealed unsafe class GameNetwork : IInternalDisposableService
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
     {
-        this.processZonePacketDownHook.Dispose();
-        this.processZonePacketUpHook.Dispose();
+        this.processZonePacketDownHook?.Dispose();
+        this.processZonePacketUpHook?.Dispose();
+    }
+
+    /// <summary>
+    /// Checks the addresses of this service's hooks.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <param name="address">The resolved signatures.</param>
+    /// <returns>PacketDispatcher.OnReceivePacket and ProcessZonePacketUp, 0 where left out.</returns>
+    internal static (nint Down, nint Up) FindHookTargets(HookTargets targets, GameNetworkAddressResolver address)
+    {
+        var dispatcher = targets.VirtualTable(PacketDispatcher.StaticVirtualTablePointer);
+        return (
+            targets.Slot("PacketDispatcher.OnReceivePacket", "收到封包的事件（NetworkMessage）", dispatcher, dispatcher == null ? 0 : (nint)dispatcher->OnReceivePacket),
+            targets.Function("ProcessZonePacketUp", "送出封包的事件（NetworkMessage）", address.ProcessZonePacketUp, HookTargets.SignatureNotFound));
     }
 
     private void ProcessZonePacketDownDetour(PacketDispatcher* dispatcher, uint targetId, IntPtr dataPtr)
@@ -112,7 +130,7 @@ internal sealed unsafe class GameNetwork : IInternalDisposableService
             }
         }
 
-        this.processZonePacketDownHook.Original(dispatcher, targetId, dataPtr + 0x10);
+        this.processZonePacketDownHook!.Original(dispatcher, targetId, dataPtr + 0x10);
         this.hitchDetectorDown.Stop();
     }
 
@@ -145,6 +163,6 @@ internal sealed unsafe class GameNetwork : IInternalDisposableService
 
         this.hitchDetectorUp.Stop();
 
-        return this.processZonePacketUpHook.Original(a1, dataPtr, a3, a4);
+        return this.processZonePacketUpHook!.Original(a1, dataPtr, a3, a4);
     }
 }
