@@ -12,6 +12,7 @@ using Dalamud.Game;
 using Dalamud.Plugin.Internal;
 using Dalamud.Storage;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 using Dalamud.Utility.Timing;
 using Serilog;
 using Windows.Win32.Foundation;
@@ -225,5 +226,7 @@ internal sealed unsafe class Dalamud : IServiceType
             FFXIVClientStructs.Interop.Generated.Addresses.Register();
             InteropGenerator.Runtime.Resolver.GetInstance.Resolve();
         }
+
+        ClientStructsAddressReport.Report(InteropGenerator.Runtime.Resolver.GetInstance.Addresses);
     }
 }
