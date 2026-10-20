@@ -6,6 +6,7 @@ using Dalamud.Hooking;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
 
@@ -21,7 +22,8 @@ internal sealed unsafe class PartyFinderGui : IInternalDisposableService, IParty
 {
     private readonly nint memory;
 
-    private readonly Hook<InfoProxyCrossRealm.Delegates.ReceiveListing> receiveListingHook;
+    // Null when the address is missing or misplaced: ReceiveListing then never fires.
+    private readonly Hook<InfoProxyCrossRealm.Delegates.ReceiveListing>? receiveListingHook;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PartyFinderGui"/> class.
@@ -32,8 +34,11 @@ internal sealed unsafe class PartyFinderGui : IInternalDisposableService, IParty
     {
         this.memory = Marshal.AllocHGlobal(PartyFinderPacket.PacketSize);
 
-        this.receiveListingHook = Hook<InfoProxyCrossRealm.Delegates.ReceiveListing>.FromAddress(InfoProxyCrossRealm.Addresses.ReceiveListing.Value, this.HandleReceiveListingDetour);
-        this.receiveListingHook.Enable();
+        var targets = HookTargets.For(nameof(PartyFinderGui), sigScanner);
+        var receiveListing = FindHookTarget(targets);
+        this.receiveListingHook = receiveListing != 0 ? Hook<InfoProxyCrossRealm.Delegates.ReceiveListing>.FromAddress(receiveListing, this.HandleReceiveListingDetour) : null;
+        targets.ReportDisabled();
+        this.receiveListingHook?.Enable();
     }
 
     /// <inheritdoc/>
@@ -44,7 +49,7 @@ internal sealed unsafe class PartyFinderGui : IInternalDisposableService, IParty
     /// </summary>
     void IInternalDisposableService.DisposeService()
     {
-        this.receiveListingHook.Dispose();
+        this.receiveListingHook?.Dispose();
 
         try
         {
@@ -55,6 +60,14 @@ internal sealed unsafe class PartyFinderGui : IInternalDisposableService, IParty
             Log.Warning("Could not free PartyFinderGui memory.");
         }
     }
+
+    /// <summary>
+    /// Checks the address of the listing hook.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <returns>InfoProxyCrossRealm.ReceiveListing, or 0 if left out.</returns>
+    internal static nint FindHookTarget(HookTargets targets)
+        => targets.Function("InfoProxyCrossRealm.ReceiveListing", "隊伍招募列表事件", InfoProxyCrossRealm.Addresses.ReceiveListing.Value);
 
     private void HandleReceiveListingDetour(InfoProxyCrossRealm* infoProxy, nint packet)
     {
@@ -67,7 +80,7 @@ internal sealed unsafe class PartyFinderGui : IInternalDisposableService, IParty
             Log.Error(ex, "Exception on ReceiveListing hook.");
         }
 
-        this.receiveListingHook.Original(infoProxy, packet);
+        this.receiveListingHook!.Original(infoProxy, packet);
     }
 
     private void HandleListingEvents(nint data)
