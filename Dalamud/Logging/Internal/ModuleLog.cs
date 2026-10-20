@@ -183,4 +183,11 @@ public class ModuleLog
     /// <typeparam name="T">The class to create this ModuleLog for.</typeparam>
     /// <returns>Returns a ModuleLog with name set.</returns>
     internal static ModuleLog Create<T>() => new(typeof(T));
+
+    /// <summary>
+    /// Whether a message of <paramref name="level"/> would be written; the same check the write itself makes first.
+    /// </summary>
+    /// <param name="level">The level to check.</param>
+    /// <returns>True if such a message is written.</returns>
+    internal bool IsEnabled(LogEventLevel level) => this.moduleLogger.IsEnabled(level);
 }

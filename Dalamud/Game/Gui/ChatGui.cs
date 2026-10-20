@@ -28,6 +28,8 @@ using Lumina.Text;
 using Lumina.Text.Payloads;
 using Lumina.Text.ReadOnly;
 
+using Serilog.Events;
+
 using LSeStringBuilder = Lumina.Text.SeStringBuilder;
 using SeString = Dalamud.Game.Text.SeStringHandling.SeString;
 using SeStringBuilder = Dalamud.Game.Text.SeStringHandling.SeStringBuilder;
@@ -446,15 +448,18 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
             var possiblyModifiedSenderData = EncodesTo(parsedSender, terminatedSender) ? terminatedSender : parsedSender.EncodeWithNullTerminator();
             var possiblyModifiedMessageData = EncodesTo(parsedMessage, terminatedMessage) ? terminatedMessage : parsedMessage.EncodeWithNullTerminator();
 
+            // The Verbose lines are built only when written: a plugin may modify every message.
             if (!terminatedSender.SequenceEqual(possiblyModifiedSenderData))
             {
-                Log.Verbose($"HandlePrintMessageDetour Sender modified: {new ReadOnlySeStringSpan(terminatedSender).ToMacroString()} -> {new ReadOnlySeStringSpan(possiblyModifiedSenderData).ToMacroString()}");
+                if (Log.IsEnabled(LogEventLevel.Verbose))
+                    Log.Verbose($"HandlePrintMessageDetour Sender modified: {new ReadOnlySeStringSpan(terminatedSender).ToMacroString()} -> {new ReadOnlySeStringSpan(possiblyModifiedSenderData).ToMacroString()}");
                 sender->SetString(possiblyModifiedSenderData);
             }
 
             if (!terminatedMessage.SequenceEqual(possiblyModifiedMessageData))
             {
-                Log.Verbose($"HandlePrintMessageDetour Message modified: {new ReadOnlySeStringSpan(terminatedMessage).ToMacroString()} -> {new ReadOnlySeStringSpan(possiblyModifiedMessageData).ToMacroString()}");
+                if (Log.IsEnabled(LogEventLevel.Verbose))
+                    Log.Verbose($"HandlePrintMessageDetour Message modified: {new ReadOnlySeStringSpan(terminatedMessage).ToMacroString()} -> {new ReadOnlySeStringSpan(possiblyModifiedMessageData).ToMacroString()}");
                 message->SetString(possiblyModifiedMessageData);
             }
 

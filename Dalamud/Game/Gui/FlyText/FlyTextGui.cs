@@ -14,6 +14,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
 using Serilog;
+using Serilog.Events;
 
 namespace Dalamud.Game.Gui.FlyText;
 
@@ -141,10 +142,15 @@ internal sealed class FlyTextGui : IInternalDisposableService, IFlyTextGui
             var originalText1 = tmpText1.EncodeWithNullTerminator();
             var originalText2 = tmpText2.EncodeWithNullTerminator();
 
-            Log.Verbose($"[FlyText] Called with addonFlyText({(nint)thisPtr:X}) " +
-                        $"kind({kind}) val1({val1}) val2({val2}) damageTypeIcon({damageTypeIcon}) " +
-                        $"text1({(nint)text1:X}, \"{tmpText1}\") text2({(nint)text2:X}, \"{tmpText2}\") " +
-                        $"color({color:X}) icon({icon}) yOffset({yOffset})");
+            // Built only when written: this runs for every fly text.
+            if (Log.IsEnabled(LogEventLevel.Verbose))
+            {
+                Log.Verbose($"[FlyText] Called with addonFlyText({(nint)thisPtr:X}) " +
+                            $"kind({kind}) val1({val1}) val2({val2}) damageTypeIcon({damageTypeIcon}) " +
+                            $"text1({(nint)text1:X}, \"{tmpText1}\") text2({(nint)text2:X}, \"{tmpText2}\") " +
+                            $"color({color:X}) icon({icon}) yOffset({yOffset})");
+            }
+
             Log.Verbose("[FlyText] Calling flytext events!");
             foreach (var d in Delegate.EnumerateInvocationList(this.FlyTextCreated))
             {
