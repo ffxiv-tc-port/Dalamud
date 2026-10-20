@@ -157,7 +157,7 @@ internal static class GameVersionGate
         return $"台服 Dalamud 尚未驗證遊戲版本 {current}（已驗證：{shown}）。\n" +
                "改版後遊戲內部位置可能已變，直接載入可能讓遊戲崩潰。\n\n" +
                "否（建議）：這次不載入 Dalamud 與插件，遊戲照常；更新 Dalamud 後即可恢復。\n" +
-               "是：仍要載入（風險自負）。\n\n" +
+               "是：仍要載入（風險自負；若這次改版移動了遊戲內部位置，載入後遊戲會當機，只在確定是不影響 Dalamud 的小更新時選）。\n\n" +
                $"Dalamud has not been verified against game version {current}. Choose No to skip Dalamud and plugins for this session.";
     }
 
