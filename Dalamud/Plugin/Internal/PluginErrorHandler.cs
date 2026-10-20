@@ -7,6 +7,7 @@ using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Interface.ImGuiNotification.Internal;
 using Dalamud.Interface.Internal;
 using Dalamud.Plugin.Internal.Types;
+using Dalamud.Utility.Internal;
 
 using Serilog;
 
@@ -68,7 +69,9 @@ internal class PluginErrorHandler : IServiceType
         }
         catch (Exception ex)
         {
-            Log.Error(ex, $"[{this.plugin.InternalName}] Exception in event handler {{EventHandlerName}}", hint);
+            if (!UnresolvedAddressLog.Instance.TryAbsorb(ex, this.plugin.InternalName, hint))
+                Log.Error(ex, $"[{this.plugin.InternalName}] Exception in event handler {{EventHandlerName}}", hint);
+
             this.NotifyError();
             return false;
         }

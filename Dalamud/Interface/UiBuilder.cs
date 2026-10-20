@@ -322,6 +322,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
             this.hitchDetector = new HitchDetector($"UiBuilder({namespaceName})", this.configuration.UiBuilderHitch);
             this.namespaceName = namespaceName;
             this.plugin = plugin;
+            UnresolvedAddressLog.Instance.RememberDisplayName(plugin.InternalName, plugin.Name);
 
             // 放在訂閱 Draw 之前：清理是後進先出，先退訂 Draw 才讓計數器退役。
             this.drawAllocations = new PluginAllocationMeter(plugin.InternalName, PluginAllocationMeter.Draw);
@@ -810,7 +811,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
         var allocatedBefore = PluginAllocationMeter.Begin();
         try
         {
-            this.Draw?.InvokeSafely();
+            this.InvokeDrawHandlers();
         }
         catch (Exception ex)
         {
@@ -837,6 +838,23 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
         AssertHandler.DrawingPlugin = null;
 
         this.hitchDetector.Stop();
+    }
+
+    // Same as InvokeSafely(), except that a ClientStructs address this game version lacks is logged once, not every frame.
+    private void InvokeDrawHandlers()
+    {
+        foreach (var handler in Delegate.EnumerateInvocationList(this.Draw))
+        {
+            try
+            {
+                handler();
+            }
+            catch (Exception ex)
+            {
+                if (!UnresolvedAddressLog.Instance.TryAbsorb(ex, this.plugin.InternalName, $"{nameof(IUiBuilder)}::{nameof(IUiBuilder.Draw)}"))
+                    Log.Error(ex, "Exception during raise of {handler}", handler.Method);
+            }
+        }
     }
 
     private void OnResizeBuffers()

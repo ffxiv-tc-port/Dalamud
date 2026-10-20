@@ -208,7 +208,8 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
             }
             catch (Exception e)
             {
-                Log.Error(e, $"Exception in {blame} during {eventType} invoke.");
+                if (!UnresolvedAddressLog.Instance.TryAbsorb(e, meter?.PluginName, $"{eventType} listener in {blame}"))
+                    Log.Error(e, $"Exception in {blame} during {eventType} invoke.");
             }
 
             meter?.End(allocatedBefore);

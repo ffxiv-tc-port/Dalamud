@@ -429,7 +429,8 @@ internal sealed class Framework : IInternalDisposableService, IFramework
     /// </summary>
     /// <param name="eventDelegate">The Delegate to Profile.</param>
     /// <param name="frameworkInstance">The Framework Instance to pass to delegate.</param>
-    internal void ProfileAndInvoke(IFramework.OnUpdateDelegate? eventDelegate, IFramework frameworkInstance)
+    /// <param name="plugin">Internal name of the plugin the handlers belong to, or null for Dalamud's own.</param>
+    internal void ProfileAndInvoke(IFramework.OnUpdateDelegate? eventDelegate, IFramework frameworkInstance, string? plugin = null)
     {
         // Individually invoke OnUpdate handlers and time them.
         foreach (var d in Delegate.EnumerateInvocationList(eventDelegate))
@@ -441,7 +442,8 @@ internal sealed class Framework : IInternalDisposableService, IFramework
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Exception while dispatching Framework::Update event.");
+                if (plugin == null || !UnresolvedAddressLog.Instance.TryAbsorb(ex, plugin, $"{nameof(IFramework)}::{nameof(IFramework.Update)}"))
+                    Log.Error(ex, "Exception while dispatching Framework::Update event.");
             }
 
             stopwatch.Stop();
@@ -942,7 +944,7 @@ internal class FrameworkPluginScoped : IInternalDisposableService, IFramework
         if (Framework.StatsEnabled && this.Update != null)
         {
             var allocatedBefore = PluginAllocationMeter.Begin();
-            this.frameworkService.ProfileAndInvoke(this.Update, framework);
+            this.frameworkService.ProfileAndInvoke(this.Update, framework, this.updateAllocations.PluginName);
             this.updateAllocations.End(allocatedBefore);
         }
         else

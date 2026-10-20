@@ -108,6 +108,30 @@ namespace Dalamud.Test.Game
         }
 
         [Fact]
+        public void AnUnresolvedAddressIsOnlyCountedAndStillSkipsTheRestOfThePlugin()
+        {
+            // Reported once already, so nothing is queued for chat: queuing needs the service container.
+            UnresolvedAddressLog.Instance.Record("TestForward", ["TestForward.Missing"]);
+            var before = UnresolvedAddressLog.Instance.CountOf("TestForward", "TestForward.Missing");
+            var fail = true;
+            this.scoped.Update += f =>
+            {
+                this.seen.Add("h1:" + this.Name(f));
+                if (fail)
+                    InteropGenerator.Runtime.ThrowHelper.ThrowNullAddress("TestForward.Missing", "AA ?? BB");
+            };
+            this.scoped.Update += f => this.seen.Add("h2:" + this.Name(f));
+
+            this.forward(this.first);
+            this.forward(this.first);
+            fail = false;
+            this.forward(this.second);
+
+            Assert.Equal(["h1:first", "h1:first", "h1:second", "h2:second"], this.seen);
+            Assert.Equal(before + 2, UnresolvedAddressLog.Instance.CountOf("TestForward", "TestForward.Missing"));
+        }
+
+        [Fact]
         public void NoSubscriberIsNotAnError()
         {
             this.forward(this.first);

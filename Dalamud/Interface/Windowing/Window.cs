@@ -9,6 +9,7 @@ using Dalamud.Game.ClientState.Keys;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Components;
 using Dalamud.Interface.Internal;
+using Dalamud.Interface.Internal.Asserts;
 using Dalamud.Interface.Textures.Internal;
 using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Interface.Utility;
@@ -16,6 +17,7 @@ using Dalamud.Interface.Utility.Internal;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing.Persistence;
 using Dalamud.Logging.Internal;
+using Dalamud.Utility.Internal;
 
 using FFXIVClientStructs.FFXIV.Client.UI;
 
@@ -1041,7 +1043,8 @@ public abstract class Window
         // Overrides that keep being called while the window is already showing the error panel
         // (Update(), for example) would otherwise write one line per frame - only log again once
         // the window has left the error state, or after the suppression window has passed.
-        if (!this.hasError || now - this.lastErrorAt >= DrawErrorAutoRetrySuppressWindow)
+        if ((!this.hasError || now - this.lastErrorAt >= DrawErrorAutoRetrySuppressWindow)
+            && !UnresolvedAddressLog.Instance.TryAbsorb(ex, AssertHandler.DrawingPlugin, $"window \"{this.WindowName}\" {stage}()"))
             Log.Error(ex, "Error during {Stage}(): {WindowName}", stage, this.WindowName);
 
         // Retry automatically once after a short delay; if this
