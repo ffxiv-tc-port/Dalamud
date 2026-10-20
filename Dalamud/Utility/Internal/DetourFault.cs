@@ -41,10 +41,6 @@ internal sealed class DetourFault
     /// <summary>Gets how many failures were reported.</summary>
     internal long Failures => Interlocked.Read(ref this.failures);
 
-    /// <summary>Gets the chat line printed for the first failure.</summary>
-    internal string ChatLine =>
-        $"Dalamud：{this.feature}時出錯，已略過 Dalamud 這部分的處理，遊戲照常運作（多半是遊戲改版所致，請等 Dalamud 更新）。詳情請輸入 /xllog 查看。";
-
     /// <summary>
     /// Takes the failures counted since the last call, for every detour that had any.
     /// </summary>
@@ -103,6 +99,20 @@ internal sealed class DetourFault
     }
 
     /// <summary>
+    /// Gets the chat line printed for the first failure.
+    /// </summary>
+    /// <remarks>
+    /// Only a missing game address is surely the game update; any other exception can as well come from what a plugin
+    /// handed in (a null SeString and the like), so that line names both.
+    /// </remarks>
+    /// <param name="exception">What the detour threw, or null when it reported something missing.</param>
+    /// <returns>The line.</returns>
+    internal string ChatLineFor(Exception? exception)
+        => exception == null || UnresolvedAddressLog.TryGetUnresolvedAddresses(exception, out _)
+               ? $"Dalamud：{this.feature}時出錯，已略過 Dalamud 這部分的處理，遊戲照常運作（多半是遊戲改版所致，請等 Dalamud 更新）。詳情請輸入 /xllog 查看。"
+               : $"Dalamud：{this.feature}時出錯，已略過 Dalamud 這部分的處理，遊戲照常運作（可能是遊戲改版，也可能是某個插件傳入的內容有問題）。詳情請輸入 /xllog 查看。";
+
+    /// <summary>
     /// Records a failure. Never throws.
     /// </summary>
     /// <param name="exception">What the detour threw.</param>
@@ -114,7 +124,7 @@ internal sealed class DetourFault
         try
         {
             Log.Error(exception, "{Detour} failed and fell back for this call; later failures of it are counted, not logged", this.name);
-            FeatureDisabledEcho.Report($"Detour.{this.name}", this.ChatLine);
+            FeatureDisabledEcho.Report($"Detour.{this.name}", this.ChatLineFor(exception));
         }
         catch (Exception)
         {
@@ -134,7 +144,7 @@ internal sealed class DetourFault
         try
         {
             Log.Error("{Detour} skips its own handling: {Reason}", this.name, reason);
-            FeatureDisabledEcho.Report($"Detour.{this.name}", this.ChatLine);
+            FeatureDisabledEcho.Report($"Detour.{this.name}", this.ChatLineFor(null));
         }
         catch (Exception)
         {

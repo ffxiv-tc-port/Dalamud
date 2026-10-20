@@ -423,7 +423,23 @@ namespace Dalamud.Test.Game
             fault.Report("missing");
 
             Assert.Equal(3, fault.Failures);
-            Assert.Contains("測試時出錯", fault.ChatLine);
+            Assert.Contains("測試時出錯", fault.ChatLineFor(null));
+        }
+
+        [Fact]
+        public void DetourFaultBlamesTheUpdateOnlyForAMissingAddress()
+        {
+            var fault = new DetourFault("Test.Wording", "測試");
+            var unresolved = Assert.Throws<InvalidOperationException>(() => FFXIVClientStructs.FFXIV.Client.UI.UIGlobals.PlaySoundEffect(1));
+
+            Assert.Contains("多半是遊戲改版所致", fault.ChatLineFor(null));
+            Assert.Contains("多半是遊戲改版所致", fault.ChatLineFor(unresolved));
+            Assert.Contains("多半是遊戲改版所致", fault.ChatLineFor(new AggregateException(unresolved)));
+
+            var pluginSide = fault.ChatLineFor(new NullReferenceException());
+            Assert.Contains("某個插件傳入的內容有問題", pluginSide);
+            Assert.DoesNotContain("多半是遊戲改版所致", pluginSide);
+            Assert.Contains("某個插件傳入的內容有問題", fault.ChatLineFor(new InvalidOperationException("Address for X.Y is not null.")));
         }
 
         private static long Faults(Type owner, string field)
