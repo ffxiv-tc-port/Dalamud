@@ -100,7 +100,7 @@ namespace Dalamud.Test.Game.Network
         }
 
         [Fact]
-        public void RefusedStartEndsAnUnfinishedQuery()
+        public void RefusedStartLetsTheUnfinishedQueryFinish()
         {
             var f = new Feed();
             f.Start(0, 20);
@@ -109,9 +109,103 @@ namespace Dalamud.Test.Game.Network
             f.Start(Refused, 0);
             f.Page(A, 10);
 
+            var got = Assert.Single(f.New);
+            Assert.Equal(A, got.CatalogId);
+            Assert.Equal(20, got.Listings.Count);
+            Assert.All(got.Listings, l => Assert.Equal(A, l.CatalogId));
+            Assert.Contains(f.LegacyUploads, u => u.CatalogId == A && u.Listings.Count == 20);
+            Assert.Contains(f.Lines, l => l.Contains("refused keep item=5731") && l.Contains("pages=1/2"));
+            Assert.DoesNotContain(f.Lines, l => l.Contains("reason="));
+            Assert.Contains("refusedKept=1", f.Pairer.BuildSummary());
+        }
+
+        [Fact]
+        public void AcceptedStartAfterARefusalDropsTheHalfQuery()
+        {
+            var f = new Feed();
+            f.Start(0, 20);
+            f.History(A, searching: A);
+            f.Page(A, 10);
+            var seqA = f.CurrentSeq;
+            f.Start(Refused, 0);
+            f.Start(0, 3);
+            f.Page(A, 10, seqA);
+            f.History(C, searching: C);
+            f.Page(C, 3);
+
+            var got = Assert.Single(f.New);
+            Assert.Equal(C, got.CatalogId);
+            Assert.Equal(3, got.Listings.Count);
+            Assert.All(got.Listings, l => Assert.Equal(C, l.CatalogId));
+            Assert.Contains(f.Lines, l => l.Contains("reason=Superseded item=5731") && l.Contains("next=accepted"));
+            Assert.Contains(f.Lines, l => l.Contains("reason=StalePage item=5731"));
+        }
+
+        [Fact]
+        public void LateHistoryAfterARefusalIsIgnoredWhenNotTheSearchedItem()
+        {
+            var f = new Feed();
+            f.Start(0, 20);
+            f.History(A, searching: A);
+            f.Page(A, 10);
+            f.Start(Refused, 0);
+            f.History(B, searching: A);
+            f.Page(A, 10);
+
+            var got = Assert.Single(f.New);
+            Assert.Equal(A, got.CatalogId);
+            Assert.Equal(20, got.Listings.Count);
+            Assert.All(got.Listings, l => Assert.Equal(A, l.CatalogId));
+            Assert.Contains(f.Lines, l => l.Contains("reason=HistoryNotSearchedItem item=5736"));
+        }
+
+        [Fact]
+        public void HistoryOfTheRefusedItemNeverJoinsTheKeptQuery()
+        {
+            // With history: a conflicting second history ends the query.
+            var f = new Feed();
+            f.Start(0, 20);
+            f.History(A, searching: A);
+            f.Page(A, 10);
+            f.Start(Refused, 0);
+            f.History(B, searching: B);
+            f.Page(A, 10);
             Assert.Empty(f.New);
-            Assert.Contains(f.Lines, l => l.Contains("reason=Superseded item=5731") && l.Contains("next=refused"));
-            Assert.Contains(f.Lines, l => l.Contains("reason=PageWithoutQuery item=5731"));
+            Assert.Contains(f.Lines, l => l.Contains("reason=HistoryConflict item=5736"));
+
+            // No history yet, one page in: the listings already name A.
+            f = new Feed();
+            f.Start(0, 20);
+            f.Page(A, 10);
+            f.Start(Refused, 0);
+            f.History(B, searching: B);
+            f.Page(A, 10);
+            Assert.Empty(f.New);
+            Assert.Contains(f.Lines, l => l.Contains("reason=ListingItemMismatch"));
+
+            // No history, no page yet: the pages that follow name A.
+            f = new Feed();
+            f.Start(0, 20);
+            f.Start(Refused, 0);
+            f.History(B, searching: B);
+            f.Page(A, 10);
+            f.Page(A, 10);
+            Assert.Empty(f.New);
+            Assert.Contains(f.Lines, l => l.Contains("reason=ListingItemMismatch"));
+        }
+
+        [Fact]
+        public void RefusalStillEndsAnEmptyQueryThatHasNoHistoryYet()
+        {
+            // Nothing but a later history could name this query's item, and that history may be the refused one's.
+            var f = new Feed();
+            f.Start(0, 0);
+            f.Start(Refused, 0);
+            f.History(B, searching: B);
+
+            Assert.Empty(f.New);
+            Assert.Contains(f.Lines, l => l.Contains("reason=Superseded item=none") && l.Contains("next=refused"));
+            Assert.Contains(f.Lines, l => l.Contains("reason=HistoryWithoutQuery item=5736"));
         }
 
         [Fact]

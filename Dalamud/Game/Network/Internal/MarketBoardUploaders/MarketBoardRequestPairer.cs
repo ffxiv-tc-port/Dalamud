@@ -11,8 +11,9 @@ namespace Dalamud.Game.Network.Internal.MarketBoardUploaders;
 /// </summary>
 /// <remarks>
 /// Contract: never touches game memory (callers read the packets and pass the values in); callable from any
-/// thread; the log delegate is always invoked outside the lock. A new start packet, accepted or refused,
-/// always discards an unfinished query: late packets of an older query must never complete a newer one.
+/// thread; the log delegate is always invoked outside the lock. An accepted start packet always discards an
+/// unfinished query: late packets of an older query must never complete a newer one. A refused one does not
+/// change the game's request id, so the unfinished query keeps collecting its own pages.
 /// </remarks>
 internal sealed class MarketBoardRequestPairer
 {
@@ -29,6 +30,7 @@ internal sealed class MarketBoardRequestPairer
     private readonly object gate = new();
     private readonly DropStat[] drops = new DropStat[Enum.GetValues<DropReason>().Length];
 
+    private DropStat refusedKept;
     private Query? pending;
     private MarketBoardPurchaseHandler? pendingPurchase;
     private long completedQueries;
@@ -84,7 +86,7 @@ internal sealed class MarketBoardRequestPairer
     }
 
     /// <summary>
-    /// Handles a start packet; accepted or refused, it ends any unfinished query.
+    /// Handles a start packet; an accepted one ends any unfinished query, a refused one usually keeps it.
     /// </summary>
     /// <param name="request">The parsed start packet.</param>
     public void OnStart(MarketBoardItemRequest request)
@@ -92,10 +94,17 @@ internal sealed class MarketBoardRequestPairer
         string line;
         lock (this.gate)
         {
-            line = this.pending is { } old
-                       ? this.DropLocked(DropReason.Superseded, old.ItemForLog, old.Describe() + $" next={(request.Ok ? "accepted" : "refused")}")
-                       : null;
-            this.pending = request.Ok ? new Query(request) : null;
+            if (!request.Ok && this.pending is { } kept && kept.CanOutliveRefusal)
+            {
+                line = this.LimitLocked(ref this.refusedKept, $"refused keep item={ItemText(kept.ItemForLog)} {kept.Describe()}");
+            }
+            else
+            {
+                line = this.pending is { } old
+                           ? this.DropLocked(DropReason.Superseded, old.ItemForLog, old.Describe() + $" next={(request.Ok ? "accepted" : "refused")}")
+                           : null;
+                this.pending = request.Ok ? new Query(request) : null;
+            }
         }
 
         this.Write(line);
@@ -270,15 +279,18 @@ internal sealed class MarketBoardRequestPairer
                     parts.Add($"{reason}:{total}");
             }
 
-            if (dropped + this.completedQueries + this.matchedPurchases + this.ignoredZeroHistory == 0)
+            if (dropped + this.completedQueries + this.matchedPurchases + this.ignoredZeroHistory + this.refusedKept.Total == 0)
                 return null;
 
             return $"{LogPrefix} summary completed={this.completedQueries} purchases={this.matchedPurchases} " +
-                   $"ignoredZeroHistory={this.ignoredZeroHistory} dropped={(parts.Count == 0 ? "none" : string.Join(",", parts))}";
+                   $"ignoredZeroHistory={this.ignoredZeroHistory} refusedKept={this.refusedKept.Total} " +
+                   $"dropped={(parts.Count == 0 ? "none" : string.Join(",", parts))}";
         }
     }
 
     private static uint BaseItem(uint catalogId) => catalogId >= HqItemOffset ? catalogId - HqItemOffset : catalogId;
+
+    private static string ItemText(uint itemId) => itemId == 0 ? "none" : itemId.ToString();
 
     private Completed? TryCompleteLocked(Query query)
     {
@@ -290,9 +302,11 @@ internal sealed class MarketBoardRequestPairer
         return new Completed(query.Request, history.CatalogId, history.InternalHistoryListings, query.Listings);
     }
 
-    private string DropLocked(DropReason reason, uint itemId, string detail)
+    private string DropLocked(DropReason reason, uint itemId, string detail) =>
+        this.LimitLocked(ref this.drops[(int)reason], $"drop reason={reason} item={ItemText(itemId)} {detail}");
+
+    private string LimitLocked(ref DropStat stat, string body)
     {
-        ref var stat = ref this.drops[(int)reason];
         var now = this.clockMs();
         stat.Total++;
         if (stat.Total > 1 && now - stat.LastLogMs < DropLogWindowMs)
@@ -301,8 +315,7 @@ internal sealed class MarketBoardRequestPairer
             return null;
         }
 
-        var line = $"{LogPrefix} drop reason={reason} item={(itemId == 0 ? "none" : itemId.ToString())} {detail} " +
-                   $"suppressed={stat.Suppressed} total={stat.Total}";
+        var line = $"{LogPrefix} {body} suppressed={stat.Suppressed} total={stat.Total}";
         stat.LastLogMs = now;
         stat.Suppressed = 0;
         return line;
@@ -353,6 +366,10 @@ internal sealed class MarketBoardRequestPairer
         public List<MarketBoardCurrentOfferings.MarketBoardItemListing> Listings { get; } = [];
 
         public uint ItemForLog => this.History?.CatalogId ?? (this.Listings.Count > 0 ? BaseItem(this.Listings[0].CatalogId) : 0u);
+
+        // After a refusal the client searches the refused item, so a later history may be that item's. A query that
+        // still awaits pages has them to check it against; an empty one without history has nothing.
+        public bool CanOutliveRefusal => this.History != null || this.PagesExpected > 0;
 
         // itemId 0 only requires the listings to agree with each other.
         public bool ListingsAreFor(uint itemId)
