@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading;
 
 using Dalamud.Logging.Internal;
@@ -16,9 +17,13 @@ internal sealed class DetourFault
 {
     private static readonly ModuleLog Log = new("DETOUR");
 
+    // Every instance ever made; reportedFailures is read and written only under this lock.
+    private static readonly List<DetourFault> Registry = new();
+
     private readonly string name;
     private readonly string feature;
     private long failures;
+    private long reportedFailures;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DetourFault"/> class.
@@ -29,6 +34,8 @@ internal sealed class DetourFault
     {
         this.name = name;
         this.feature = feature;
+        lock (Registry)
+            Registry.Add(this);
     }
 
     /// <summary>Gets how many failures were reported.</summary>
@@ -37,6 +44,63 @@ internal sealed class DetourFault
     /// <summary>Gets the chat line printed for the first failure.</summary>
     internal string ChatLine =>
         $"Dalamud：{this.feature}時出錯，已略過 Dalamud 這部分的處理，遊戲照常運作（多半是遊戲改版所致，請等 Dalamud 更新）。詳情請輸入 /xllog 查看。";
+
+    /// <summary>
+    /// Takes the failures counted since the last call, for every detour that had any.
+    /// </summary>
+    /// <param name="faults">The detours to look at; all of them if null.</param>
+    /// <returns>One line per detour that failed since the last call.</returns>
+    internal static List<SummaryLine> TakeSummary(IReadOnlyList<DetourFault>? faults = null)
+    {
+        var lines = new List<SummaryLine>();
+        lock (Registry)
+        {
+            foreach (var fault in faults ?? Registry)
+            {
+                var session = fault.Failures;
+                if (session <= fault.reportedFailures)
+                    continue;
+
+                lines.Add(new SummaryLine(fault.name, session - fault.reportedFailures, session));
+                fault.reportedFailures = session;
+            }
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// Logs, as Information, how often each detour failed since the last summary. Nothing if none did. Never throws.
+    /// </summary>
+    /// <param name="minutes">How long the summary covers.</param>
+    /// <param name="unloading">Whether this is the last summary, written while Dalamud unloads.</param>
+    internal static void WriteSummary(double minutes, bool unloading)
+    {
+        try
+        {
+            foreach (var line in TakeSummary())
+            {
+                Log.Information(
+                    "summary {Detour}: failed {Window} time(s) in the last {Minutes:0.0} min, {Session} this session{Unloading:l}",
+                    line.Name,
+                    line.Window,
+                    minutes,
+                    line.Session,
+                    unloading ? " (unloading)" : string.Empty);
+            }
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Log.Error(ex, "Could not write the detour failure summary");
+            }
+            catch
+            {
+                // Logging is all that is left to try.
+            }
+        }
+    }
 
     /// <summary>
     /// Records a failure. Never throws.
@@ -77,4 +141,10 @@ internal sealed class DetourFault
             // Nothing may escape into the detour's catch block.
         }
     }
+
+    /// <summary>One detour's failures for a summary.</summary>
+    /// <param name="Name">The detour.</param>
+    /// <param name="Window">Failures since the previous summary.</param>
+    /// <param name="Session">Failures since Dalamud started.</param>
+    internal readonly record struct SummaryLine(string Name, long Window, long Session);
 }

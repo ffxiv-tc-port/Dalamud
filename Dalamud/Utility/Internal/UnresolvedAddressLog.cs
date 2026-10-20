@@ -29,17 +29,20 @@ internal sealed class UnresolvedAddressLog
 
     private const string DalamudLabel = "Dalamud";
     private const int MaxExceptionsInspected = 32;
+    private const int MaxSummaryLines = 20;
 
     private static readonly ModuleLog Log = new("UNRESOLVED");
 
     private readonly object gate = new();
     private readonly Dictionary<(string Owner, string Address), long> counts = new();
+    private readonly Dictionary<(string Owner, string Address), long> reported = new();
     private readonly HashSet<string> echoedOwners = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> displayNames = new(StringComparer.Ordinal);
     private readonly int capacity;
     private readonly Action<string, string> echo;
 
     private long untracked;
+    private long reportedUntracked;
     private bool overflowStarted;
 
     /// <summary>
@@ -289,6 +292,100 @@ internal sealed class UnresolvedAddressLog
         lock (this.gate)
             return this.counts.TryGetValue((plugin ?? string.Empty, address), out var count) ? count : 0;
     }
+
+    /// <summary>
+    /// Takes the failures counted since the last call: the busiest pairs first, at most <paramref name="maxLines"/>.
+    /// </summary>
+    /// <param name="maxLines">How many pairs to return; the rest are only counted in the result.</param>
+    /// <returns>The pairs that failed since the last call, and what did not fit.</returns>
+    internal Summary TakeSummary(int maxLines)
+    {
+        var lines = new List<SummaryLine>();
+        long untrackedWindow;
+        lock (this.gate)
+        {
+            foreach (var (key, session) in this.counts)
+            {
+                var window = session - this.reported.GetValueOrDefault(key);
+                if (window <= 0)
+                    continue;
+
+                lines.Add(new SummaryLine(key.Owner.Length == 0 ? null : key.Owner, key.Address, window, session));
+            }
+
+            foreach (var line in lines)
+                this.reported[(line.Plugin ?? string.Empty, line.Address)] = line.Session;
+
+            untrackedWindow = this.untracked - this.reportedUntracked;
+            this.reportedUntracked = this.untracked;
+        }
+
+        lines.Sort((a, b) => b.Window.CompareTo(a.Window));
+        var omitted = Math.Max(0, lines.Count - maxLines);
+        if (omitted > 0)
+            lines.RemoveRange(maxLines, omitted);
+        return new Summary(lines, omitted, untrackedWindow);
+    }
+
+    /// <summary>
+    /// Logs, as Information, how often each plugin/address pair failed since the last summary. Nothing if none did.
+    /// Never throws.
+    /// </summary>
+    /// <param name="minutes">How long the summary covers.</param>
+    /// <param name="unloading">Whether this is the last summary, written while Dalamud unloads.</param>
+    internal void WriteSummary(double minutes, bool unloading)
+    {
+        try
+        {
+            var summary = this.TakeSummary(MaxSummaryLines);
+            var suffix = unloading ? " (unloading)" : string.Empty;
+            foreach (var line in summary.Lines)
+            {
+                Log.Information(
+                    "summary [{Plugin}] {Address}: failed {Window} time(s) in the last {Minutes:0.0} min, {Session} this session{Unloading:l}",
+                    line.Plugin ?? DalamudLabel,
+                    line.Address,
+                    line.Window,
+                    minutes,
+                    line.Session,
+                    suffix);
+            }
+
+            if (summary.Omitted > 0 || summary.Untracked > 0)
+            {
+                Log.Information(
+                    "summary: {Omitted} more pair(s) failed in the last {Minutes:0.0} min, not listed; {Untracked} failure(s) of untracked pairs{Unloading:l}",
+                    summary.Omitted,
+                    minutes,
+                    summary.Untracked,
+                    suffix);
+            }
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Log.Error(ex, "Could not write the unresolved-address summary");
+            }
+            catch
+            {
+                // Logging is all that is left to try.
+            }
+        }
+    }
+
+    /// <summary>What <see cref="TakeSummary"/> found.</summary>
+    /// <param name="Lines">The busiest pairs that failed since the last summary.</param>
+    /// <param name="Omitted">How many more pairs failed but did not fit.</param>
+    /// <param name="Untracked">Failures of pairs past the table's capacity since the last summary.</param>
+    internal readonly record struct Summary(List<SummaryLine> Lines, int Omitted, long Untracked);
+
+    /// <summary>One plugin/address pair's failures for a summary.</summary>
+    /// <param name="Plugin">Internal name of the plugin, or null for Dalamud.</param>
+    /// <param name="Address">The address name.</param>
+    /// <param name="Window">Failures since the previous summary.</param>
+    /// <param name="Session">Failures since Dalamud started.</param>
+    internal readonly record struct SummaryLine(string? Plugin, string Address, long Window, long Session);
 
     /// <summary>What <see cref="Record"/> found new.</summary>
     /// <param name="Fresh">Addresses not seen before for this plugin, or null.</param>

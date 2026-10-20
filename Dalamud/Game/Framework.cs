@@ -74,6 +74,7 @@ internal sealed class Framework : IInternalDisposableService, IFramework
     private readonly PluginAllocationReport allocationReport;
     private readonly GameNativeThreadReport? gameThreadReport;
     private readonly IpcJsonConversionReport ipcJsonReport;
+    private readonly FaultSummaryReport faultSummary;
 
     // tickDelayedEntries.Count, written under tickDelayedLock. Zero lets a frame skip the lock.
     private int tickDelayedCount;
@@ -103,6 +104,7 @@ internal sealed class Framework : IInternalDisposableService, IFramework
         this.allocationReport = new PluginAllocationReport(Stopwatch.GetTimestamp());
         this.gameThreadReport = GameNativeThreadReport.ForGame(Stopwatch.GetTimestamp());
         this.ipcJsonReport = IpcJsonConversionReport.Hourly(Stopwatch.GetTimestamp());
+        this.faultSummary = FaultSummaryReport.Hourly(Stopwatch.GetTimestamp());
 
         this.frameworkDestroy = new();
         this.frameworkThreadTaskScheduler = new();
@@ -678,6 +680,7 @@ internal sealed class Framework : IInternalDisposableService, IFramework
             this.allocationReport.Tick(now);
             this.gameThreadReport?.Tick(now);
             this.ipcJsonReport.Tick(now);
+            this.faultSummary.Tick(now);
             AssertSiteCounter.Shared.Tick(now);
             this.TickAllocationSampler(now);
         }
@@ -776,9 +779,10 @@ internal sealed class Framework : IInternalDisposableService, IFramework
         {
             var now = Stopwatch.GetTimestamp();
 
-            // These two never throw, so they go first: a failing report below cannot take them down with it.
+            // These three never throw, so they go first: a failing report below cannot take them down with it.
             this.gameThreadReport?.ReportUnfinished(now);
             this.ipcJsonReport?.ReportUnfinished(now);
+            this.faultSummary?.ReportUnfinished(now);
             this.allocationReport.ReportUnfinished(now);
             AssertSiteCounter.Shared.ReportUnfinished(now);
             if (!this.allocationSamplerFailed)
