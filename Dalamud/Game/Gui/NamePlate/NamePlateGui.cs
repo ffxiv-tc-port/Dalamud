@@ -42,7 +42,8 @@ internal sealed class NamePlateGui : IInternalDisposableService, INamePlateGui
 
     private readonly NamePlateGuiAddressResolver address;
 
-    private readonly Hook<AtkUnitBase.Delegates.OnRequestedUpdate> onRequestedUpdateHook;
+    // Null when the address is missing or misplaced: the name plate events then never fire.
+    private readonly Hook<AtkUnitBase.Delegates.OnRequestedUpdate>? onRequestedUpdateHook;
 
     private NamePlateUpdateContext? context;
 
@@ -54,10 +55,13 @@ internal sealed class NamePlateGui : IInternalDisposableService, INamePlateGui
         this.address = new NamePlateGuiAddressResolver();
         this.address.Setup(sigScanner);
 
-        this.onRequestedUpdateHook = Hook<AtkUnitBase.Delegates.OnRequestedUpdate>.FromAddress(
-            this.address.OnRequestedUpdate,
-            this.OnRequestedUpdateDetour);
-        this.onRequestedUpdateHook.Enable();
+        var targets = HookTargets.For(nameof(NamePlateGui), sigScanner);
+        var onRequestedUpdate = FindHookTarget(targets, this.address);
+        this.onRequestedUpdateHook = onRequestedUpdate != 0
+                                         ? Hook<AtkUnitBase.Delegates.OnRequestedUpdate>.FromAddress(onRequestedUpdate, this.OnRequestedUpdateDetour)
+                                         : null;
+        targets.ReportDisabled();
+        this.onRequestedUpdateHook?.Enable();
     }
 
     /// <inheritdoc/>
@@ -106,8 +110,17 @@ internal sealed class NamePlateGui : IInternalDisposableService, INamePlateGui
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
     {
-        this.onRequestedUpdateHook.Dispose();
+        this.onRequestedUpdateHook?.Dispose();
     }
+
+    /// <summary>
+    /// Checks the address of the name plate hook.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <param name="address">The resolved signatures.</param>
+    /// <returns>AddonNamePlate's OnRequestedUpdate, or 0 if left out.</returns>
+    internal static nint FindHookTarget(HookTargets targets, NamePlateGuiAddressResolver address)
+        => targets.Function("OnRequestedUpdate", "名牌事件（插件修改名牌）", address.OnRequestedUpdate, HookTargets.SignatureNotFound);
 
     /// <summary>
     /// Strips the surrounding quotes from a free company tag. If the quotes are not present in the expected location,
@@ -202,7 +215,7 @@ internal sealed class NamePlateGui : IInternalDisposableService, INamePlateGui
                 try
                 {
                     calledOriginal = true;
-                    this.onRequestedUpdateHook.Original.Invoke(addon, numberArrayData, stringArrayData);
+                    this.onRequestedUpdateHook!.Original.Invoke(addon, numberArrayData, stringArrayData);
                 }
                 catch (Exception e)
                 {
@@ -233,7 +246,7 @@ internal sealed class NamePlateGui : IInternalDisposableService, INamePlateGui
                     try
                     {
                         calledOriginal = true;
-                        this.onRequestedUpdateHook.Original.Invoke(addon, numberArrayData, stringArrayData);
+                        this.onRequestedUpdateHook!.Original.Invoke(addon, numberArrayData, stringArrayData);
                     }
                     catch (Exception e)
                     {
@@ -253,7 +266,7 @@ internal sealed class NamePlateGui : IInternalDisposableService, INamePlateGui
                     try
                     {
                         calledOriginal = true;
-                        this.onRequestedUpdateHook.Original.Invoke(addon, numberArrayData, stringArrayData);
+                        this.onRequestedUpdateHook!.Original.Invoke(addon, numberArrayData, stringArrayData);
                     }
                     catch (Exception e)
                     {
@@ -276,7 +289,7 @@ internal sealed class NamePlateGui : IInternalDisposableService, INamePlateGui
             {
                 try
                 {
-                    this.onRequestedUpdateHook.Original.Invoke(addon, numberArrayData, stringArrayData);
+                    this.onRequestedUpdateHook!.Original.Invoke(addon, numberArrayData, stringArrayData);
                 }
                 catch (Exception e)
                 {
