@@ -6,6 +6,7 @@ using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 
 namespace Dalamud.Game.DutyState;
 
@@ -22,7 +23,9 @@ internal unsafe class DutyState : IInternalDisposableService, IDutyState
     private static readonly ConditionFlag[] InCombatFlags = [ConditionFlag.InCombat];
 
     private readonly DutyStateAddressResolver address;
-    private readonly Hook<SetupContentDirectNetworkMessageDelegate> contentDirectorNetworkMessageHook;
+
+    // Null when the address is missing or misplaced: the duty events then never fire, IsDutyStarted only follows combat.
+    private readonly Hook<SetupContentDirectNetworkMessageDelegate>? contentDirectorNetworkMessageHook;
 
     [ServiceManager.ServiceDependency]
     private readonly Condition condition = Service<Condition>.Get();
@@ -39,12 +42,17 @@ internal unsafe class DutyState : IInternalDisposableService, IDutyState
         this.address = new DutyStateAddressResolver();
         this.address.Setup(sigScanner);
 
-        this.contentDirectorNetworkMessageHook = Hook<SetupContentDirectNetworkMessageDelegate>.FromAddress(this.address.ContentDirectorNetworkMessage, this.ContentDirectorNetworkMessageDetour);
+        var targets = HookTargets.For(nameof(DutyState), sigScanner);
+        var contentDirectorNetworkMessage = FindHookTarget(targets, this.address);
+        this.contentDirectorNetworkMessageHook = contentDirectorNetworkMessage != 0
+                                                     ? Hook<SetupContentDirectNetworkMessageDelegate>.FromAddress(contentDirectorNetworkMessage, this.ContentDirectorNetworkMessageDetour)
+                                                     : null;
+        targets.ReportDisabled();
 
         this.framework.Update += this.FrameworkOnUpdateEvent;
         this.clientState.TerritoryChanged += this.TerritoryOnChangedEvent;
 
-        this.contentDirectorNetworkMessageHook.Enable();
+        this.contentDirectorNetworkMessageHook?.Enable();
     }
 
     [UnmanagedFunctionPointer(CallingConvention.ThisCall)]
@@ -70,10 +78,19 @@ internal unsafe class DutyState : IInternalDisposableService, IDutyState
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
     {
-        this.contentDirectorNetworkMessageHook.Dispose();
+        this.contentDirectorNetworkMessageHook?.Dispose();
         this.framework.Update -= this.FrameworkOnUpdateEvent;
         this.clientState.TerritoryChanged -= this.TerritoryOnChangedEvent;
     }
+
+    /// <summary>
+    /// Checks the address of the duty event hook.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <param name="address">The resolved signatures.</param>
+    /// <returns>The content director network message handler, or 0 if left out.</returns>
+    internal static nint FindHookTarget(HookTargets targets, DutyStateAddressResolver address)
+        => targets.Function("ContentDirectorNetworkMessage", "副本開始、全滅、完成事件", address.ContentDirectorNetworkMessage, HookTargets.SignatureNotFound);
 
     private byte ContentDirectorNetworkMessageDetour(IntPtr a1, IntPtr a2, ushort* a3)
     {
@@ -119,7 +136,7 @@ internal unsafe class DutyState : IInternalDisposableService, IDutyState
             }
         }
 
-        return this.contentDirectorNetworkMessageHook.Original(a1, a2, a3);
+        return this.contentDirectorNetworkMessageHook!.Original(a1, a2, a3);
     }
 
     private void TerritoryOnChangedEvent(ushort territoryId)
