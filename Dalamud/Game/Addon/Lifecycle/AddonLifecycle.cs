@@ -24,6 +24,8 @@ namespace Dalamud.Game.Addon.Lifecycle;
 [ServiceManager.EarlyLoadedService]
 internal unsafe class AddonLifecycle : IInternalDisposableService
 {
+    private const string CallsitesDisabledChatLine = "Dalamud：遊戲改版後，介面視窗的{0}事件與 Dalamud 內建的遊戲結構對不上，插件生命週期事件的這部分先停用（遊戲本身照常，用到它的插件功能可能沒反應），等 Dalamud 更新。詳情請輸入 /xllog 查看。";
+
     private static readonly ModuleLog Log = new("AddonLifecycle");
 
     [ServiceManager.ServiceDependency]
@@ -35,12 +37,15 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
     private readonly nint disallowedReceiveEventAddress;
     
     private readonly AddonLifecycleAddressResolver address;
-    private readonly AddonSetupHook<AtkUnitBase.Delegates.OnSetup> onAddonSetupHook;
+
+    // Call site hooks are null when the game's instruction does not read ClientStructs' slot (see AddonLifecycleCallsiteCheck):
+    // the game then calls the vfunc itself and plugins get no events for it.
+    private readonly AddonSetupHook<AtkUnitBase.Delegates.OnSetup>? onAddonSetupHook;
     private readonly Hook<AddonFinalizeDelegate> onAddonFinalizeHook;
-    private readonly CallHook<AtkUnitBase.Delegates.Draw> onAddonDrawHook;
-    private readonly CallHook<AtkUnitBase.Delegates.Update> onAddonUpdateHook;
+    private readonly CallHook<AtkUnitBase.Delegates.Draw>? onAddonDrawHook;
+    private readonly CallHook<AtkUnitBase.Delegates.Update>? onAddonUpdateHook;
     private readonly Hook<AtkUnitManager.Delegates.RefreshAddon> onAddonRefreshHook;
-    private readonly CallHook<AtkUnitBase.Delegates.OnRequestedUpdate> onAddonRequestedUpdateHook;
+    private readonly CallHook<AtkUnitBase.Delegates.OnRequestedUpdate>? onAddonRequestedUpdateHook;
 
     [ServiceManager.ServiceConstructor]
     private AddonLifecycle(TargetSigScanner sigScanner)
@@ -52,19 +57,46 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
 
         var refreshAddonAddress = (nint)RaptureAtkUnitManager.StaticVirtualTablePointer->RefreshAddon;
 
-        this.onAddonSetupHook = new AddonSetupHook<AtkUnitBase.Delegates.OnSetup>(this.address.AddonSetup, this.OnAddonSetup);
-        this.onAddonFinalizeHook = Hook<AddonFinalizeDelegate>.FromAddress(this.address.AddonFinalize, this.OnAddonFinalize);
-        this.onAddonDrawHook = new CallHook<AtkUnitBase.Delegates.Draw>(this.address.AddonDraw, this.OnAddonDraw);
-        this.onAddonUpdateHook = new CallHook<AtkUnitBase.Delegates.Update>(this.address.AddonUpdate, this.OnAddonUpdate);
-        this.onAddonRefreshHook = Hook<AtkUnitManager.Delegates.RefreshAddon>.FromAddress(refreshAddonAddress, this.OnAddonRefresh);
-        this.onAddonRequestedUpdateHook = new CallHook<AtkUnitBase.Delegates.OnRequestedUpdate>(this.address.AddonOnRequestedUpdate, this.OnRequestedUpdate);
+        var verified = new List<string>();
+        var disabled = new List<string>();
+        bool Hookable(string name, string chatName, nint callsite, byte[] opcode, int slot)
+        {
+            if (CallsiteMatches(sigScanner, name, callsite, opcode, slot))
+            {
+                verified.Add($"{name} +0x{slot:X}");
+                return true;
+            }
 
-        this.onAddonSetupHook.Enable();
+            disabled.Add(chatName);
+            return false;
+        }
+
+        this.onAddonSetupHook = Hookable("OnSetup", "開啟", this.address.AddonSetup, AddonLifecycleCallsiteCheck.MovR9RaxDisp32, AddonLifecycleCallsiteCheck.OnSetupSlot)
+                                    ? new AddonSetupHook<AtkUnitBase.Delegates.OnSetup>(this.address.AddonSetup, this.OnAddonSetup)
+                                    : null;
+        this.onAddonFinalizeHook = Hook<AddonFinalizeDelegate>.FromAddress(this.address.AddonFinalize, this.OnAddonFinalize);
+        this.onAddonDrawHook = Hookable("Draw", "繪製", this.address.AddonDraw, AddonLifecycleCallsiteCheck.CallRaxDisp32, AddonLifecycleCallsiteCheck.DrawSlot)
+                                   ? new CallHook<AtkUnitBase.Delegates.Draw>(this.address.AddonDraw, this.OnAddonDraw)
+                                   : null;
+        this.onAddonUpdateHook = Hookable("Update", "更新", this.address.AddonUpdate, AddonLifecycleCallsiteCheck.CallRaxDisp32, AddonLifecycleCallsiteCheck.UpdateSlot)
+                                     ? new CallHook<AtkUnitBase.Delegates.Update>(this.address.AddonUpdate, this.OnAddonUpdate)
+                                     : null;
+        this.onAddonRefreshHook = Hook<AtkUnitManager.Delegates.RefreshAddon>.FromAddress(refreshAddonAddress, this.OnAddonRefresh);
+        this.onAddonRequestedUpdateHook = Hookable("OnRequestedUpdate", "資料更新", this.address.AddonOnRequestedUpdate, AddonLifecycleCallsiteCheck.CallRaxDisp32, AddonLifecycleCallsiteCheck.OnRequestedUpdateSlot)
+                                              ? new CallHook<AtkUnitBase.Delegates.OnRequestedUpdate>(this.address.AddonOnRequestedUpdate, this.OnRequestedUpdate)
+                                              : null;
+
+        if (verified.Count > 0)
+            Log.Information("Addon call sites agree with ClientStructs: {Sites}", string.Join(", ", verified));
+        if (disabled.Count > 0)
+            FeatureDisabledEcho.Report("AddonLifecycle.Callsites", string.Format(CallsitesDisabledChatLine, string.Join("、", disabled)));
+
+        this.onAddonSetupHook?.Enable();
         this.onAddonFinalizeHook.Enable();
-        this.onAddonDrawHook.Enable();
-        this.onAddonUpdateHook.Enable();
+        this.onAddonDrawHook?.Enable();
+        this.onAddonUpdateHook?.Enable();
         this.onAddonRefreshHook.Enable();
-        this.onAddonRequestedUpdateHook.Enable();
+        this.onAddonRequestedUpdateHook?.Enable();
     }
 
     private delegate void AddonFinalizeDelegate(AtkUnitManager* unitManager, AtkUnitBase** atkUnitBase);
@@ -82,12 +114,12 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
     /// <inheritdoc/>
     void IInternalDisposableService.DisposeService()
     {
-        this.onAddonSetupHook.Dispose();
+        this.onAddonSetupHook?.Dispose();
         this.onAddonFinalizeHook.Dispose();
-        this.onAddonDrawHook.Dispose();
-        this.onAddonUpdateHook.Dispose();
+        this.onAddonDrawHook?.Dispose();
+        this.onAddonUpdateHook?.Dispose();
         this.onAddonRefreshHook.Dispose();
-        this.onAddonRequestedUpdateHook.Dispose();
+        this.onAddonRequestedUpdateHook?.Dispose();
 
         foreach (var receiveEventListener in this.ReceiveEventListeners)
         {
@@ -181,6 +213,37 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
 
             meter?.End(allocatedBefore);
         }
+    }
+
+    // Reads the game's own code at the scan result (not the scanner's module copy): that is what the hook replaces.
+    private static bool CallsiteMatches(TargetSigScanner scanner, string name, nint callsite, byte[] opcode, int slot)
+    {
+        bool matches;
+        string evidence;
+        try
+        {
+            var length = AddonLifecycleCallsiteCheck.InstructionLength(opcode);
+            var rva = (long)callsite - (long)scanner.Module.BaseAddress;
+            if (rva < scanner.TextSectionOffset || rva + length > scanner.TextSectionOffset + scanner.TextSectionSize)
+            {
+                matches = false;
+                evidence = $"0x{callsite:X} is not inside the game's .text";
+            }
+            else
+            {
+                matches = AddonLifecycleCallsiteCheck.Matches(new ReadOnlySpan<byte>((void*)callsite, length), opcode, slot, out evidence);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Could not check the {Name} call site; not hooking it", name);
+            return false;
+        }
+
+        if (!matches)
+            Log.Error("Not hooking the {Name} call site at 0x{Address:X}: {Evidence}; plugins get none of its addon events until Dalamud is updated", name, callsite, evidence);
+
+        return matches;
     }
 
     private void RegisterReceiveEventHook(AtkUnitBase* addon)
