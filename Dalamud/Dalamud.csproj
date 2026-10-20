@@ -126,6 +126,10 @@
         <Content Include="licenses.txt">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
+        <None Remove="verified-game-versions.txt" />
+        <Content Include="verified-game-versions.txt">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
     </ItemGroup>
 
     <ItemGroup>

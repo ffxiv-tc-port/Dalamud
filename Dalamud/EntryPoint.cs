@@ -16,6 +16,7 @@ using Dalamud.Plugin.Internal;
 using Dalamud.Storage;
 using Dalamud.Support;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 using Newtonsoft.Json;
 using Serilog;
 using Serilog.Core;
@@ -209,6 +210,15 @@ public sealed class EntryPoint
             // Currently VEH is not fully functional on WINE
             if (info.Platform != OSPlatform.Windows)
                 InitSymbolHandler(info);
+
+            // Before anything scans or hooks the game. Declining releases the game's main thread and ends this
+            // session without providing a single service.
+            if (!GameVersionGate.Check(info, StartupDialog.AskYesNoDefaultNo))
+            {
+                Log.Information("This is Dalamud - Core: {GitHash}, inactive this session", Util.GetScmVersion());
+                Windows.Win32.PInvoke.SetEvent(new HANDLE(mainThreadContinueEvent));
+                return;
+            }
 
             var dalamud = new Dalamud(info, fs, configuration, mainThreadContinueEvent);
             Log.Information("This is Dalamud - Core: {GitHash}, CS: {CsGitHash} [{CsVersion}]",
