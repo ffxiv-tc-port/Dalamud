@@ -89,7 +89,8 @@ internal unsafe partial class Dx11Renderer : IImGuiRenderer
                     fixed (Guid* piidDCompositionDevice = &IID.IID_IDCompositionDevice)
                         DirectX.DCompositionCreateDevice(null, piidDCompositionDevice, (void**)pp).ThrowOnError();
 
-                    ImGuiViewportHelpers.EnableViewportWindowBackgroundAlpha();
+                    // 刻意不呼叫 EnableViewportWindowBackgroundAlpha：它寫死的 cimgui 位移在本版落在 jz 的位移位元組上，
+                    // 改成 EB 會讓條件成立時跳進指令中間；不打補丁的行為與現狀相同（獨立視窗不透明）。
                 }
                 catch
                 {
