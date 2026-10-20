@@ -31,12 +31,17 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
 {
     private const string LayoutNotDerivedChatLine = "Dalamud：遊戲改版後推算不出右鍵選單的版面，插件加進右鍵選單的項目先停用（遊戲原本的選項照常可用），等 Dalamud 更新。詳情請輸入 /xllog 查看。";
 
+    private const string MenuFeature = "插件加進右鍵選單的項目";
+
+    // RaptureAtkModule's vtable slot that opens an addon on behalf of an agent; ClientStructs does not name it.
+    private const int OpenAddonByAgentSlot = 22;
+
     private static readonly ModuleLog Log = new("ContextMenu");
 
     private static readonly DetourFault OpenAddonFault = new("ContextMenu.OpenAddon", "開啟右鍵選單（加入插件項目）");
     private static readonly DetourFault MenuSelectedFault = new("ContextMenu.MenuSelected", "點選插件的右鍵選單項目");
 
-    // Both null when the layout could not be derived: then no menu is ever touched.
+    // Both null when the layout could not be derived or either address is missing: then no menu is ever touched.
     private readonly Hook<AtkModuleVf22OpenAddonByAgentDelegate>? atkModuleVf22OpenAddonByAgentHook;
     private readonly Hook<AddonContextMenuOnMenuSelectedDelegate>? addonContextMenuOnMenuSelectedHook;
 
@@ -56,9 +61,14 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             return;
         }
 
-        var raptureAtkModuleVtable = (nint*)RaptureAtkModule.StaticVirtualTablePointer;
-        this.atkModuleVf22OpenAddonByAgentHook = Hook<AtkModuleVf22OpenAddonByAgentDelegate>.FromAddress(raptureAtkModuleVtable[22], this.AtkModuleVf22OpenAddonByAgentDetour);
-        this.addonContextMenuOnMenuSelectedHook = Hook<AddonContextMenuOnMenuSelectedDelegate>.FromAddress((nint)AddonContextMenu.StaticVirtualTablePointer->OnMenuSelected, this.AddonContextMenuOnMenuSelectedDetour);
+        var targets = HookTargets.For(nameof(ContextMenu), sigScanner);
+        var (openAddon, menuSelected) = FindHookTargets(targets);
+        targets.ReportDisabled();
+        if (openAddon == 0)
+            return;
+
+        this.atkModuleVf22OpenAddonByAgentHook = Hook<AtkModuleVf22OpenAddonByAgentDelegate>.FromAddress(openAddon, this.AtkModuleVf22OpenAddonByAgentDetour);
+        this.addonContextMenuOnMenuSelectedHook = Hook<AddonContextMenuOnMenuSelectedDelegate>.FromAddress(menuSelected, this.AddonContextMenuOnMenuSelectedDetour);
 
         this.atkModuleVf22OpenAddonByAgentHook.Enable();
         this.addonContextMenuOnMenuSelectedHook.Enable();
@@ -139,6 +149,34 @@ internal sealed unsafe class ContextMenu : IInternalDisposableService, IContextM
             return items.Remove(item);
         }
     }
+
+    /// <summary>
+    /// Checks the vtable slots this service hooks.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <returns>RaptureAtkModule's slot 22 and AddonContextMenu.OnMenuSelected, or both 0.</returns>
+    internal static (nint OpenAddon, nint MenuSelected) FindHookTargets(HookTargets targets)
+    {
+        var atkModule = targets.VirtualTable(RaptureAtkModule.StaticVirtualTablePointer);
+        var contextMenu = targets.VirtualTable(AddonContextMenu.StaticVirtualTablePointer);
+        return DecideMenu(
+            targets,
+            targets.Slot("RaptureAtkModule.vf22", MenuFeature, atkModule, atkModule == null ? 0 : ((nint*)atkModule)[OpenAddonByAgentSlot]),
+            targets.Slot("AddonContextMenu.OnMenuSelected", MenuFeature, contextMenu, contextMenu == null ? 0 : (nint)contextMenu->OnMenuSelected));
+    }
+
+    /// <summary>
+    /// Keeps the two hooks only as a pair: items added on opening but not handled on selection make the game index
+    /// past its own event arrays.
+    /// </summary>
+    /// <param name="targets">The checks.</param>
+    /// <param name="openAddon">The checked slot 22 address, 0 if left out.</param>
+    /// <param name="menuSelected">The checked OnMenuSelected address, 0 if left out.</param>
+    /// <returns>Both addresses, or both 0.</returns>
+    internal static (nint OpenAddon, nint MenuSelected) DecideMenu(HookTargets targets, nint openAddon, nint menuSelected)
+        => targets.AllOrNone(MenuFeature, ("RaptureAtkModule.vf22", openAddon), ("AddonContextMenu.OnMenuSelected", menuSelected))
+               ? (openAddon, menuSelected)
+               : (0, 0);
 
     /// <summary>
     /// Gets the name with the given prefix.
