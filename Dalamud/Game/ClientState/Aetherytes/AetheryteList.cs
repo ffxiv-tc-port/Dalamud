@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
 
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.IoC;
@@ -22,15 +23,17 @@ namespace Dalamud.Game.ClientState.Aetherytes;
 #pragma warning restore SA1015
 internal sealed unsafe partial class AetheryteList : IServiceType, IAetheryteList
 {
+    private static int unresolvedLogged;
+
     [ServiceManager.ServiceDependency]
     private readonly ObjectTable objectTable = Service<ObjectTable>.Get();
-
-    private readonly Telepo* telepoInstance = Telepo.Instance();
 
     [ServiceManager.ServiceConstructor]
     private AetheryteList()
     {
-        Log.Verbose($"Teleport address {Util.DescribeAddress(this.telepoInstance)}");
+        // Telepo is looked up on use only: Telepo.Instance() throws when unresolved, and a throwing early-loaded
+        // service constructor takes every Dalamud service, and so every plugin, down with it.
+        Log.Verbose($"Teleport address {Util.DescribeAddress(Telepo.Addresses.Instance.Value)}");
     }
 
     /// <inheritdoc/>
@@ -38,15 +41,19 @@ internal sealed unsafe partial class AetheryteList : IServiceType, IAetheryteLis
     {
         get
         {
+            var telepo = GetTelepo();
+            if (telepo == null)
+                return 0;
+
             if (this.objectTable.LocalPlayer == null)
                 return 0;
 
-            this.Update();
+            this.Update(telepo);
 
-            if (this.telepoInstance->TeleportList.First == this.telepoInstance->TeleportList.Last)
+            if (telepo->TeleportList.First == telepo->TeleportList.Last)
                 return 0;
 
-            return this.telepoInstance->TeleportList.Count;
+            return telepo->TeleportList.Count;
         }
     }
 
@@ -63,17 +70,37 @@ internal sealed unsafe partial class AetheryteList : IServiceType, IAetheryteLis
             if (this.objectTable.LocalPlayer == null)
                 return null;
 
-            return new AetheryteEntry(this.telepoInstance->TeleportList[index]);
+            var telepo = GetTelepo();
+            if (telepo == null)
+                return null;
+
+            return new AetheryteEntry(telepo->TeleportList[index]);
         }
     }
 
-    private void Update()
+    /// <summary>
+    /// Gets the game's Telepo, or null (logged once) when this client's Telepo.Instance or
+    /// Telepo.UpdateAetheryteList could not be resolved; the list is then empty. Never throws.
+    /// </summary>
+    /// <returns>The Telepo instance, or null.</returns>
+    private static Telepo* GetTelepo()
+    {
+        if (Telepo.Addresses.Instance.Value != 0 && Telepo.MemberFunctionPointers.UpdateAetheryteList != null)
+            return Telepo.Instance();
+
+        if (Interlocked.Exchange(ref unresolvedLogged, 1) == 0)
+            Log.Warning("Telepo.Instance or Telepo.UpdateAetheryteList is not resolved on this client; the aetheryte list stays empty");
+
+        return null;
+    }
+
+    private void Update(Telepo* telepo)
     {
         // this is very very important as otherwise it crashes
         if (this.objectTable.LocalPlayer == null)
             return;
 
-        this.telepoInstance->UpdateAetheryteList();
+        telepo->UpdateAetheryteList();
     }
 }
 
