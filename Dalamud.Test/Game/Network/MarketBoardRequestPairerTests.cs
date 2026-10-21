@@ -205,7 +205,93 @@ namespace Dalamud.Test.Game.Network
 
             Assert.Empty(f.New);
             Assert.Contains(f.Lines, l => l.Contains("reason=Superseded item=none") && l.Contains("next=refused"));
-            Assert.Contains(f.Lines, l => l.Contains("reason=HistoryWithoutQuery item=5736"));
+            Assert.Contains(f.Lines, l => l.Contains("reason=StaleHistory item=5736"));
+        }
+
+        [Fact]
+        public void HistoryOfAnEndedQueryNeverEmptiesTheNextOne()
+        {
+            // B, then A without listings, then B again: B's first history comes after A's start.
+            var f = new Feed();
+            f.Start(0, 10);
+            f.Page(B, 10);
+            f.Start(0, 0);
+            f.History(B, searching: B);
+            f.Start(0, 10);
+            f.History(A, searching: B);
+            f.Page(B, 10);
+            f.History(B, searching: B);
+
+            var got = Assert.Single(f.New);
+            Assert.Equal(B, got.CatalogId);
+            Assert.Equal(10, got.Listings.Count);
+            Assert.DoesNotContain(f.New, q => q.Listings.Count == 0);
+            Assert.Contains(f.Lines, l => l.Contains("reason=StaleHistory item=5736"));
+            Assert.Contains("historiesInFlight=0", f.Pairer.BuildSummary());
+        }
+
+        [Fact]
+        public void EmptyQueryAfterACompleteOneUsesTheNextHistory()
+        {
+            // Negative control for the case above: B got its history, so nothing is in flight.
+            var f = new Feed();
+            f.Start(0, 10);
+            f.Page(B, 10);
+            f.History(B, searching: B);
+            f.Start(0, 0);
+            f.History(A, searching: A);
+
+            Assert.Equal(2, f.New.Count);
+            Assert.Equal(A, f.New[1].CatalogId);
+            Assert.Empty(f.New[1].Listings);
+            Assert.DoesNotContain(f.Lines, l => l.Contains("reason="));
+        }
+
+        [Fact]
+        public void RefusedStartOwesNoHistory()
+        {
+            // Live: 44 refusals with no query open, and no history ever arrived for one.
+            var f = new Feed();
+            f.Start(Refused, 0);
+            f.Start(0, 0);
+            f.History(A, searching: A);
+
+            var got = Assert.Single(f.New);
+            Assert.Equal(A, got.CatalogId);
+            Assert.Empty(got.Listings);
+        }
+
+        [Fact]
+        public void ALostHistoryOnlyCostsQueriesWithoutListings()
+        {
+            // B's history never comes. The next history is taken as B's: a query with listings still checks it
+            // against its pages and completes; one without listings gives it up.
+            var f = new Feed();
+            f.Start(0, 10);
+            f.Page(B, 10);
+            f.Start(0, 5);
+            f.Page(C, 5);
+            f.History(C, searching: C);
+            Assert.Equal(C, Assert.Single(f.New).CatalogId);
+
+            f.Start(0, 3);
+            f.Page(A, 3);
+            f.History(A, searching: A);
+            Assert.Equal(2, f.New.Count);
+
+            f = new Feed();
+            f.Start(0, 10);
+            f.Page(B, 10);
+            f.Start(0, 0);
+            f.History(A, searching: A);
+            f.Start(0, 3);
+            f.Page(C, 3);
+            f.History(C, searching: C);
+            f.Start(0, 0);
+            f.History(A, searching: A);
+
+            Assert.Equal(new[] { C, A }, f.New.Select(q => q.CatalogId));
+            Assert.Contains(f.Lines, l => l.Contains("reason=StaleHistory item=5731"));
         }
 
         [Fact]
@@ -250,7 +336,6 @@ namespace Dalamud.Test.Game.Network
         {
             var f = new Feed();
             f.Start(0, 0);
-            f.History(A, searching: B);
             f.History(0, searching: B);
             Assert.Empty(f.New);
 
@@ -258,6 +343,20 @@ namespace Dalamud.Test.Game.Network
             var got = Assert.Single(f.New);
             Assert.Equal(B, got.CatalogId);
             Assert.Empty(got.Listings);
+        }
+
+        [Fact]
+        public void EmptyQueryEndsOnAHistoryOfAnotherItem()
+        {
+            // Its own history named A while the client was already on B; B's history must not label it.
+            var f = new Feed();
+            f.Start(0, 0);
+            f.History(A, searching: B);
+            f.History(B, searching: B);
+
+            Assert.Empty(f.New);
+            Assert.Contains(f.Lines, l => l.Contains("reason=HistoryNotSearchedItem item=5731"));
+            Assert.Contains(f.Lines, l => l.Contains("reason=HistoryWithoutQuery item=5736"));
         }
 
         [Fact]
@@ -302,6 +401,20 @@ namespace Dalamud.Test.Game.Network
             Assert.Contains(f.LegacyPurchases, p => p.ListingId == 1);
             Assert.Equal(new ulong[] { 2 }, f.NewPurchases.Select(p => p.ListingId));
             Assert.Contains(f.Lines, l => l.Contains("reason=PurchaseMismatch"));
+            Assert.Single(f.Lines, l => l.Contains("purchase failed status=0x1CC item=5731 qty=1"));
+            Assert.Contains("failedPurchases=1", f.Pairer.BuildSummary());
+        }
+
+        [Fact]
+        public void SuccessfulPurchasesLogNoFailure()
+        {
+            var f = new Feed();
+            f.PurchaseSent(A, 1, listingId: 1);
+            f.PurchaseResult(A, 0, 1);
+
+            Assert.Single(f.NewPurchases);
+            Assert.DoesNotContain(f.Lines, l => l.Contains("purchase failed"));
+            Assert.Contains("failedPurchases=0", f.Pairer.BuildSummary());
         }
 
         [Fact]

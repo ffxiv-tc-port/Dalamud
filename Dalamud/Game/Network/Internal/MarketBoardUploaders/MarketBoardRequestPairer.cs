@@ -10,10 +10,13 @@ namespace Dalamud.Game.Network.Internal.MarketBoardUploaders;
 /// by item id instead of by arrival order; anything that does not add up is dropped, never re-paired.
 /// </summary>
 /// <remarks>
-/// Contract: never touches game memory (callers read the packets and pass the values in); callable from any
+/// <para>Contract: never touches game memory (callers read the packets and pass the values in); callable from any
 /// thread; the log delegate is always invoked outside the lock. An accepted start packet always discards an
 /// unfinished query: late packets of an older query must never complete a newer one. A refused one does not
-/// change the game's request id, so the unfinished query keeps collecting its own pages.
+/// change the game's request id, so the unfinished query keeps collecting its own pages.</para>
+/// <para>Sale histories are taken to arrive one per accepted query, in query order, and none for a refused one. A
+/// query that ends before its own history came leaves that history in flight; the next history is counted as that
+/// one's and never completes a query without listings, which has nothing else to check the item against.</para>
 /// </remarks>
 internal sealed class MarketBoardRequestPairer
 {
@@ -31,11 +34,15 @@ internal sealed class MarketBoardRequestPairer
     private readonly DropStat[] drops = new DropStat[Enum.GetValues<DropReason>().Length];
 
     private DropStat refusedKept;
+    private DropStat failedPurchases;
     private Query? pending;
     private MarketBoardPurchaseHandler? pendingPurchase;
     private long completedQueries;
     private long matchedPurchases;
     private long ignoredZeroHistory;
+
+    // Ended queries whose own sale history has not arrived yet.
+    private int historiesInFlight;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MarketBoardRequestPairer"/> class.
@@ -83,6 +90,9 @@ internal sealed class MarketBoardRequestPairer
 
         /// <summary>The purchase result names another item or quantity than the request.</summary>
         PurchaseMismatch = 10,
+
+        /// <summary>Sale history taken as that of a query that ended before it; a query without listings never gets it.</summary>
+        StaleHistory = 11,
     }
 
     /// <summary>
@@ -100,9 +110,13 @@ internal sealed class MarketBoardRequestPairer
             }
             else
             {
-                line = this.pending is { } old
-                           ? this.DropLocked(DropReason.Superseded, old.ItemForLog, old.Describe() + $" next={(request.Ok ? "accepted" : "refused")}")
-                           : null;
+                line = null;
+                if (this.pending is { } old)
+                {
+                    line = this.DropLocked(DropReason.Superseded, old.ItemForLog, old.Describe() + $" next={(request.Ok ? "accepted" : "refused")}");
+                    this.EndLocked(old);
+                }
+
                 this.pending = request.Ok ? new Query(request) : null;
             }
         }
@@ -118,42 +132,10 @@ internal sealed class MarketBoardRequestPairer
     /// <returns>The finished query, or null.</returns>
     public Completed? OnHistory(MarketBoardHistory history, uint searchedItemId)
     {
-        string line = null;
-        Completed? done = null;
+        string line;
+        Completed? done;
         lock (this.gate)
-        {
-            if (history.CatalogId == 0)
-            {
-                // The game ignores these packets too.
-                this.ignoredZeroHistory++;
-            }
-            else if (this.pending is not { } query)
-            {
-                line = this.DropLocked(DropReason.HistoryWithoutQuery, history.CatalogId, $"searching={searchedItemId}");
-            }
-            else if (history.CatalogId != searchedItemId)
-            {
-                line = this.DropLocked(DropReason.HistoryNotSearchedItem, history.CatalogId, $"searching={searchedItemId}");
-            }
-            else if (query.History is { } seen)
-            {
-                if (seen.CatalogId != history.CatalogId)
-                {
-                    line = this.DropLocked(DropReason.HistoryConflict, history.CatalogId, query.Describe());
-                    this.pending = null;
-                }
-            }
-            else if (!query.ListingsAreFor(history.CatalogId))
-            {
-                line = this.DropLocked(DropReason.ListingItemMismatch, history.CatalogId, query.Describe());
-                this.pending = null;
-            }
-            else
-            {
-                query.History = history;
-                done = this.TryCompleteLocked(query);
-            }
-        }
+            done = this.HistoryLocked(history, searchedItemId, out line);
 
         this.Write(line);
         return done;
@@ -183,7 +165,7 @@ internal sealed class MarketBoardRequestPairer
             else if (query.PagesReceived >= query.PagesExpected)
             {
                 line = this.DropLocked(DropReason.ExtraPage, query.ItemForLog, query.Describe());
-                this.pending = null;
+                this.EndLocked(query);
             }
             else
             {
@@ -192,7 +174,7 @@ internal sealed class MarketBoardRequestPairer
                 if (!query.ListingsAreFor(query.History?.CatalogId ?? 0))
                 {
                     line = this.DropLocked(DropReason.ListingItemMismatch, query.ItemForLog, query.Describe());
-                    this.pending = null;
+                    this.EndLocked(query);
                 }
                 else
                 {
@@ -241,7 +223,10 @@ internal sealed class MarketBoardRequestPairer
             }
             else if (purchase.Status != 0)
             {
-                // The purchase failed; nothing was bought, nothing to report.
+                // Nothing was bought. Logged with the code: that [+4] is a status is read from the game, not seen live.
+                line = this.LimitLocked(
+                    ref this.failedPurchases,
+                    $"purchase failed status=0x{purchase.Status:X} item={ItemText(handler.CatalogId)} qty={handler.ItemQuantity}");
             }
             else if (BaseItem(purchase.CatalogId) != handler.CatalogId || purchase.ItemQuantity != handler.ItemQuantity)
             {
@@ -279,11 +264,13 @@ internal sealed class MarketBoardRequestPairer
                     parts.Add($"{reason}:{total}");
             }
 
-            if (dropped + this.completedQueries + this.matchedPurchases + this.ignoredZeroHistory + this.refusedKept.Total == 0)
+            if (dropped + this.completedQueries + this.matchedPurchases + this.ignoredZeroHistory + this.refusedKept.Total +
+                this.failedPurchases.Total == 0)
                 return null;
 
             return $"{LogPrefix} summary completed={this.completedQueries} purchases={this.matchedPurchases} " +
-                   $"ignoredZeroHistory={this.ignoredZeroHistory} refusedKept={this.refusedKept.Total} " +
+                   $"failedPurchases={this.failedPurchases.Total} ignoredZeroHistory={this.ignoredZeroHistory} " +
+                   $"refusedKept={this.refusedKept.Total} historiesInFlight={this.historiesInFlight} " +
                    $"dropped={(parts.Count == 0 ? "none" : string.Join(",", parts))}";
         }
     }
@@ -292,14 +279,87 @@ internal sealed class MarketBoardRequestPairer
 
     private static string ItemText(uint itemId) => itemId == 0 ? "none" : itemId.ToString();
 
+    private Completed? HistoryLocked(MarketBoardHistory history, uint searchedItemId, out string line)
+    {
+        line = null;
+        if (history.CatalogId == 0)
+        {
+            // The game ignores these packets too.
+            this.ignoredZeroHistory++;
+            return null;
+        }
+
+        var stale = this.historiesInFlight > 0;
+        if (stale)
+            this.historiesInFlight--;
+
+        if (this.pending is not { } query)
+        {
+            line = this.DropLocked(stale ? DropReason.StaleHistory : DropReason.HistoryWithoutQuery, history.CatalogId, $"searching={searchedItemId}");
+            return null;
+        }
+
+        // A query with listings checks a stale history against them like any other.
+        if (stale && query.PagesExpected == 0)
+        {
+            line = this.DropLocked(DropReason.StaleHistory, history.CatalogId, $"searching={searchedItemId} {query.Describe()}");
+            return null;
+        }
+
+        query.OwnHistoryArrived |= !stale;
+        if (history.CatalogId != searchedItemId)
+        {
+            line = this.DropLocked(DropReason.HistoryNotSearchedItem, history.CatalogId, $"searching={searchedItemId}");
+
+            // Without listings this was the query's only chance to learn its item.
+            if (query.PagesExpected == 0)
+                this.EndLocked(query);
+            return null;
+        }
+
+        if (query.History is { } seen)
+        {
+            if (seen.CatalogId != history.CatalogId)
+            {
+                line = this.DropLocked(DropReason.HistoryConflict, history.CatalogId, query.Describe());
+                this.EndLocked(query);
+            }
+
+            return null;
+        }
+
+        if (!query.ListingsAreFor(history.CatalogId))
+        {
+            line = this.DropLocked(DropReason.ListingItemMismatch, history.CatalogId, query.Describe());
+            this.EndLocked(query);
+            return null;
+        }
+
+        query.History = history;
+
+        // Listings that already name its item make a stale history likely its own after all (one got lost): taking it
+        // as such keeps a single lost history from holding back every later query without listings.
+        query.OwnHistoryArrived |= query.Listings.Count > 0;
+        return this.TryCompleteLocked(query);
+    }
+
     private Completed? TryCompleteLocked(Query query)
     {
         if (query.History is not { } history || query.PagesReceived != query.PagesExpected)
             return null;
 
-        this.pending = null;
+        this.EndLocked(query);
         this.completedQueries++;
         return new Completed(query.Request, history.CatalogId, history.InternalHistoryListings, query.Listings);
+    }
+
+    // Every way a query stops being pending goes through here.
+    private void EndLocked(Query query)
+    {
+        if (ReferenceEquals(this.pending, query))
+            this.pending = null;
+        if (!query.OwnHistoryArrived)
+            this.historiesInFlight++;
     }
 
     private string DropLocked(DropReason reason, uint itemId, string detail) =>
@@ -362,6 +422,9 @@ internal sealed class MarketBoardRequestPairer
         public int PagesReceived { get; set; }
 
         public MarketBoardHistory? History { get; set; }
+
+        // A history arrived while none was in flight, even if it was not used.
+        public bool OwnHistoryArrived { get; set; }
 
         public List<MarketBoardCurrentOfferings.MarketBoardItemListing> Listings { get; } = [];
 
