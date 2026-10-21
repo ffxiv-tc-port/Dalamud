@@ -7,7 +7,9 @@ namespace Dalamud.Utility.Internal;
 /// The message shown when Dalamud's services fail to start.
 /// </summary>
 /// <remarks>
-/// Names each root cause by its first line only; the full exception goes to the log.
+/// Names each root cause by its first line only; the full exception goes to the log. The game's main thread is never
+/// released on this path: harmless when Dalamud was injected into a running game, a hang before the game window
+/// appears when it was loaded at the game's entry point. The text has to be true in both cases.
 /// </remarks>
 internal static class ServiceFailureNotice
 {
@@ -30,10 +32,11 @@ internal static class ServiceFailureNotice
                          : "\n失敗原因（完整內容在 dalamud.log）：\n" + string.Concat(causes.ConvertAll(c => $"・{c}\n"));
 
         return "台服 Dalamud 有服務載入失敗，這次不載入 Dalamud 與所有插件。\n" +
-               "遊戲照常運作，只是這次沒有插件。通常是遊戲改版、Dalamud 還沒跟上所致；請等 Dalamud 更新後重新啟動遊戲。\n" +
+               "已經開著的遊戲會照常運作，只是這次沒有插件；若關掉這個視窗後遊戲畫面一直沒有出現，請用工作管理員結束 ffxiv_dx11.exe。\n" +
+               "通常是遊戲改版、Dalamud 還沒跟上所致；請等 Dalamud 更新後重新啟動遊戲。\n" +
                listed +
                "\nDalamud failed to load all necessary services.\n" +
-               "The game will continue, but you may not be able to use plugins.";
+               "A game that is already running continues without plugins; if the game window never appears, end ffxiv_dx11.exe in Task Manager.";
     }
 
     /// <summary>

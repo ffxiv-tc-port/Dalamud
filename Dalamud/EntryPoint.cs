@@ -188,6 +188,9 @@ public sealed class EntryPoint
 
         var unloadFailed = false;
 
+        // Set when this session ends at once while the game keeps running; see the finally block.
+        string? inactiveReason = null;
+
         try
         {
             if (info.DelayInitializeMs > 0)
@@ -216,6 +219,7 @@ public sealed class EntryPoint
             if (!GameVersionGate.Check(info, StartupDialog.AskYesNoDefaultNo))
             {
                 Log.Information("This is Dalamud - Core: {GitHash}, inactive this session", Util.GetScmVersion());
+                inactiveReason = "game version not confirmed";
                 Windows.Win32.PInvoke.SetEvent(new HANDLE(mainThreadContinueEvent));
                 return;
             }
@@ -228,7 +232,10 @@ public sealed class EntryPoint
 
             // Nothing was hooked or loaded, so nothing will ever ask to unload.
             if (!dalamud.ServicesStarted)
+            {
+                inactiveReason = "core address check failed";
                 return;
+            }
 
             dalamud.WaitForUnload();
 
@@ -258,6 +265,10 @@ public sealed class EntryPoint
                     AppDomain.CurrentDomain.UnhandledException -= OnUnhandledExceptionStallDebug;
                     break;
             }
+
+            // A session census reads "Session has ended." as the game closing; here the game goes on, unlogged.
+            if (inactiveReason != null)
+                Log.Information("Session inactive ({Reason:l}): no services or plugins ran; the game keeps running and nothing more is logged", inactiveReason);
 
             Log.Information("Session has ended.");
             Log.CloseAndFlush();

@@ -166,6 +166,11 @@ namespace Dalamud.Test.Utility
             Assert.Contains("・InvalidOperationException: boom\n", text);
             Assert.Contains("Dalamud failed to load all necessary services.", text);
             Assert.DoesNotContain("失敗原因", ServiceFailureNotice.Format(null));
+
+            // The main thread is not released here, so "the game continues" alone is false for an entry-point load.
+            Assert.Contains("已經開著的遊戲會照常運作", text);
+            Assert.Contains("ffxiv_dx11.exe", text);
+            Assert.DoesNotContain("The game will continue", text);
         }
     }
 }
