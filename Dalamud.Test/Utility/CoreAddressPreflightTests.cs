@@ -13,6 +13,7 @@ using Xunit;
 
 using CSFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework;
 using Preflight = Dalamud.Utility.Internal.CoreAddressPreflight;
+using Utf8String = FFXIVClientStructs.FFXIV.Client.System.String.Utf8String;
 
 namespace Dalamud.Test.Utility
 {
@@ -38,9 +39,19 @@ namespace Dalamud.Test.Utility
                 {
                     "Framework.VirtualTable", "Framework.Tick", "Framework.Destroy", "Conditions.Instance",
                     "GameObjectManager.Instance", "ClientState.HandleZoneInitPacket", "Framework.Instance",
-                    "Framework.GetNetworkModuleProxy", "Device.Instance",
+                    "Framework.GetNetworkModuleProxy", "Device.Instance", "Utf8String.Ctor_FromSequence",
                 },
                 missing);
+        }
+
+        [Fact]
+        public void TheStringHookTargetIsCheckedWhereGameGuiChecksIt()
+        {
+            // GameGui accepts it only inside .text; the preflight must not be looser.
+            var entry = Assert.Single(Preflight.Gather(Layout, _ => 0), a => a.Name == "Utf8String.Ctor_FromSequence");
+            Assert.Equal(Preflight.Section.Text, entry.Expected);
+            Assert.Equal(Utf8String.Addresses.Ctor_FromSequence.Value, entry.Value);
+            Assert.Contains("・Utf8String.Ctor_FromSequence（建立遊戲字串）\n", Preflight.FormatDialog("x", [entry]));
         }
 
         [Fact]

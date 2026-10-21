@@ -61,6 +61,7 @@ internal sealed unsafe class GameGui : IInternalDisposableService, IGameGui
         Log.Verbose($"HandleImm address {Util.DescribeAddress(this.address.HandleImm)}");
 
         // Required, unlike the hooks below: whatever builds a game string from a null source would crash without it.
+        // CoreAddressPreflight checks it before any service starts; this stays for when that check could not run.
         var targets = HookTargets.For(nameof(GameGui), sigScanner);
         var utf8StringFromSequence = Utf8String.Addresses.Ctor_FromSequence.Value;
         if (!targets.InCode(utf8StringFromSequence, 1))

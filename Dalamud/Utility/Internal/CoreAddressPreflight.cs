@@ -11,6 +11,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Kernel;
 
 using CSFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework;
+using Utf8String = FFXIVClientStructs.FFXIV.Client.System.String.Utf8String;
 
 namespace Dalamud.Utility.Internal;
 
@@ -20,8 +21,9 @@ namespace Dalamud.Utility.Internal;
 /// <remarks>
 /// These stay fail-stop: Tick and Destroy run and tear down everything, an empty Condition or ObjectTable or a stale
 /// territory would let automation act on wrong state, and without Framework.Instance, GetNetworkModuleProxy or
-/// Device.Instance the interface never starts and plugins wait forever. Only resolution and the section each address
-/// must lie in are checked, never what the instances point to: in entrypoint mode they do not exist yet.
+/// Device.Instance the interface never starts and plugins wait forever; GameGui does not start without its
+/// Utf8String.Ctor_FromSequence hook. Only resolution and the section each address must lie in are checked, never
+/// what the instances point to: in entrypoint mode they do not exist yet.
 /// </remarks>
 internal static class CoreAddressPreflight
 {
@@ -115,6 +117,7 @@ internal static class CoreAddressPreflight
             new("Framework.Instance", "遊戲主物件", CSFramework.Addresses.Instance.Value, Section.Data),
             new("Framework.GetNetworkModuleProxy", "Dalamud 介面的啟動時機", CSFramework.Addresses.GetNetworkModuleProxy.Value, Section.Text),
             new("Device.Instance", "繪圖裝置（Dalamud 介面）", Device.Addresses.Instance.Value, Section.Data),
+            new("Utf8String.Ctor_FromSequence", "建立遊戲字串", Utf8String.Addresses.Ctor_FromSequence.Value, Section.Text),
         ];
     }
 
