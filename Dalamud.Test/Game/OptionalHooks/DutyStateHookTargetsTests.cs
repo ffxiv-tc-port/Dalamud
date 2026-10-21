@@ -25,6 +25,22 @@ namespace Dalamud.Test.Game.OptionalHooks
         }
 
         [Fact]
+        public void TheNoticeSaysWhatIsDutyStartedFollowsWithoutTheHook()
+        {
+            var resolver = new DutyStateAddressResolver();
+            resolver.Setup(new Kit.FakeScanner(new Dictionary<string, nint>()));
+            var targets = Kit.Synthetic("DutyState");
+            DutyState.FindHookTarget(targets, resolver);
+
+            var line = targets.FormatChatLine(DutyState.DisabledChatTail);
+
+            Assert.NotNull(line);
+            Assert.Contains("副本開始、全滅、完成事件", line);
+            Assert.EndsWith(DutyState.DisabledChatTail, line);
+            Assert.Contains("副本完成後到離開副本前仍算進行中", line);
+        }
+
+        [Fact]
         public void TheConstructorGoesThroughHookTargets()
             => Kit.AssertConstructorUsesHookTargets(typeof(DutyState), nameof(DutyState.FindHookTarget));
     }

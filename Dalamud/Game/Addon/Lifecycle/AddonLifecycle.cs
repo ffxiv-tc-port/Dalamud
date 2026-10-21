@@ -59,20 +59,13 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
         foreach (var name in this.address.NotFound)
             Log.Error("The {Name} signature does not match this game version; not hooking it until Dalamud is updated", name);
 
-        var disabled = new List<string>();
-
         // ClientStructs leaves a vtable pointer null when its own signature does not match.
         var unitBaseVtable = AtkUnitBase.StaticVirtualTablePointer;
         this.receiveEventHooksAllowed = unitBaseVtable != null;
         if (unitBaseVtable != null)
-        {
             this.disallowedReceiveEventAddress = (nint)unitBaseVtable->ReceiveEvent;
-        }
         else
-        {
             Log.Error("ClientStructs has no AtkUnitBase vtable in this game version; not hooking any addon's ReceiveEvent");
-            disabled.Add("操作");
-        }
 
         var unitManagerVtable = RaptureAtkUnitManager.StaticVirtualTablePointer;
         var refreshAddonAddress = unitManagerVtable != null ? (nint)unitManagerVtable->RefreshAddon : 0;
@@ -100,7 +93,7 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
         if (hooks != usable)
             Log.Error("Not hooking any addon event: without Finalize, listeners would never learn that an addon went away");
 
-        disabled.InsertRange(0, hooks.MissingChatNames());
+        var disabled = hooks.DisabledChatNames(this.receiveEventHooksAllowed).ToList();
 
         this.onAddonSetupHook = hooks.Setup ? new AddonSetupHook<AtkUnitBase.Delegates.OnSetup>(this.address.AddonSetup, this.OnAddonSetup) : null;
         this.onAddonFinalizeHook = hooks.Finalize ? Hook<AddonFinalizeDelegate>.FromAddress(this.address.AddonFinalize, this.OnAddonFinalize) : null;

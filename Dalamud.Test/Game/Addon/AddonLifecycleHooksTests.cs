@@ -66,6 +66,20 @@ namespace Dalamud.Test.Game.Addon
         }
 
         [Fact]
+        public void ReceiveEventIsListedWheneverItCannotBeHooked()
+        {
+            // ReceiveEvent hooks are made in the OnSetup detour, so without Setup they never exist.
+            Assert.Empty(All.DisabledChatNames(unitBaseVtableFound: true));
+            Assert.Equal(["操作"], All.DisabledChatNames(unitBaseVtableFound: false));
+            Assert.Equal(["開啟", "操作"], Without("Setup").DisabledChatNames(unitBaseVtableFound: true));
+            Assert.Equal(["開啟", "操作"], Without("Setup").DisabledChatNames(unitBaseVtableFound: false));
+            Assert.Equal(["繪製"], Without("Draw").DisabledChatNames(unitBaseVtableFound: true));
+            Assert.Equal(
+                ["開啟", "關閉", "繪製", "更新", "重新整理", "資料更新", "操作"],
+                AddonLifecycleHooks.Decide(Without("Finalize")).DisabledChatNames(unitBaseVtableFound: true));
+        }
+
+        [Fact]
         public void AllSignaturesFoundOnTc725()
         {
             var resolver = new AddonLifecycleAddressResolver();

@@ -16,6 +16,10 @@ namespace Dalamud.Game.DutyState;
 [ServiceManager.EarlyLoadedService]
 internal unsafe class DutyState : IInternalDisposableService, IDutyState
 {
+    /// <summary>The closing sentence of the notice when the duty event hook is left out.</summary>
+    internal const string DisabledChatTail =
+        "插件讀到的「副本進行中」改由戰鬥狀態推斷：在副本內進入戰鬥就算開始，副本完成後到離開副本前仍算進行中。詳情請輸入 /xllog 查看。";
+
     // Checked every frame; passing these instead of params lists keeps the per-frame call allocation-free.
     private static readonly ConditionFlag[] BoundByDutyFlags =
         [ConditionFlag.BoundByDuty, ConditionFlag.BoundByDuty56, ConditionFlag.BoundByDuty95];
@@ -24,7 +28,8 @@ internal unsafe class DutyState : IInternalDisposableService, IDutyState
 
     private readonly DutyStateAddressResolver address;
 
-    // Null when the address is missing or misplaced: the duty events then never fire, IsDutyStarted only follows combat.
+    // Null when the address is missing or misplaced: the duty events then never fire, and IsDutyStarted only follows
+    // combat, so it stays true after the duty is completed until the duty is left.
     private readonly Hook<SetupContentDirectNetworkMessageDelegate>? contentDirectorNetworkMessageHook;
 
     [ServiceManager.ServiceDependency]
@@ -47,7 +52,7 @@ internal unsafe class DutyState : IInternalDisposableService, IDutyState
         this.contentDirectorNetworkMessageHook = contentDirectorNetworkMessage != 0
                                                      ? Hook<SetupContentDirectNetworkMessageDelegate>.FromAddress(contentDirectorNetworkMessage, this.ContentDirectorNetworkMessageDetour)
                                                      : null;
-        targets.ReportDisabled();
+        targets.ReportDisabled(DisabledChatTail);
 
         this.framework.Update += this.FrameworkOnUpdateEvent;
         this.clientState.TerritoryChanged += this.TerritoryOnChangedEvent;

@@ -43,4 +43,17 @@ internal readonly record struct AddonLifecycleHooks(bool Setup, bool Finalize, b
         if (!this.RequestedUpdate)
             yield return "資料更新";
     }
+
+    /// <summary>
+    /// Gets the chat names of every event plugins will not get, ReceiveEvent's included.
+    /// </summary>
+    /// <param name="unitBaseVtableFound">Whether ClientStructs has the AtkUnitBase vtable.</param>
+    /// <returns><see cref="MissingChatNames"/>, then 操作 when ReceiveEvent is not hooked: its hooks are made only in the OnSetup detour.</returns>
+    internal IEnumerable<string> DisabledChatNames(bool unitBaseVtableFound)
+    {
+        foreach (var name in this.MissingChatNames())
+            yield return name;
+        if (!unitBaseVtableFound || !this.Setup)
+            yield return "操作";
+    }
 }
