@@ -34,7 +34,12 @@ internal sealed partial class TextureManager
       ITextureSubstitutionProvider,
       ITextureReadbackProvider
 {
+    // Raw data shorter than its specification is copied into a zero-filled buffer up to this size; beyond it, the call throws.
+    private const long MaxPaddedUploadBytes = 64L << 20;
+
     private static readonly ModuleLog Log = new(nameof(TextureManager));
+
+    private static int shortUploadWarnings;
 
     [ServiceManager.ServiceDependency]
     private readonly Dalamud dalamud = Service<Dalamud>.Get();
@@ -303,11 +308,47 @@ internal sealed partial class TextureManager
         return (supported & required) == required;
     }
 
+    /// <summary>Makes sure creating a texture from <paramref name="bytes"/> reads only inside them.</summary>
+    /// <remarks>
+    /// D3D11 reads the rows straight from this memory, and a read past the end is an access violation nothing can catch.
+    /// Data shorter than <see cref="RawImageSpecification.UploadBytes"/> is copied into a zero-filled buffer of that size
+    /// (up to <see cref="MaxPaddedUploadBytes"/>); a specification that cannot be checked throws instead.
+    /// </remarks>
+    /// <param name="specs">The specification the texture is created with.</param>
+    /// <param name="bytes">The data.</param>
+    /// <returns><paramref name="bytes"/>, or a padded copy.</returns>
+    /// <exception cref="ArgumentException">The specification cannot be checked, or the data is far too short.</exception>
+    internal static ReadOnlySpan<byte> EnsureUploadLength(RawImageSpecification specs, ReadOnlySpan<byte> bytes)
+    {
+        var required = specs.UploadBytes;
+        if (required < 0)
+        {
+            throw new ArgumentException(
+                $"{specs} cannot be checked against the data: width and height must be positive, the pitch not negative, and the format one Dalamud knows.",
+                nameof(specs));
+        }
+
+        if (bytes.Length >= required)
+            return bytes;
+
+        if (required > MaxPaddedUploadBytes)
+            throw new ArgumentException($"{specs} needs {required:n0} bytes of data, but {bytes.Length:n0} were given.", nameof(bytes));
+
+        if (Interlocked.Increment(ref shortUploadWarnings) <= 5)
+            Log.Warning("{Specs} needs {Required:n0} bytes of data, but {Given:n0} were given; the rest is filled with zeros", specs, required, bytes.Length);
+
+        var padded = new byte[required];
+        bytes.CopyTo(padded);
+        return padded;
+    }
+
     /// <inheritdoc cref="ITextureProvider.CreateFromRaw"/>
     internal unsafe IDalamudTextureWrap NoThrottleCreateFromRaw(
         RawImageSpecification specs,
         ReadOnlySpan<byte> bytes)
     {
+        bytes = EnsureUploadLength(specs, bytes);
+
         var texd = new D3D11_TEXTURE2D_DESC
         {
             Width = (uint)specs.Width,

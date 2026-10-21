@@ -87,6 +87,38 @@ public record struct RawImageSpecification
                   : (((((bitsPerPixel * this.Width) + 7) / 8) + 63) / 64) * 64 * this.Height
             : -1;
 
+    /// <summary>Gets how many bytes of source data creating a single-level texture from this specification may read.</summary>
+    /// <remarks>
+    /// Every row (of blocks, if block compressed) starts <see cref="Pitch"/> bytes after the previous one, and the last
+    /// row is counted as a whole pitch when that is longer than the row. <c>-1</c> if the width or height is not positive,
+    /// the pitch is negative, or the format is not known.
+    /// </remarks>
+    internal long UploadBytes
+    {
+        get
+        {
+            if (this.Width <= 0 || this.Height <= 0 || this.Pitch < 0 ||
+                !GetFormatInfo(this.Format, out var bitsPerPixel, out var isBlockCompression))
+            {
+                return -1;
+            }
+
+            long rows, rowBytes;
+            if (isBlockCompression)
+            {
+                rows = (this.Height + 3L) / 4;
+                rowBytes = ((this.Width + 3L) / 4) * 2 * bitsPerPixel;
+            }
+            else
+            {
+                rows = this.Height;
+                rowBytes = (((long)this.Width * bitsPerPixel) + 7) / 8;
+            }
+
+            return ((rows - 1) * this.Pitch) + Math.Max(this.Pitch, rowBytes);
+        }
+    }
+
     /// <summary>
     /// Creates a new instance of <see cref="RawImageSpecification"/> record using the given resolution,
     /// in B8G8R8A8(BGRA32) UNorm pixel format.
