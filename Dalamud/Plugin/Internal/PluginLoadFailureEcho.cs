@@ -41,8 +41,17 @@ internal sealed class PluginLoadFailureEcho
     private int pendingCount;
     private int subscribed;
 
+    // 1 while a queued entry may still need its notification; set by Enqueue, cleared by Pump.
+    private int notifyDue;
+
     // Pump thread only.
     private DateTime? loggedInSince;
+
+    // Framework thread only: the services the cached delivery callbacks use, set before each Pump.
+    private ChatGui? chatGui;
+    private NotificationManager? notifications;
+    private Action<string>? printChat;
+    private Func<string, string, bool>? notify;
 
     /// <summary>Gets the process-wide instance used by <see cref="LocalPlugin"/>.</summary>
     internal static PluginLoadFailureEcho Instance { get; } = new();
@@ -115,6 +124,7 @@ internal sealed class PluginLoadFailureEcho
 
             this.pending.Add(entry);
             Volatile.Write(ref this.pendingCount, this.pending.Count);
+            Volatile.Write(ref this.notifyDue, 1);
         }
 
         return true;
@@ -141,29 +151,37 @@ internal sealed class PluginLoadFailureEcho
 
         var chatReady = this.loggedInSince is { } since && now - since >= ChatDelayAfterLogin;
 
+        // Cleared before the snapshot, so an entry queued after it sets the flag again for the next call.
+        if (Interlocked.Exchange(ref this.notifyDue, 0) == 0 && !chatReady)
+            return 0;
+
         Entry[] snapshot;
         lock (this.gate)
             snapshot = this.pending.ToArray();
 
-        var printed = new List<Entry>();
+        List<Entry>? printed = null;
         try
         {
             foreach (var entry in snapshot)
             {
                 if (!entry.Notified)
+                {
                     entry.Notified = notify(entry.PluginName, entry.Detail);
+                    if (!entry.Notified)
+                        Volatile.Write(ref this.notifyDue, 1);
+                }
 
                 if (!chatReady)
                     continue;
 
                 // Removed even if printing throws, so one bad line cannot repeat every frame.
-                printed.Add(entry);
+                (printed ??= []).Add(entry);
                 printChat(FormatChat(entry.PluginName, entry.Detail));
             }
         }
         finally
         {
-            if (printed.Count > 0)
+            if (printed != null)
             {
                 lock (this.gate)
                 {
@@ -177,7 +195,7 @@ internal sealed class PluginLoadFailureEcho
             }
         }
 
-        return printed.Count;
+        return printed?.Count ?? 0;
     }
 
     private static Exception Unwrap(Exception exception)
@@ -224,38 +242,44 @@ internal sealed class PluginLoadFailureEcho
         try
         {
             var clientState = Service<ClientStateService>.GetNullable(Service<ClientStateService>.ExceptionPropagationMode.None);
-            var chatGui = Service<ChatGui>.GetNullable(Service<ChatGui>.ExceptionPropagationMode.None);
-            var notifications = Service<NotificationManager>.GetNullable(Service<NotificationManager>.ExceptionPropagationMode.None);
+            this.chatGui = Service<ChatGui>.GetNullable(Service<ChatGui>.ExceptionPropagationMode.None);
+            this.notifications = Service<NotificationManager>.GetNullable(Service<NotificationManager>.ExceptionPropagationMode.None);
 
             this.Pump(
                 framework.IsFrameworkUnloading,
-                chatGui != null && clientState is { IsLoggedIn: true },
+                this.chatGui != null && clientState is { IsLoggedIn: true },
                 DateTime.UtcNow,
-                line =>
-                {
-                    chatGui!.PrintError(line);
-                    Log.Information("Load failure notice printed to chat: {Line}", line);
-                },
-                (pluginName, detail) =>
-                {
-                    if (notifications == null)
-                        return false;
-
-                    notifications.AddNotification(new Notification
-                    {
-                        Title = "插件載入失敗",
-                        Content = $"「{pluginName}」：{detail}\n詳情請輸入 /xllog 查看。",
-                        MinimizedText = $"插件「{pluginName}」載入失敗",
-                        Type = NotificationType.Error,
-                        InitialDuration = TimeSpan.FromSeconds(15),
-                    });
-                    return true;
-                });
+                this.printChat ??= this.PrintChat,
+                this.notify ??= this.Notify);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Could not deliver plugin load failure notices");
         }
+    }
+
+    private void PrintChat(string line)
+    {
+        // Only called when Pump was told the player is logged in, which needs chat.
+        var chat = this.chatGui ?? throw new InvalidOperationException("Chat is not available.");
+        chat.PrintError(line);
+        Log.Information("Load failure notice printed to chat: {Line}", line);
+    }
+
+    private bool Notify(string pluginName, string detail)
+    {
+        if (this.notifications == null)
+            return false;
+
+        this.notifications.AddNotification(new Notification
+        {
+            Title = "插件載入失敗",
+            Content = $"「{pluginName}」：{detail}\n詳情請輸入 /xllog 查看。",
+            MinimizedText = $"插件「{pluginName}」載入失敗",
+            Type = NotificationType.Error,
+            InitialDuration = TimeSpan.FromSeconds(15),
+        });
+        return true;
     }
 
     private sealed class Entry(string pluginName, string detail)

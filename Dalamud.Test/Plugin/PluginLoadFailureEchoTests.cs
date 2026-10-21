@@ -136,6 +136,44 @@ namespace Dalamud.Test.Plugin
             Assert.Equal(0, this.Pump(loggedIn: true, T0.AddSeconds(7)));
         }
 
+        [Fact]
+        public void WaitingForChatAfterNotifyingAllocatesNothing()
+        {
+            this.echo.Enqueue("A", "A", "1", new Exception("a"));
+            Action<string> print = this.chat.Add;
+            Func<string, string, bool> notify = (_, _) => true;
+
+            for (var i = 0; i < 200; i++)
+                this.echo.Pump(false, i % 3 != 0, T0.AddSeconds(i % 4), print, notify);
+
+            var before = AllocatedBytes.Start();
+            for (var i = 0; i < 2000; i++)
+                this.echo.Pump(false, i % 3 != 0, T0.AddSeconds(i % 4), print, notify);
+            var allocated = AllocatedBytes.Since(before);
+
+            Assert.Empty(this.chat);
+            Assert.Equal(0, allocated);
+
+            // Control: a pump that does deliver allocates, so the zero above is not a blind measurement.
+            this.echo.Pump(false, true, T0, print, notify);
+            before = AllocatedBytes.Start();
+            Assert.Equal(1, this.echo.Pump(false, true, T0.AddSeconds(10), print, notify));
+            Assert.True(AllocatedBytes.Since(before) > 0);
+        }
+
+        [Fact]
+        public void AnEntryQueuedWhileWaitingIsStillNotified()
+        {
+            this.echo.Enqueue("A", "A", "1", new Exception("a"));
+            Assert.Equal(0, this.Pump(loggedIn: false, T0));
+            Assert.Equal(0, this.Pump(loggedIn: false, T0.AddSeconds(1)));
+
+            this.echo.Enqueue("B", "B", "1", new Exception("b"));
+            Assert.Equal(0, this.Pump(loggedIn: false, T0.AddSeconds(2)));
+
+            Assert.Equal(new[] { "A", "B" }, this.notified);
+        }
+
         private int Pump(bool loggedIn, DateTime now, bool unloading = false)
             => this.echo.Pump(unloading, loggedIn, now, this.chat.Add, (name, detail) =>
             {
