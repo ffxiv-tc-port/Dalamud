@@ -56,15 +56,40 @@ internal static class DalamudLinkStripper
     /// has <see cref="DalamudLinkType"/> as well but is never one of Dalamud's links.
     /// </summary>
     /// <remarks>
-    /// Only the type followed by exactly three plain numbers and at most one string expression without any '[' byte.
-    /// No Dalamud link of any version fits, registered or not: the current form ends in a JSON array, the legacy form
-    /// has a string right after the type. Anything else, malformed input included, is false. Never throws.
+    /// Two independent conditions. Shape: the type, exactly three plain numbers, then nothing or one string
+    /// expression without any '[' byte; no Dalamud link of any version fits, registered or not, since the current
+    /// form ends in a JSON array that DalamudLinkPayload writes with its own settings and the legacy form has a string
+    /// right after the type. Decoding: Dalamud's own decoder must read it as a Dalamud link that names no plugin.
+    /// Anything else, malformed input included, is false. Never throws.
     /// </remarks>
     /// <param name="data">The bytes the clicked link starts at.</param>
     /// <returns>Whether the click belongs to the game.</returns>
-    internal static bool IsGameEventTutorialLink(ReadOnlySpan<byte> data)
+    internal static bool IsGameEventTutorialLink(ReadOnlySpan<byte> data) => IsGameEventTutorialLink(data, DecodedPluginName);
+
+    /// <summary>
+    /// <see cref="IsGameEventTutorialLink(ReadOnlySpan{byte})"/> with the decoding condition supplied.
+    /// </summary>
+    /// <param name="data">The bytes the clicked link starts at.</param>
+    /// <param name="pluginOf">The plugin Dalamud's decoder reads from a link; only <see cref="string.Empty"/> lets it be the game's.</param>
+    /// <returns>Whether the click belongs to the game.</returns>
+    internal static bool IsGameEventTutorialLink(ReadOnlySpan<byte> data, Func<byte[], string?> pluginOf)
     {
-        if (!TryReadMacro(data, out var code, out var body, out _) ||
+        if (!HasGameEventTutorialShape(data, out var length))
+            return false;
+
+        try
+        {
+            return pluginOf(data[..length].ToArray()) is { Length: 0 };
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static bool HasGameEventTutorialShape(ReadOnlySpan<byte> data, out int length)
+    {
+        if (!TryReadMacro(data, out var code, out var body, out length) ||
             code != MacroCode.Link ||
             !SeExpressionUtilities.TryDecodeUInt(body, out var type, out var used) ||
             type != DalamudLinkType)
@@ -80,11 +105,20 @@ internal static class DalamudLinkStripper
         }
 
         body = body[used..];
-        return body.IsEmpty ||
-               (SeExpressionUtilities.TryDecodeString(body, out var text, out used) &&
-                used == body.Length &&
-                !text.Data.Contains((byte)'['));
+        if (body.IsEmpty)
+            return true;
+
+        // The string's length is checked here: Lumina's TryDecodeString sums it as int and can overflow.
+        return body[0] == 0xFF &&
+               SeExpressionUtilities.TryDecodeInt(body[1..], out var textLength, out var lengthLength) &&
+               textLength == body.Length - 1 - lengthLength &&
+               !body[(1 + lengthLength)..].Contains((byte)'[');
     }
+
+    private static string? DecodedPluginName(byte[] link)
+        => Text.SeStringHandling.SeString.Parse(link).Payloads is [Text.SeStringHandling.Payloads.DalamudLinkPayload decoded, ..]
+               ? decoded.Plugin
+               : null;
 
     private static byte[]? StripOnce(ReadOnlySpan<byte> data)
     {

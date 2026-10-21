@@ -1,9 +1,12 @@
+using System.Globalization;
 using System.IO;
+using System.Text;
 
 using Lumina.Text.Payloads;
 using Lumina.Text.ReadOnly;
 
 using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
 
 namespace Dalamud.Game.Text.SeStringHandling.Payloads;
 
@@ -12,6 +15,15 @@ namespace Dalamud.Game.Text.SeStringHandling.Payloads;
 /// </summary>
 public class DalamudLinkPayload : Payload
 {
+    // Not JsonConvert: it applies JsonConvert.DefaultSettings, which any plugin can set for the whole process. These
+    // are Newtonsoft's defaults, so the bytes stay the same, but the plugin name is always a JSON array: its '[' is
+    // what keeps a Dalamud link from being taken for the game's EventTutorial link (see DalamudLinkStripper).
+    private static readonly JsonSerializerSettings ExtraDataJson = new()
+    {
+        ContractResolver = new DefaultContractResolver(),
+        CheckAdditionalContent = true,
+    };
+
     /// <inheritdoc/>
     public override PayloadType Type => PayloadType.DalamudLink;
 
@@ -44,7 +56,7 @@ public class DalamudLinkPayload : Payload
                      .AppendIntExpression(this.Extra1)
                      .AppendIntExpression(this.Extra2)
                      .BeginStringExpression()
-                     .Append(JsonConvert.SerializeObject(new[] { this.Plugin, this.ExtraString }))
+                     .Append(SerializeExtraData(this.Plugin, this.ExtraString))
                      .EndExpression()
                      .EndMacro()
                      .ToArray();
@@ -92,15 +104,19 @@ public class DalamudLinkPayload : Payload
             if (!compositeExpression.TryGetString(out var compositeString))
                 return;
 
-            string[] extraData;
+            string[]? extraData;
             try
             {
-                extraData = JsonConvert.DeserializeObject<string[]>(compositeString.ExtractText());
+                extraData = DeserializeExtraData(compositeString.ExtractText());
             }
             catch
             {
                 return;
             }
+
+            // JSON null or an array too short is not a Dalamud link either; reading it used to throw.
+            if (extraData is not { Length: >= 2 })
+                return;
 
             this.CommandId = commandId;
             this.Extra1 = extra1;
@@ -108,5 +124,21 @@ public class DalamudLinkPayload : Payload
             this.Plugin = extraData[0];
             this.ExtraString = extraData[1];
         }
+    }
+
+    // Same writer and reader JsonConvert.SerializeObject / DeserializeObject use.
+    private static string SerializeExtraData(string plugin, string extraString)
+    {
+        var text = new StringWriter(new StringBuilder(256), CultureInfo.InvariantCulture);
+        using (var writer = new JsonTextWriter(text))
+            JsonSerializer.Create(ExtraDataJson).Serialize(writer, new[] { plugin, extraString });
+
+        return text.ToString();
+    }
+
+    private static string[]? DeserializeExtraData(string json)
+    {
+        using var reader = new JsonTextReader(new StringReader(json));
+        return JsonSerializer.Create(ExtraDataJson).Deserialize<string[]>(reader);
     }
 }

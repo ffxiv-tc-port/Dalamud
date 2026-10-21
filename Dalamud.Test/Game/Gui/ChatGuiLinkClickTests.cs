@@ -64,6 +64,56 @@ namespace Dalamud.Test.Game.Gui
             var link = Assert.IsType<DalamudLinkPayload>(SeString.Parse(Companion).Payloads[0]);
             Assert.Equal(string.Empty, link.Plugin);
             Assert.Equal(0u, link.CommandId);
+
+            // Display strings that are JSON null or empty used to make Dalamud's decoder throw.
+            foreach (var text in new[] { string.Empty, "null", "[]", "[\"x\"]" })
+            {
+                var decoded = Assert.IsType<DalamudLinkPayload>(SeString.Parse(Tutorial(5, text)).Payloads[0]);
+                Assert.Equal(string.Empty, decoded.Plugin);
+            }
+
+            Assert.True(DalamudLinkStripper.IsGameEventTutorialLink(Tutorial(5, string.Empty)));
+            Assert.True(DalamudLinkStripper.IsGameEventTutorialLink(Tutorial(5, "null")));
+        }
+
+        [Fact]
+        public void BothConditionsMustHold()
+        {
+            Assert.True(DalamudLinkStripper.IsGameEventTutorialLink(Companion, _ => string.Empty));
+
+            // Whatever Dalamud's decoder reads a plugin from stays Dalamud's, even in the game's shape.
+            Assert.False(DalamudLinkStripper.IsGameEventTutorialLink(Companion, _ => "TestPlugin"));
+            Assert.False(DalamudLinkStripper.IsGameEventTutorialLink(Companion, _ => null));
+            Assert.False(DalamudLinkStripper.IsGameEventTutorialLink(Companion, _ => throw new InvalidOperationException()));
+
+            // The decoder sees exactly the link, not what follows it.
+            var seen = new List<byte[]>();
+            DalamudLinkStripper.IsGameEventTutorialLink(Cat(Companion, Text("同行"), Terminator), b => { seen.Add(b); return string.Empty; });
+            Assert.Equal(Companion, Assert.Single(seen));
+
+            // The shape is checked first: a Dalamud link never reaches the decoder.
+            seen.Clear();
+            Assert.False(DalamudLinkStripper.IsGameEventTutorialLink(new DalamudLinkPayload { Plugin = "TestPlugin", CommandId = 1 }.Encode(), b => { seen.Add(b); return string.Empty; }));
+            Assert.Empty(seen);
+        }
+
+        [Fact]
+        public void AnOverflowingStringLengthIsNotTheGamesAndNeverThrows()
+        {
+            // Length 0x7FFFFFFF: Lumina's TryDecodeString overflows on it and throws from Slice.
+            byte[][] inputs =
+            [
+                Convert.FromHexString("02270B0F010101FFFE7FFFFFFF03"),
+                Convert.FromHexString("02270B0F010101FFFE7FFFFFFA03"),
+                Convert.FromHexString("02270B0F010101FFFEFFFFFFF603"),
+                Link(0x0F, 0x01, 0x01, 0x01, 0xFF, 0x10),
+            ];
+
+            foreach (var data in inputs)
+            {
+                Assert.False(DalamudLinkStripper.IsGameEventTutorialLink(data), Convert.ToHexString(data));
+                Assert.False(DalamudLinkStripper.IsGameEventTutorialLink(data, _ => string.Empty), Convert.ToHexString(data));
+            }
         }
 
         [Fact]
@@ -145,10 +195,14 @@ namespace Dalamud.Test.Game.Gui
             foreach (var data in notTheGames)
                 Assert.False(DalamudLinkStripper.IsGameEventTutorialLink(data), Convert.ToHexString(data));
 
-            // Any encoding of the numbers is fine; only the type has to be the Dalamud link type.
-            Assert.True(DalamudLinkStripper.IsGameEventTutorialLink(Link(0xF0, 0x0E, 0xF0, 0x05, 0x01, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF)));
+            // Any encoding of the numbers fits the shape. Dalamud's decoder only knows the one-byte type, so with a
+            // longer one it reads no Dalamud link at all and the click stays where it always went.
+            var longType = Link(0xF0, 0x0E, 0xF0, 0x05, 0x01, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF);
+            Assert.True(DalamudLinkStripper.IsGameEventTutorialLink(longType, _ => string.Empty));
+            Assert.False(DalamudLinkStripper.IsGameEventTutorialLink(longType));
         }
 
+        // The shape alone, without the decoding condition, already never passes anything Dalamud could dispatch.
         [Fact]
         public void WhateverIsTheGamesDalamudCannotDispatch()
         {
@@ -161,7 +215,7 @@ namespace Dalamud.Test.Game.Gui
                 for (var flips = random.Next(1, 4); flips > 0; flips--)
                     data[random.Next(data.Length)] = (byte)random.Next(256);
 
-                if (!DalamudLinkStripper.IsGameEventTutorialLink(data))
+                if (!DalamudLinkStripper.IsGameEventTutorialLink(data, _ => string.Empty))
                     continue;
 
                 DalamudLinkPayload? decoded = null;
