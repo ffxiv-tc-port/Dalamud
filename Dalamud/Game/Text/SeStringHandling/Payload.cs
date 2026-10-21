@@ -205,10 +205,14 @@ public abstract partial class Payload
         }
 
         payload ??= new RawPayload((byte)chunkType);
-        payload.DecodeImpl(reader, reader.BaseStream.Position + chunkLen);
+
+        // chunkLen is untrusted data and handlers size buffers by endOfStream, so both ends are capped at the
+        // stream length. Reads past the end were already cut short there, so well-formed input is unaffected.
+        var streamLength = reader.BaseStream.Length;
+        payload.DecodeImpl(reader, Math.Min(reader.BaseStream.Position + chunkLen, streamLength));
 
         // skip to the end of the payload, in case the specific payload handler didn't read everything
-        reader.BaseStream.Seek(expressionsStart + chunkLen + 1, SeekOrigin.Begin); // +1 for the END_BYTE marker
+        reader.BaseStream.Seek(Math.Min(expressionsStart + chunkLen + 1, streamLength), SeekOrigin.Begin); // +1 for the END_BYTE marker
 
         return payload;
     }

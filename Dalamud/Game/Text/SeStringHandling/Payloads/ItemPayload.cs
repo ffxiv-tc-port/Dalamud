@@ -214,7 +214,10 @@ public class ItemPayload : Payload
             reader.ReadBytes(3);
 
             var itemNameLen = (int)GetInteger(reader);
-            var itemNameBytes = reader.ReadBytes(itemNameLen);
+
+            // Untrusted length: read only what the stream still holds (what the unbounded read returned anyway).
+            var available = reader.BaseStream.Length - reader.BaseStream.Position;
+            var itemNameBytes = reader.ReadBytes((int)Math.Min((uint)itemNameLen, available));
 
             // it probably isn't necessary to store this, as we now get the lumina Item
             // on demand from the id, which will have the name
