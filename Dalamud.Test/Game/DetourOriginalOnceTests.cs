@@ -261,13 +261,16 @@ namespace Dalamud.Test.Game
             var text = this.Text("hello");
             var module = (nint)0x1000;
 
-            // Normal path: re-encoded text. The quest toast also looks up UIModule.Instance(), which throws here,
-            // so it falls back to the game's own call (before, that exception escaped into the game).
+            // Normal path: re-encoded text, given to the module the game called with. The quest toast used to look up
+            // UIModule.Instance() instead, which throws here and sent it down the fallback with the original text.
             DetourHarness.Invoke(toasts, "HandleNormalToastDetour", module, text, 5, (byte)1, (byte)0, 0u);
             DetourHarness.Invoke(toasts, "HandleQuestToastDetour", module, 0, text, 0u, (byte)0, 0u, (byte)0);
             DetourHarness.Invoke(toasts, "HandleErrorToastDetour", module, text, (byte)0);
             Assert.Single(normal.Calls);
-            Assert.Equal(new object?[] { module, 0, text, 0u, (byte)0, 0u, (byte)0 }, Assert.Single(quest.Calls));
+            var questCall = Assert.Single(quest.Calls);
+            Assert.Equal(module, questCall[0]);
+            Assert.NotEqual(text, questCall[2]);
+            Assert.Equal(new object?[] { 0, 0u, (byte)0, 0u, (byte)0 }, new[] { questCall[1], questCall[3], questCall[4], questCall[5], questCall[6] });
             Assert.Single(error.Calls);
 
             // A handler leaves Dalamud nothing it can encode: the game's own arguments go through, once.

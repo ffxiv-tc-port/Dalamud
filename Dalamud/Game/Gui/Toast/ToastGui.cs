@@ -285,7 +285,6 @@ internal sealed partial class ToastGui
             return;
 
         byte[]? encoded = null;
-        UIModule* target = null;
         int newPosition = 0;
         uint ioc1 = 0, ioc2 = 0;
         byte sound = 0;
@@ -322,9 +321,6 @@ internal sealed partial class ToastGui
             (ioc1, ioc2) = this.DetermineParameterOrder(options);
             newPosition = (int)options.Position;
             sound = (byte)(options.PlaySound ? 1 : 0);
-
-            // As before, the module is looked up here; if that throws, the game's own call goes through below.
-            target = UIModule.Instance();
         }
         catch (Exception ex)
         {
@@ -340,7 +336,7 @@ internal sealed partial class ToastGui
 
         fixed (byte* ptr = encoded)
         {
-            this.showQuestToastHook!.Original(target, newPosition, ptr, ioc1, sound, ioc2, 0);
+            this.showQuestToastHook!.Original(thisPtr, newPosition, ptr, ioc1, sound, ioc2, 0);
         }
     }
 

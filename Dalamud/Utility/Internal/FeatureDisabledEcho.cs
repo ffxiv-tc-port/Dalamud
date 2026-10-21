@@ -29,15 +29,26 @@ internal sealed class FeatureDisabledEcho
 
     private static readonly ModuleLog Log = new("FEATUREECHO");
 
+    private static readonly Func<string, bool> Notify = ShowNotification;
+
     private readonly object gate = new();
     private readonly HashSet<string> reported = new(StringComparer.Ordinal);
     private readonly List<string> pending = new();
+
+    // Made once: Pump runs every frame while lines wait for the login delay.
+    private readonly Action<string> printChat;
 
     private int pendingCount;
     private int subscribed;
 
     // Pump thread only.
     private DateTime? loggedInSince;
+    private ChatGui? pumpChat;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FeatureDisabledEcho"/> class.
+    /// </summary>
+    internal FeatureDisabledEcho() => this.printChat = this.PrintChat;
 
     /// <summary>Whether chat can carry the notices.</summary>
     internal enum ChatState
@@ -248,21 +259,23 @@ internal sealed class FeatureDisabledEcho
                        : chatGui != null || chatTask.IsFaulted || chatTask.IsCanceled ? ChatState.Unavailable
                        : ChatState.Pending;
 
-            this.Pump(
-                framework.IsFrameworkUnloading,
-                chat,
-                clientState is { IsLoggedIn: true },
-                DateTime.UtcNow,
-                line =>
-                {
-                    chatGui!.PrintError(line);
-                    Log.Information("Feature notice printed to chat: {Line}", line);
-                },
-                ShowNotification);
+            this.pumpChat = chatGui;
+            this.Pump(framework.IsFrameworkUnloading, chat, clientState is { IsLoggedIn: true }, DateTime.UtcNow, this.printChat, Notify);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Could not deliver feature notices");
         }
+        finally
+        {
+            this.pumpChat = null;
+        }
+    }
+
+    // Pump calls this only when chat is Ready, so pumpChat is set.
+    private void PrintChat(string line)
+    {
+        this.pumpChat!.PrintError(line);
+        Log.Information("Feature notice printed to chat: {Line}", line);
     }
 }
