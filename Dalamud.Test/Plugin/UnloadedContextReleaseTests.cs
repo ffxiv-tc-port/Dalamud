@@ -179,6 +179,38 @@ namespace Dalamud.Test.Plugin
         }
 
         [Fact]
+        public void CensusFollowsStructArraysButStopsAtItsBudget()
+        {
+            var dataShare = (DataShare)Activator.CreateInstance(typeof(DataShare), nonPublic: true)!;
+            List<string>? holders = null;
+            LoadAndDispose(
+                context => holders = UnloadedContextHolders.Census(context, new(null, dataShare, null)),
+                asm => dataShare.GetOrCreateData(
+                    "Census.Pairs",
+                    () => new[] { new KeyValuePair<int, object?>(0, null), new KeyValuePair<int, object?>(1, CallSide(asm, nameof(ReleaseProbePluginSide.NewState))) }));
+            Assert.Contains(holders!, h => h.StartsWith("DataShare 'Census.Pairs'", StringComparison.Ordinal));
+
+            var large = (DataShare)Activator.CreateInstance(typeof(DataShare), nonPublic: true)!;
+            large.GetOrCreateData("Census.ManyPairs", () => new KeyValuePair<string, string>[200_000]);
+            large.GetOrCreateData("Census.ManyTimes", () => new DateTime[200_000]);
+            var empty = new AssemblyLoadContext("CensusBudget", isCollectible: true);
+            try
+            {
+                UnloadedContextHolders.Census(empty, new(null, large, null));
+                var before = AllocatedBytes.Start();
+                var found = UnloadedContextHolders.Census(empty, new(null, large, null));
+                var allocated = AllocatedBytes.Since(before);
+
+                Assert.DoesNotContain(found, h => h.StartsWith("DataShare", StringComparison.Ordinal));
+                Assert.True(allocated < 1_000_000, $"A census of two 200,000-element struct arrays allocated {allocated:n0} bytes.");
+            }
+            finally
+            {
+                empty.Unload();
+            }
+        }
+
+        [Fact]
         public void RuntimeEventsKeepContextAliveUnlessReleased()
         {
             EventHandler hostExit = (_, _) => { };

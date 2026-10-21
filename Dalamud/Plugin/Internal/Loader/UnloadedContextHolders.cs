@@ -264,7 +264,8 @@ internal static partial class UnloadedContextHolders
             return exception.InnerException is { } inner && this.Involves(inner, depth + 1);
         }
 
-        // Breadth first through fields and array elements, a bounded number of steps and objects.
+        // Breadth first through fields and array elements, a bounded number of steps and objects. Once the object budget
+        // is spent no more children are read, so a large array is not walked (and its struct elements not boxed) in vain.
         public string? FindReachable(object? root)
         {
             if (root == null)
@@ -278,13 +279,16 @@ internal static partial class UnloadedContextHolders
                 var (value, depth) = item;
                 if (this.Match(value) is { } match)
                     return match;
-                if (depth >= MaxDepth || value is string or MemberInfo)
+                if (depth >= MaxDepth || visited.Count >= MaxObjects || value is string or MemberInfo)
                     continue;
 
                 foreach (var next in this.Children(value))
                 {
-                    if (next != null && visited.Count < MaxObjects && visited.Add(next))
-                        queue.Enqueue((next, depth + 1));
+                    if (next == null || !visited.Add(next))
+                        continue;
+                    queue.Enqueue((next, depth + 1));
+                    if (visited.Count >= MaxObjects)
+                        break;
                 }
             }
 
@@ -314,7 +318,9 @@ internal static partial class UnloadedContextHolders
         {
             if (value is Array array)
             {
-                if (array.GetType().GetElementType() is { IsPrimitive: false, IsPointer: false } && array.Rank == 1)
+                // Elements of a struct type with no field worth following hold no reference: Match already saw the array's type.
+                if (array.GetType().GetElementType() is { IsPrimitive: false, IsPointer: false } elementType && array.Rank == 1 &&
+                    !(elementType.IsValueType && this.FieldsOf(elementType).Length == 0))
                 {
                     foreach (var element in array)
                         yield return element;

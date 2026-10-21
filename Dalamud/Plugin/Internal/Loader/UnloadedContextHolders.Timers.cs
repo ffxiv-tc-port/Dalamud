@@ -20,9 +20,9 @@ internal static partial class UnloadedContextHolders
             return 0;
 
         var count = 0;
-        foreach (var (timer, callback, _) in timers.Scheduled())
+        foreach (var timer in timers.Scheduled())
         {
-            if (!Array.Exists(callback.GetInvocationList(), ownership.Defines))
+            if (timers.Callback(timer) is not { } callback || !Array.Exists(callback.GetInvocationList(), ownership.Defines))
                 continue;
             timers.Dispose(timer);
             Log.Information("{Context}: disposed timer ({Delegate:l})", name, Describe(callback));
@@ -37,11 +37,13 @@ internal static partial class UnloadedContextHolders
         if (RuntimeMajor.Value != VerifiedRuntimeMajor || Timers.Value is not { } timers)
             return;
 
-        foreach (var (_, callback, state) in timers.Scheduled())
+        foreach (var timer in timers.Scheduled())
         {
+            if (timers.Callback(timer) is not { } callback)
+                continue;
             if (Array.Exists(callback.GetInvocationList(), ownership.Involves))
                 found.Add($"timer ({Describe(callback)})");
-            else if (ownership.FindReachable(state) is { } what)
+            else if (ownership.FindReachable(timers.State(timer)) is { } what)
                 found.Add($"timer state ({Describe(callback)}: {what})");
         }
     }
@@ -64,7 +66,7 @@ internal static partial class UnloadedContextHolders
             var dispose = timer?.GetMethod("Dispose", AnyInstance, Type.EmptyTypes);
             if (queue == null || timer == null || instances?.PropertyType != queue.MakeArrayType() || sharedLock?.PropertyType != typeof(Lock) ||
                 shortTimers?.FieldType != timer || longTimers?.FieldType != timer || next?.FieldType != timer ||
-                callback?.FieldType != typeof(TimerCallback) || state == null || dispose == null)
+                callback?.FieldType != typeof(TimerCallback) || !callback.IsInitOnly || state is not { IsInitOnly: true } || dispose == null)
             {
                 Log.Warning("Timers are not released, the timer queue differs in this .NET version; unloaded plugins that left a timer running stay in memory");
                 return null;
@@ -73,10 +75,11 @@ internal static partial class UnloadedContextHolders
             return new TimerQueues(instances, sharedLock, [shortTimers, longTimers], next, callback, state, dispose);
         }
 
-        // Copied under each queue's lock; Dispose takes that lock itself, so it is called after.
-        public List<(object Timer, Delegate Callback, object? State)> Scheduled()
+        // Only the list walk runs under each queue's lock (a timer queue is shared by every timer of the process);
+        // callback and state are readonly, so they are read after. Dispose takes that lock itself, so it is called after.
+        public List<object> Scheduled()
         {
-            var scheduled = new List<(object Timer, Delegate Callback, object? State)>();
+            var scheduled = new List<object>();
             foreach (var queue in (Array)instances.GetValue(null)!)
             {
                 var queueLock = (Lock)sharedLock.GetValue(queue)!;
@@ -85,16 +88,17 @@ internal static partial class UnloadedContextHolders
                     foreach (var list in lists)
                     {
                         for (var timer = list.GetValue(queue); timer != null; timer = next.GetValue(timer))
-                        {
-                            if (callback.GetValue(timer) is Delegate timerCallback)
-                                scheduled.Add((timer, timerCallback, state.GetValue(timer)));
-                        }
+                            scheduled.Add(timer);
                     }
                 }
             }
 
             return scheduled;
         }
+
+        public Delegate? Callback(object timer) => callback.GetValue(timer) as Delegate;
+
+        public object? State(object timer) => state.GetValue(timer);
 
         public void Dispose(object timer) => dispose.Invoke(timer, null);
     }
