@@ -137,6 +137,9 @@ internal class PluginInstallerWindow : Window, IDisposable
     // Draw thread only; lives for one continuous stretch of the loading overlay.
     private PluginUpdateProgressDisplay? operationProgress;
 
+    // Draw thread only; the command change count commandLists was last emptied at.
+    private int commandListsChangeCount = -1;
+
     [SuppressMessage("StyleCop.CSharp.OrderingRules", "SA1201:Elements should appear in the correct order",
                      Justification = "Makes sense like this")]
     private List<RemotePluginManifest> pluginListAvailable = [];
@@ -462,6 +465,21 @@ internal class PluginInstallerWindow : Window, IDisposable
         {
             this.isSearchTextPrefilled = false;
             this.searchText = string.Empty;
+        }
+
+        this.commandLists.Clear();
+    }
+
+    /// <inheritdoc/>
+    public override void Update()
+    {
+        // The command lists hold CommandInfo, whose handler is plugin code; a row stops drawing once its plugin unloads,
+        // so its list would keep the unloaded plugin in memory. Every unload removes its commands, which bumps the count.
+        var changes = Service<CommandManager>.GetNullable()?.ChangeCount ?? this.commandListsChangeCount;
+        if (changes != this.commandListsChangeCount)
+        {
+            this.commandLists.Clear();
+            this.commandListsChangeCount = changes;
         }
     }
 
