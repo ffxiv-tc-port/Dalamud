@@ -475,7 +475,7 @@ internal class PluginInstallerWindow : Window, IDisposable
     {
         // The command lists hold CommandInfo, whose handler is plugin code; a row stops drawing once its plugin unloads,
         // so its list would keep the unloaded plugin in memory. Every unload removes its commands, which bumps the count.
-        var changes = Service<CommandManager>.GetNullable()?.ChangeCount ?? this.commandListsChangeCount;
+        var changes = Service<CommandManager>.GetNullable(Service<CommandManager>.ExceptionPropagationMode.None)?.ChangeCount ?? this.commandListsChangeCount;
         if (changes != this.commandListsChangeCount)
         {
             this.commandLists.Clear();
