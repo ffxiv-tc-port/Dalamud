@@ -13,8 +13,9 @@ namespace Dalamud.Game.Gui;
 /// <para>For lines printed to the game's chat log while ChatGui's HandleLinkClick hook is missing: a click on such a
 /// link would then reach the game's own handler instead of Dalamud's.</para>
 /// <para>A link counts as Dalamud's when its type is <see cref="DalamudLinkType"/>, is not a plain number, or does not
-/// fit the byte the game keeps it in. Other links stay byte for byte unless one of those starts inside them. Never
-/// throws, also on malformed input.</para>
+/// fit the byte the game keeps it in; at top level, the game's own EventTutorial link does not (see
+/// <see cref="IsGameEventTutorialLink(ReadOnlySpan{byte})"/>). Other links stay byte for byte unless one of those
+/// starts inside them. Never throws, also on malformed input.</para>
 /// </remarks>
 internal static class DalamudLinkStripper
 {
@@ -44,8 +45,9 @@ internal static class DalamudLinkStripper
     }
 
     /// <summary>
-    /// Gets a value indicating whether a link <see cref="Strip"/> removes starts at any offset of
-    /// <paramref name="data"/>, whatever payload that offset belongs to. Nothing does in what Strip returns.
+    /// Gets a value indicating whether a link of Dalamud's type or shape starts at any offset of
+    /// <paramref name="data"/>, whatever payload that offset belongs to. In what <see cref="Strip"/> returns, only the
+    /// game's EventTutorial links it keeps at top level do.
     /// </summary>
     /// <param name="data">The bytes to look at.</param>
     /// <returns>Whether such a link is there.</returns>
@@ -137,6 +139,7 @@ internal static class DalamudLinkStripper
     {
         var kept = 0;
         var dropNextTerminator = false;
+        var keptLinkOpen = false;
         var pos = 0;
         while (pos < data.Length)
         {
@@ -152,12 +155,17 @@ internal static class DalamudLinkStripper
                 {
                     keep = !dropNextTerminator && !hidesLink;
                     dropNextTerminator = false;
+                    keptLinkOpen &= !keep;
                 }
                 else
                 {
-                    // Only a terminator that comes before any other link is this link's own.
-                    keep = !OpensDalamudLink(body) && !hidesLink;
-                    dropNextTerminator = !keep;
+                    // The game's own tutorial links go to the game's handler anyway, which is right for them.
+                    keep = (!OpensDalamudLink(body) || IsGameEventTutorialLink(data[pos..])) && !hidesLink;
+
+                    // Only a terminator that comes before any other link is this link's own. A link the game would
+                    // have closed with it, opened before and kept, still needs it.
+                    dropNextTerminator = !keep && !keptLinkOpen;
+                    keptLinkOpen |= keep;
                 }
             }
             else

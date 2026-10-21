@@ -21,6 +21,54 @@ namespace Dalamud.Test.Game.Gui
     {
         private static readonly byte[] Terminator = RawPayload.LinkTerminator.Data;
 
+        // EventTutorial 5 (同行) as the game puts it in the chat log; it shares Dalamud's link type.
+        private static readonly byte[] Companion = Convert.FromHexString("02270D0F060101FF07E5908CE8A18C03");
+
+        [Fact]
+        public void GameTutorialLinkAtTopLevelIsKept()
+        {
+            var tutorial = Cat(Companion, Text("同行"), Terminator);
+            Assert.True(DalamudLinkStripper.ContainsDalamudLink(tutorial));
+            Assert.Null(DalamudLinkStripper.Strip(tutorial));
+
+            var input = Cat(Text("可以"), tutorial, Text("、"), DLink(1), Text("插件"), Terminator);
+            var result = DalamudLinkStripper.Strip(input);
+
+            Assert.NotNull(result);
+            Assert.Equal(Convert.ToHexString(Cat(Text("可以"), tutorial, Text("、插件"))), Convert.ToHexString(result[..^1]));
+        }
+
+        [Fact]
+        public void OnlyTheGamesTutorialShapeAtTopLevelIsKept()
+        {
+            // Closest a Dalamud link gets: no plugin, ID 0. Its JSON tail does not fit the tutorial shape.
+            var empty = new DalamudLinkPayload { Plugin = string.Empty, CommandId = 0 }.Encode();
+            AssertStripped(Cat(empty, Text("插件"), Terminator), Text("插件"));
+
+            var bracket = new LSeStringBuilder().PushLink(LinkMacroPayloadType.EventTutorial, 5, 0, 0, "[同行]").ToArray();
+            AssertStripped(Cat(bracket, Text("同行"), Terminator), Text("同行"));
+
+            AssertStripped(Cat(Text("前"), If(Cat(Companion, Text("同行"), Terminator)), Text("後")), Text("前後"));
+        }
+
+        [Fact]
+        public void TerminatorOfALinkRemovedInsideAGameLinkClosesTheGameLink()
+        {
+            // The game would have closed the item link where the Dalamud link starts; with that gone, its terminator
+            // is what still closes the item link.
+            AssertStripped(
+                Cat(Item(5333), Text("物品"), DLink(1), Text("插件"), Terminator, Text("其餘")),
+                Cat(Item(5333), Text("物品插件"), Terminator, Text("其餘")));
+            AssertStripped(
+                Cat(Item(5333), Text("物品"), DLink(1), Text("一"), DLink(2), Text("二"), Terminator, Text("其餘")),
+                Cat(Item(5333), Text("物品一二"), Terminator, Text("其餘")));
+
+            // Negative control: an item link already closed leaves the removed link's terminator to go with it.
+            AssertStripped(
+                Cat(Item(5333), Text("物品"), Terminator, DLink(1), Text("插件"), Terminator, Text("其餘")),
+                Cat(Item(5333), Text("物品"), Terminator, Text("插件其餘")));
+        }
+
         [Fact]
         public void NothingToRemoveReturnsNull()
         {
@@ -116,11 +164,16 @@ namespace Dalamud.Test.Game.Gui
         [Fact]
         public void LinkOpenedByAMalformedStartByteIsRemovedOnALaterPass()
         {
-            // 02 27 05 0F ... claims a body of four bytes; only once the link after it is gone does its end byte line up.
-            var input = Cat([0x02, 0x27, 0x05, 0x0F], DLink(1), [0x01, 0x01, 0x01, 0x03]);
+            // 02 27 06 0F ... claims a body of five bytes; only once the link after it is gone does its end byte line up.
+            var input = Cat([0x02, 0x27, 0x06, 0x0F], DLink(1), [0x01, 0x01, 0x01, 0x01, 0x03]);
             Assert.False(LuminaSeesLinkAt(input, 0));
 
             AssertStripped(input, []);
+
+            // Three numbers and nothing after them is the game's tutorial shape, kept as a click on it would go to the
+            // game with the HandleLinkClick hook installed.
+            var tutorialShape = Cat([0x02, 0x27, 0x05, 0x0F], DLink(1), [0x01, 0x01, 0x01, 0x03]);
+            Assert.Equal("0227050F01010103", Convert.ToHexString(DalamudLinkStripper.Strip(tutorialShape)![..^1]));
         }
 
         [Fact]
