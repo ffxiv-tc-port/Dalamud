@@ -352,6 +352,24 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
         }
     }
 
+    // A click on the game's own link of the Dalamud link type goes back to the game. False whenever unsure, so the
+    // click stays with Dalamud as before; a Dalamud link never reaches the game's handler.
+    private static bool IsGameEventTutorialLink(byte* payload)
+    {
+        try
+        {
+            if (!DalamudLinkStripper.IsGameEventTutorialLink(MemoryMarshal.CreateReadOnlySpanFromNullTerminated(payload)))
+                return false;
+
+            Log.Debug("Game EventTutorial link clicked; passed to the game");
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     private void PrintTagged(SeString message, XivChatType channel, string? tag, ushort? color)
     {
         var builder = new SeStringBuilder();
@@ -570,7 +588,8 @@ internal sealed unsafe class ChatGui : IInternalDisposableService, IChatGui
 
     private void HandleLinkClickDetour(LogViewer* thisPtr, LinkData* linkData)
     {
-        if (linkData == null || linkData->Payload == null || (Payload.EmbeddedInfoType)(linkData->LinkType + 1) != Payload.EmbeddedInfoType.DalamudLink)
+        if (linkData == null || linkData->Payload == null || (Payload.EmbeddedInfoType)(linkData->LinkType + 1) != Payload.EmbeddedInfoType.DalamudLink ||
+            IsGameEventTutorialLink(linkData->Payload))
         {
             this.handleLinkClickHook!.Original(thisPtr, linkData);
             return;

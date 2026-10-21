@@ -6,7 +6,8 @@ using Lumina.Text.Payloads;
 namespace Dalamud.Game.Gui;
 
 /// <summary>
-/// Removes Dalamud's chat links from SeString bytes, keeping the text they wrap.
+/// Removes Dalamud's chat links from SeString bytes, keeping the text they wrap, and tells the game's own links of
+/// the same type apart from them.
 /// </summary>
 /// <remarks>
 /// <para>For lines printed to the game's chat log while ChatGui's HandleLinkClick hook is missing: a click on such a
@@ -49,6 +50,41 @@ internal static class DalamudLinkStripper
     /// <param name="data">The bytes to look at.</param>
     /// <returns>Whether such a link is there.</returns>
     internal static bool ContainsDalamudLink(ReadOnlySpan<byte> data) => HasLinkStartIn(data, 0, data.Length);
+
+    /// <summary>
+    /// Gets a value indicating whether <paramref name="data"/> starts with the game's own EventTutorial link, which
+    /// has <see cref="DalamudLinkType"/> as well but is never one of Dalamud's links.
+    /// </summary>
+    /// <remarks>
+    /// Only the type followed by exactly three plain numbers and at most one string expression without any '[' byte.
+    /// No Dalamud link of any version fits, registered or not: the current form ends in a JSON array, the legacy form
+    /// has a string right after the type. Anything else, malformed input included, is false. Never throws.
+    /// </remarks>
+    /// <param name="data">The bytes the clicked link starts at.</param>
+    /// <returns>Whether the click belongs to the game.</returns>
+    internal static bool IsGameEventTutorialLink(ReadOnlySpan<byte> data)
+    {
+        if (!TryReadMacro(data, out var code, out var body, out _) ||
+            code != MacroCode.Link ||
+            !SeExpressionUtilities.TryDecodeUInt(body, out var type, out var used) ||
+            type != DalamudLinkType)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < 3; i++)
+        {
+            body = body[used..];
+            if (!SeExpressionUtilities.TryDecodeUInt(body, out _, out used))
+                return false;
+        }
+
+        body = body[used..];
+        return body.IsEmpty ||
+               (SeExpressionUtilities.TryDecodeString(body, out var text, out used) &&
+                used == body.Length &&
+                !text.Data.Contains((byte)'['));
+    }
 
     private static byte[]? StripOnce(ReadOnlySpan<byte> data)
     {
