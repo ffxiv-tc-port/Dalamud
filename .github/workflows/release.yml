@@ -1,5 +1,6 @@
 # 台服 Dalamud 發版：手動觸發，產出啟動器（XIVTCLauncher／FFXIVSimpleLauncher）下載用的 latest.7z＋hashes.json。
 # 版號 v<VERSION_BASE>.N：留空＝自動推進 N；填既有版號＝重發（標籤移到這次的 commit、資產覆蓋）。
+# 平常更新一律留空推進 N；重發只用來補救發版失敗——啟動器只比對標籤字串，已裝同標籤的人不會重抓。
 # dalamud-pin-v13.0.0.* 是插件 CI 的相依包，本流程不碰（版號格式不同，不會被選中）。
 name: Release
 
@@ -7,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版號，例如 7.25.0.3（留空＝自動推進；填既有版號＝重發覆蓋）'
+        description: '版號。平常更新一律留空（自動推進 N）；填既有版號＝重發覆蓋，只用來補救發版失敗（已安裝同版號的人不會重抓）'
         required: false
         default: ''
 
