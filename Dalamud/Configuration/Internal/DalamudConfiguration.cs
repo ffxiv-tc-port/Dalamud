@@ -69,12 +69,12 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     public event DalamudConfigurationSavedDelegate? DalamudConfigurationSaved;
 
     /// <summary>
-    /// Gets or sets main Repo Url for Dalamud Plugin init. Default is PluginRepository.MainRepoUrlDailyRoutines
+    /// Gets or sets the main plugin repository URL. Empty means no main repository is loaded.
     /// </summary>
-    public string MainRepoUrl { get; set; } = PluginRepository.MainRepoUrlDailyRoutines;
+    public string MainRepoUrl { get; set; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets a value indicating whether gets or sets main Repo Url for Dalamud Plugin init. Default is PluginRepository.MainRepoUrlDailyRoutines
+    /// Gets or sets a value indicating whether the plugin installer groups available plugins by repository.
     /// </summary>
     public bool UseSoilPluginManager { get; set; } = true;
 

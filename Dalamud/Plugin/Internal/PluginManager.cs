@@ -829,9 +829,6 @@ internal class PluginManager : IInternalDisposableService
         this.MainRepo = PluginRepository.CreateMainRepo(this.happyHttpClient);
         Repos[0] = this.MainRepo;
 
-        if (Repos.All(x => x.PluginMasterUrl != PluginRepository.MainRepoDRUrl))
-            Repos.Add(new(this.happyHttpClient, PluginRepository.MainRepoDRUrl, true));
-        
         this.ReposReady = false;
 
         try

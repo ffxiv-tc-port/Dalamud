@@ -98,46 +98,25 @@ internal sealed class SettingsTabGeneral : SettingsTab
     public override void Draw()
     {
         var config      = Service<DalamudConfiguration>.Get();
-        var mainRepoUrl = config.MainRepoUrl;
+        var mainRepoUrl = config.MainRepoUrl ?? string.Empty;
         var useSoilPluginManager = config.UseSoilPluginManager;
 
-        ImGui.Text("默认主库");
-        
-        if (ImGui.RadioButton("Daily Routines", mainRepoUrl == PluginRepository.MainRepoUrlDailyRoutines))
-        {
-            config.MainRepoUrl = PluginRepository.MainRepoUrlDailyRoutines;
-            config.QueueSave();
-            
-            _ = Service<PluginManager>.Get().ReloadPluginMastersAsync();
-        }
-        
-        if (ImGui.RadioButton("国际服 (goatcorp)", mainRepoUrl == PluginRepository.MainRepoUrlGoatCorp))
-        {
-            config.MainRepoUrl = PluginRepository.MainRepoUrlGoatCorp;
-            config.QueueSave();
-            
-            _ = Service<PluginManager>.Get().ReloadPluginMastersAsync();
-        }
-        
         ImGui.AlignTextToFramePadding();
-        ImGui.Text("自定義：");
-        
+        ImGui.Text("插件主庫：");
+
         ImGui.SameLine();
         ImGui.SetNextItemWidth(500f * ImGuiHelpers.GlobalScale);
         ImGui.InputText("###CustomMainRepo", ref mainRepoUrl, 1024);
-        
+
         if (ImGui.IsItemDeactivatedAfterEdit())
         {
-            if (string.IsNullOrWhiteSpace(mainRepoUrl))
-                mainRepoUrl = PluginRepository.MainRepoUrlDailyRoutines;
-            
-            config.MainRepoUrl = mainRepoUrl;
+            config.MainRepoUrl = mainRepoUrl.Trim();
             config.QueueSave();
-            
+
             _ = Service<PluginManager>.Get().ReloadPluginMastersAsync();
         }
-        
-        ImGui.TextDisabled("選擇Dalamud預設會載入的插件主庫，當然你也可以選擇自定義主庫 (請注意 API 版本)");
+
+        ImGui.TextDisabled("填入插件主庫的網址（請注意 API 版本）；留空＝不載入主庫，只使用自訂插件庫");
         
         ImGuiHelpers.ScaledDummy(20);
 

@@ -20,15 +20,9 @@ namespace Dalamud.Plugin.Internal.Types;
 internal class PluginRepository
 {
     /// <summary>
-    ///     官方主仓库地址
+    ///     主庫網址；空字串＝沒有主庫（不連線、清單為空、狀態為成功）。
     /// </summary>
-    
-    public const string MainRepoUrlDailyRoutines = "https://raw.githubusercontent.com/yanmucorp/PluginDistD17/refs/heads/main/pluginmaster.json";
-    public const string MainRepoUrlGoatCorp = "https://kamori.goats.dev/Plugin/PluginMaster";
-    
-    public static string MainRepoUrl => Service<DalamudConfiguration>.Get().MainRepoUrl;
-
-    public const string MainRepoDRUrl = "https://raw.githubusercontent.com/yanmucorp/PluginDistD17/refs/heads/main/pluginmaster.json";
+    public static string MainRepoUrl => Service<DalamudConfiguration>.Get().MainRepoUrl ?? string.Empty;
 
     private static readonly List<string> InvalidRepos =
     [
@@ -86,9 +80,10 @@ internal class PluginRepository
     {
         // 摊手.jpg
         var dalamudConfig = Service<DalamudConfiguration>.Get();
-        if (InvalidRepos.Any(x => dalamudConfig.MainRepoUrl.Contains(x, StringComparison.OrdinalIgnoreCase)))
+        var configured    = dalamudConfig.MainRepoUrl ?? string.Empty;
+        if (InvalidRepos.Any(x => configured.Contains(x, StringComparison.OrdinalIgnoreCase)))
         {
-            dalamudConfig.MainRepoUrl = MainRepoUrlDailyRoutines;
+            dalamudConfig.MainRepoUrl = string.Empty;
             dalamudConfig.QueueSave();
         }
 
@@ -103,6 +98,14 @@ internal class PluginRepository
     {
         this.State        = PluginRepositoryState.InProgress;
         this.PluginMaster = new List<RemotePluginManifest>().AsReadOnly();
+
+        // 主庫留空是正常設定：不連線，也不能記成失敗（失敗會在插件安裝器與 /xlupdate 顯示讀取失敗）。
+        if (string.IsNullOrWhiteSpace(this.PluginMasterUrl))
+        {
+            Log.Information("主庫網址為空，略過讀取");
+            this.State = PluginRepositoryState.Success;
+            return;
+        }
 
         try
         {
