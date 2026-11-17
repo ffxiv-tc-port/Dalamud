@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  VERSION_BASE: '7.25.0'
+  VERSION_BASE: '7.30.0'
   DOTNET_NOLOGO: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
 
