@@ -23,7 +23,7 @@ namespace Dalamud.Game.ClientState.GamePad;
 #pragma warning restore SA1015
 internal unsafe class GamepadState : IInternalDisposableService, IGamepadState
 {
-    private readonly Hook<PadDevice.Delegates.Poll>? gamepadPoll;
+    private readonly Hook<PadDevicePollDelegate>? gamepadPoll;
 
     private bool isDisposed;
 
@@ -37,10 +37,15 @@ internal unsafe class GamepadState : IInternalDisposableService, IGamepadState
     {
         var targets = HookTargets.For(nameof(GamepadState), sigScanner);
         var poll = FindHookTarget(targets);
-        this.gamepadPoll = poll != 0 ? Hook<PadDevice.Delegates.Poll>.FromAddress(poll, this.GamepadPollDetour) : null;
+        this.gamepadPoll = poll != 0 ? Hook<PadDevicePollDelegate>.FromAddress(poll, this.GamepadPollDetour) : null;
         targets.ReportDisabled();
         this.gamepadPoll?.Enable();
     }
+
+    // Native vf2 takes (this, float); the game adds that float into the pad hold/repeat timers.
+    // CS's PadDevice.Delegates.Poll omits it, so calling Original through that left xmm1 unset.
+    // Contract: the detour passes the float to Original unchanged.
+    private delegate nint PadDevicePollDelegate(PadDevice* thisPtr, float delta);
 
     /// <summary>
     /// Gets the pointer to the current instance of the GamepadInput struct.
@@ -125,9 +130,9 @@ internal unsafe class GamepadState : IInternalDisposableService, IGamepadState
         return targets.Slot("PadDevice.Poll", "手把狀態（插件讀取、Dalamud 視窗的手把操作）", padDevice, padDevice == null ? 0 : (nint)padDevice->Poll);
     }
 
-    private nint GamepadPollDetour(PadDevice* gamepadInput)
+    private nint GamepadPollDetour(PadDevice* gamepadInput, float delta)
     {
-        var original = this.gamepadPoll!.Original(gamepadInput);
+        var original = this.gamepadPoll!.Original(gamepadInput, delta);
         try
         {
             this.GamepadInputAddress = (nint)gamepadInput;
