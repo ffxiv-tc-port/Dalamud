@@ -77,6 +77,68 @@ namespace Dalamud.Test.Game.Gui.Dtr
         }
 
         [Fact]
+        public void WidestRowIsTrackedAcrossRows()
+        {
+            var cursor = default(DtrRowCursor);
+            PlaceAll(ref cursor, 500, out var rows, 200, 400, 30);
+
+            Assert.Equal(new[] { 0, 1, 1 }, rows);
+            Assert.Equal(200, cursor.FirstRowUsed);
+            Assert.Equal(430, cursor.WidestRowUsed);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(1)]
+        public void CollisionSpanKeepsNativeWithOneRow(int rowCount)
+        {
+            Assert.Equal((0f, (ushort)28), DtrBarLayout.CollisionSpan(0, 28, 28, rowCount));
+            Assert.Equal((3f, (ushort)28), DtrBarLayout.CollisionSpan(3, 28, -28, rowCount));
+        }
+
+        [Theory]
+        [InlineData(0f)]
+        [InlineData(float.NaN)]
+        [InlineData(float.PositiveInfinity)]
+        public void CollisionSpanKeepsNativeWithoutUsablePitch(float pitch)
+        {
+            Assert.Equal((0f, (ushort)28), DtrBarLayout.CollisionSpan(0, 28, pitch, 3));
+        }
+
+        [Fact]
+        public void CollisionSpanGrowsDownOverEveryRow()
+        {
+            Assert.Equal((0f, (ushort)84), DtrBarLayout.CollisionSpan(0, 28, 28, 3));
+        }
+
+        [Fact]
+        public void CollisionSpanGrowsUpOverEveryRow()
+        {
+            Assert.Equal((-56f, (ushort)84), DtrBarLayout.CollisionSpan(0, 28, -28, 3));
+        }
+
+        [Fact]
+        public void CollisionSpanCoversEveryPlacedEntry()
+        {
+            // Entries sit at y = 2 + row * pitch and are 22 tall.
+            foreach (var pitch in new[] { 28f, -28f, 24f, -24f })
+            {
+                var (y, height) = DtrBarLayout.CollisionSpan(0, (ushort)(pitch < 0 ? -pitch : pitch), pitch, 4);
+                for (var row = 0; row < 4; row++)
+                {
+                    var top = 2 + (row * pitch);
+                    Assert.True(top >= y && top + 22 <= y + height, $"pitch {pitch} row {row}");
+                }
+            }
+        }
+
+        [Fact]
+        public void CollisionSpanSaturatesInsteadOfWrapping()
+        {
+            Assert.Equal(ushort.MaxValue, DtrBarLayout.CollisionSpan(0, 28, 30000, 10).Height);
+        }
+
+        [Fact]
         public void NothingPlacedHasNoRows()
         {
             Assert.Equal(0, default(DtrRowCursor).RowCount);

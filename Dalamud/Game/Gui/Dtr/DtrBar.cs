@@ -68,8 +68,15 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
 
     // Written by Update, read by FixCollision; both run on the framework thread.
     private int layoutRowCount;
-    private float layoutFirstRowWidth;
+    private float layoutWidestRowWidth;
+    private float layoutRowPitch;
     private bool screenSizeUnavailable;
+
+    // The bar's collision node vertical span as the game set it, and what we last wrote over it (NaN = nothing).
+    private float collisionNativeY;
+    private ushort collisionNativeHeight;
+    private float collisionAppliedY = float.NaN;
+    private ushort collisionAppliedHeight;
 
     [ServiceManager.ServiceConstructor]
     private DtrBar()
@@ -248,6 +255,8 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
                 this.entries.Clear();
                 this.entriesReadOnlyCopy = null;
                 this.entriesLock.ExitWriteLock();
+
+                this.RestoreCollisionSpan();
             }).Wait();
 
         this.framework.Update -= this.Update;
@@ -367,7 +376,7 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
 
         var wrap = this.configuration.DtrWrapWhenTooLong;
         var rowLimit = wrap ? this.ComputeRowLimit(dtr) : float.PositiveInfinity;
-        var rowPitch = wrap ? this.ComputeRowPitch(dtr, collisionNode) : 0f;
+        var rowPitch = wrap ? this.ComputeRowPitch(dtr) : 0f;
         var cursor = default(DtrRowCursor);
 
         this.entriesLock.EnterUpgradeableReadLock();
@@ -452,7 +461,8 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
         this.entriesLock.ExitUpgradeableReadLock();
 
         this.layoutRowCount = cursor.RowCount;
-        this.layoutFirstRowWidth = cursor.FirstRowUsed;
+        this.layoutWidestRowWidth = cursor.WidestRowUsed;
+        this.layoutRowPitch = rowPitch;
     }
 
     /// <summary>
@@ -484,9 +494,10 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
     /// <summary>
     /// Signed Y distance between rows in bar units; negative when rows stack upwards.
     /// </summary>
-    private float ComputeRowPitch(AtkUnitBase* dtr, AtkResNode* collisionNode)
+    private float ComputeRowPitch(AtkUnitBase* dtr)
     {
-        float height = collisionNode->Height > 0 ? collisionNode->Height : DefaultRowHeight;
+        // The native height, not the current one: FixCollision grows the node to cover every row.
+        float height = this.collisionNativeHeight > 0 ? this.collisionNativeHeight : DefaultRowHeight;
 
         var root = dtr->RootNode;
         var centerY = root->Y + (root->Height * root->ScaleY / 2);
@@ -558,10 +569,13 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
 
         if (collisionNode == null) return;
 
-        // Extra rows sit outside the collision node and rely on each entry's own collision flag,
-        // so the node does not grow over whatever native UI is below or above the bar.
-        if (this.configuration.DtrWrapWhenTooLong && this.layoutRowCount > 1)
-            additionalWidth = (int)MathF.Ceiling(this.layoutFirstRowWidth);
+        // Entry nodes outside this node never see the cursor: the game hit-tests an addon's window
+        // collision node before its child nodes. So with extra rows it spans the widest row and all rows.
+        var rowCount = this.configuration.DtrWrapWhenTooLong ? this.layoutRowCount : 0;
+        if (rowCount > 1)
+            additionalWidth = (int)MathF.Ceiling(this.layoutWidestRowWidth);
+
+        this.UpdateCollisionSpan(collisionNode, rowCount);
 
         var nativeWidth = addon->RootNode->Width - (int)minX;
         var targetX = minX - (this.configuration.DtrSwapDirection ? 0 : additionalWidth);
@@ -581,6 +595,57 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
     {
         this.entryStartPos = float.NaN;
         this.layoutRowCount = 0;
+        this.collisionAppliedY = float.NaN;
+    }
+
+    /// <summary>
+    /// Grow the bar's collision node vertically over every row, or put the game's span back with one row.
+    /// Without wrapping this never writes: the node's current span is taken as native and kept.
+    /// </summary>
+    private void UpdateCollisionSpan(AtkResNode* collisionNode, int rowCount)
+    {
+        // Anything other than what we last wrote is the game's own value.
+        if (float.IsNaN(this.collisionAppliedY) ||
+            collisionNode->Height != this.collisionAppliedHeight ||
+            Math.Abs(collisionNode->Y - this.collisionAppliedY) > 0.0001)
+        {
+            this.collisionNativeY = collisionNode->Y;
+            this.collisionNativeHeight = collisionNode->Height;
+            this.collisionAppliedY = float.NaN;
+        }
+
+        var (y, height) = DtrBarLayout.CollisionSpan(this.collisionNativeY, this.collisionNativeHeight, this.layoutRowPitch, rowCount);
+        if (collisionNode->Height != height || Math.Abs(collisionNode->Y - y) > 0.0001)
+        {
+            collisionNode->SetHeight(height);
+            collisionNode->SetYFloat(y);
+        }
+
+        var isNative = height == this.collisionNativeHeight && Math.Abs(y - this.collisionNativeY) <= 0.0001;
+        this.collisionAppliedY = isNative ? float.NaN : y;
+        this.collisionAppliedHeight = height;
+    }
+
+    /// <summary>
+    /// Put collision node 17's span back to the game's value if we changed it. Framework thread only.
+    /// </summary>
+    private void RestoreCollisionSpan()
+    {
+        if (float.IsNaN(this.collisionAppliedY)) return;
+
+        var dtr = this.GetDtr();
+        if (dtr == null || dtr->RootNode == null || dtr->UldManager.NodeList == null) return;
+
+        var collisionNode = dtr->GetNodeById(17);
+        if (collisionNode != null &&
+            collisionNode->Height == this.collisionAppliedHeight &&
+            Math.Abs(collisionNode->Y - this.collisionAppliedY) <= 0.0001)
+        {
+            collisionNode->SetHeight(this.collisionNativeHeight);
+            collisionNode->SetYFloat(this.collisionNativeY);
+        }
+
+        this.collisionAppliedY = float.NaN;
     }
 
     /// <summary>

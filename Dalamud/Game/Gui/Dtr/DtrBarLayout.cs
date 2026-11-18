@@ -21,6 +21,11 @@ internal struct DtrRowCursor
     public float FirstRowUsed;
 
     /// <summary>
+    /// Width taken on the widest row so far, spacing included.
+    /// </summary>
+    public float WidestRowUsed;
+
+    /// <summary>
     /// Gets the number of rows in use, or 0 if nothing was placed.
     /// </summary>
     public readonly int RowCount => this.Used > 0 || this.Row > 0 ? this.Row + 1 : 0;
@@ -57,8 +62,29 @@ internal static class DtrBarLayout
         cursor.Used += elementWidth;
         if (cursor.Row == 0)
             cursor.FirstRowUsed = cursor.Used;
+        if (cursor.Used > cursor.WidestRowUsed)
+            cursor.WidestRowUsed = cursor.Used;
 
         return offset;
+    }
+
+    /// <summary>
+    /// Vertical span the bar's collision node needs so every row receives mouse events.
+    /// The game only routes the cursor to an addon whose window collision node contains it.
+    /// </summary>
+    /// <param name="nativeY">Collision node Y as the game set it.</param>
+    /// <param name="nativeHeight">Collision node height as the game set it.</param>
+    /// <param name="rowPitch">Signed distance between rows; negative when rows stack upwards.</param>
+    /// <param name="rowCount">Rows in use.</param>
+    /// <returns>The span to apply; exactly the native span unless more than one row is in use.</returns>
+    public static (float Y, ushort Height) CollisionSpan(float nativeY, ushort nativeHeight, float rowPitch, int rowCount)
+    {
+        if (rowCount <= 1 || rowPitch == 0 || !float.IsFinite(rowPitch) || !float.IsFinite(nativeY))
+            return (nativeY, nativeHeight);
+
+        var extra = (rowCount - 1) * rowPitch;
+        var height = MathF.Min(ushort.MaxValue, nativeHeight + MathF.Ceiling(MathF.Abs(extra)));
+        return (extra < 0 ? nativeY + extra : nativeY, (ushort)height);
     }
 
     /// <summary>
