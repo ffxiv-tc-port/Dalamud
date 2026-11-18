@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -151,6 +152,9 @@ internal class PluginInstallerWindow : Window, IDisposable
 
     private string searchText = string.Empty;
     private bool   isSearchTextPrefilled;
+
+    // Published whole and never mutated, so a reader off the draw thread always sees one consistent set.
+    private SearchTermSet? searchTermSet;
 
     private PluginSortKind sortKind     = PluginSortKind.Alphabetical;
     private string         filterText   = Locs.SortBy_Alphabetical;
@@ -4323,15 +4327,25 @@ internal class PluginInstallerWindow : Window, IDisposable
         return GetManifestSearchScore(manifest) < 100;
     }
 
+    private static string[] SplitSearchTerms(string searchText)
+    {
+        var searchQuery = searchText.Trim().ToLowerInvariant();
+        var searchTerms = searchQuery.Split([' ', '　'], StringSplitOptions.RemoveEmptyEntries);
+        return searchTerms;
+    }
+
     private int GetManifestSearchScore(IPluginManifest manifest)
     {
-        if (string.IsNullOrWhiteSpace(this.searchText))
+        var text = this.searchText;
+        if (string.IsNullOrWhiteSpace(text))
             return 0;
 
-        var searchQuery = this.searchText.Trim().ToLowerInvariant();
-        var searchTerms = searchQuery.Split([' ', '　'], StringSplitOptions.RemoveEmptyEntries);
+        // Called for every manifest on every frame while a search is typed; split only when the text changes.
+        var searchTerms = this.searchTermSet;
+        if (searchTerms == null || !string.Equals(searchTerms.Source, text, StringComparison.Ordinal))
+            this.searchTermSet = searchTerms = new SearchTermSet(text, SplitSearchTerms(text));
 
-        if (searchTerms.Length == 0) return 0;
+        if (searchTerms.Terms.Length == 0) return 0;
 
         var totalScore = 0;
 
@@ -4353,53 +4367,62 @@ internal class PluginInstallerWindow : Window, IDisposable
         return totalScore;
     }
 
-    private int CalculateMatchScore(string[] searchTerms, string? target, int weight, bool requireFullMatch = false)
+    private int CalculateMatchScore(SearchTermSet searchTerms, string? target, int weight, bool requireFullMatch = false)
     {
         if (string.IsNullOrWhiteSpace(target))
             return 0;
 
-        var targetLower = target.Trim().ToLowerInvariant();
+        // Same characters as target.Trim().ToLowerInvariant(), lowered into a stack or pooled buffer instead of a new string.
+        var trimmed = target.AsSpan().Trim();
+        char[]? rented = null;
+        var buffer = trimmed.Length <= 256 ? stackalloc char[256] : (rented = ArrayPool<char>.Shared.Rent(trimmed.Length));
+        trimmed.ToLowerInvariant(buffer);
+        ReadOnlySpan<char> targetLower = buffer[..trimmed.Length];
         var score = 0;
 
-        foreach (var term in searchTerms)
+        for (var i = 0; i < searchTerms.Terms.Length; i++)
         {
+            var term = searchTerms.Terms[i];
             if (term.Length < 2) continue; // 忽略过短的搜索词
 
             if (requireFullMatch)
             {
-                if (targetLower.Equals(term))
+                if (targetLower.SequenceEqual(term.AsSpan()))
                     score += weight;
             }
             else
             {
                 // 完全匹配给予最高分
-                if (targetLower.Equals(term))
+                if (targetLower.SequenceEqual(term.AsSpan()))
                     score += weight * 2;
                 // 作为单词起始给予高分（适用于英文和拼音搜索）
                 else if (targetLower.StartsWith(term, StringComparison.OrdinalIgnoreCase) ||
-                        targetLower.Contains(" " + term, StringComparison.OrdinalIgnoreCase))
+                        targetLower.Contains(searchTerms.SpacePrefixed[i], StringComparison.OrdinalIgnoreCase))
                     score += (int)(weight * 1.5);
                 // 包含搜索词给予基础分
                 else if (targetLower.Contains(term, StringComparison.OrdinalIgnoreCase))
                     score += weight;
                 
                 // 对中文搜索特别优化：中文通常没有单词边界，所以部分匹配也很重要
-                if (ContainsHanScript(term) && targetLower.Contains(term))
+                if (searchTerms.HasHanScript[i] && targetLower.IndexOf(term.AsSpan()) >= 0)
                     score += (int)(weight * 1.3);
             }
         }
 
         // 对于长搜索词给予额外加分（4个字符以上）
-        foreach (var term in searchTerms.Where(t => t.Length >= 4))
+        foreach (var term in searchTerms.Terms)
         {
-            if (targetLower.Contains(term))
+            if (term.Length >= 4 && targetLower.IndexOf(term.AsSpan()) >= 0)
                 score += 50;
         }
+
+        if (rented != null)
+            ArrayPool<char>.Shared.Return(rented);
 
         return score;
     }
 
-    private bool ContainsHanScript(string text)
+    private static bool ContainsHanScript(string text)
     {
         // 检查字符串中是否包含汉字
         foreach (char c in text)
@@ -5069,5 +5092,30 @@ internal class PluginInstallerWindow : Window, IDisposable
                                                                "Please make absolutely sure that you only install plugins from developers you trust.\n\n" +
                                                                "You will not receive support for plugins installed from custom repositories on the XIVLauncher & Dalamud server.");
         #endregion
+    }
+
+    /// <summary>The split search terms for one search text, with the per-term values the scorer needs.</summary>
+    private sealed class SearchTermSet
+    {
+        public SearchTermSet(string source, string[] terms)
+        {
+            this.Source = source;
+            this.Terms = terms;
+            this.SpacePrefixed = new string[terms.Length];
+            this.HasHanScript = new bool[terms.Length];
+            for (var i = 0; i < terms.Length; i++)
+            {
+                this.SpacePrefixed[i] = " " + terms[i];
+                this.HasHanScript[i] = ContainsHanScript(terms[i]);
+            }
+        }
+
+        public string Source { get; }
+
+        public string[] Terms { get; }
+
+        public string[] SpacePrefixed { get; }
+
+        public bool[] HasHanScript { get; }
     }
 }
