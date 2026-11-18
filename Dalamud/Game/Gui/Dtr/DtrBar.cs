@@ -16,6 +16,7 @@ using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.Services;
 
 using FFXIVClientStructs.FFXIV.Client.Graphics;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Kernel;
 using FFXIVClientStructs.FFXIV.Client.System.Memory;
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -29,6 +30,8 @@ namespace Dalamud.Game.Gui.Dtr;
 internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
 {
     private const uint BaseNodeId = 1000;
+    private const float DefaultRowHeight = 24;
+    private const float HiddenNodeX = -10000;
 
     private static readonly ModuleLog Log = new("DtrBar");
 
@@ -62,6 +65,11 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
 
     private uint runningNodeIds = BaseNodeId;
     private float entryStartPos = float.NaN;
+
+    // Written by Update, read by FixCollision; both run on the framework thread.
+    private int layoutRowCount;
+    private float layoutFirstRowWidth;
+    private bool screenSizeUnavailable;
 
     [ServiceManager.ServiceConstructor]
     private DtrBar()
@@ -357,7 +365,10 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
         // We haven't calculated the native size yet, so we don't know where to start positioning.
         if (float.IsNaN(this.entryStartPos)) return;
 
-        var runningXPos = this.entryStartPos;
+        var wrap = this.configuration.DtrWrapWhenTooLong;
+        var rowLimit = wrap ? this.ComputeRowLimit(dtr) : float.PositiveInfinity;
+        var rowPitch = wrap ? this.ComputeRowPitch(dtr, collisionNode) : 0f;
+        var cursor = default(DtrRowCursor);
 
         this.entriesLock.EnterUpgradeableReadLock();
         for (var i = 0; i < this.entries.Count; i++)
@@ -416,22 +427,22 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
                 }
 
                 var elementWidth = data.TextNode->Width + this.configuration.DtrSpacing;
+                var offset = DtrBarLayout.Place(ref cursor, elementWidth, rowLimit);
+                var y = 2 + (cursor.Row * rowPitch);
 
                 if (this.configuration.DtrSwapDirection)
-                {
-                    data.TextNode->SetPositionFloat(runningXPos + this.configuration.DtrSpacing, 2);
-                    runningXPos += elementWidth;
-                }
+                    data.TextNode->SetPositionFloat(this.entryStartPos + offset + this.configuration.DtrSpacing, y);
                 else
-                {
-                    runningXPos -= elementWidth;
-                    data.TextNode->SetPositionFloat(runningXPos, 2);
-                }
+                    data.TextNode->SetPositionFloat(this.entryStartPos - offset - elementWidth, y);
             }
             else if (!nodeHidden)
             {
                 // If we want the node hidden, shift it up, to prevent collision conflicts
                 node->SetYFloat(-collisionNode->Height * dtr->RootNode->ScaleX);
+
+                // Rows wrapped upwards can sit exactly where hidden nodes are parked; move them sideways too.
+                if (wrap)
+                    node->SetXFloat(HiddenNodeX);
                 node->ToggleVisibility(false);
             }
 
@@ -439,6 +450,69 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
         }
 
         this.entriesLock.ExitUpgradeableReadLock();
+
+        this.layoutRowCount = cursor.RowCount;
+        this.layoutFirstRowWidth = cursor.FirstRowUsed;
+    }
+
+    /// <summary>
+    /// Row limit in bar units: the user's maximum width, tightened by the room left before the screen edge.
+    /// </summary>
+    private float ComputeRowLimit(AtkUnitBase* dtr)
+    {
+        var root = dtr->RootNode;
+        var scale = root->ScaleX;
+        var room = float.NaN;
+        if (scale > 0)
+        {
+            var startOnScreen = root->X + (this.entryStartPos * scale);
+            if (!this.configuration.DtrSwapDirection)
+            {
+                room = startOnScreen / scale;
+            }
+            else
+            {
+                var screenWidth = this.GetScreenSize().X;
+                if (screenWidth > 0)
+                    room = (screenWidth - startOnScreen) / scale;
+            }
+        }
+
+        return DtrBarLayout.RowLimit(this.configuration.DtrWrapWidth, room);
+    }
+
+    /// <summary>
+    /// Signed Y distance between rows in bar units; negative when rows stack upwards.
+    /// </summary>
+    private float ComputeRowPitch(AtkUnitBase* dtr, AtkResNode* collisionNode)
+    {
+        float height = collisionNode->Height > 0 ? collisionNode->Height : DefaultRowHeight;
+
+        var root = dtr->RootNode;
+        var centerY = root->Y + (root->Height * root->ScaleY / 2);
+        return DtrBarLayout.WrapUpwards(centerY, this.GetScreenSize().Y) ? -height : height;
+    }
+
+    /// <summary>
+    /// Game screen size, or zero when unknown. Never throws: a failed lookup disables it for the session.
+    /// </summary>
+    private System.Numerics.Vector2 GetScreenSize()
+    {
+        if (this.screenSizeUnavailable)
+            return default;
+
+        try
+        {
+            // Device.Instance() is a pointer slot that stays null until the graphics device exists.
+            var device = Device.Instance();
+            return device == null ? default : new System.Numerics.Vector2(device->Width, device->Height);
+        }
+        catch (Exception ex)
+        {
+            this.screenSizeUnavailable = true;
+            Log.Warning(ex, "Screen size unavailable; server info bar wrapping falls back to the configured width and rows below the bar");
+            return default;
+        }
     }
 
     private void FixCollision(AddonEvent eventType, AddonArgs addonInfo)
@@ -484,6 +558,11 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
 
         if (collisionNode == null) return;
 
+        // Extra rows sit outside the collision node and rely on each entry's own collision flag,
+        // so the node does not grow over whatever native UI is below or above the bar.
+        if (this.configuration.DtrWrapWhenTooLong && this.layoutRowCount > 1)
+            additionalWidth = (int)MathF.Ceiling(this.layoutFirstRowWidth);
+
         var nativeWidth = addon->RootNode->Width - (int)minX;
         var targetX = minX - (this.configuration.DtrSwapDirection ? 0 : additionalWidth);
         var targetWidth = (ushort)(nativeWidth + additionalWidth);
@@ -501,6 +580,7 @@ internal sealed unsafe class DtrBar : IInternalDisposableService, IDtrBar
     private void PreFinalize(AddonEvent type, AddonArgs args)
     {
         this.entryStartPos = float.NaN;
+        this.layoutRowCount = 0;
     }
 
     /// <summary>

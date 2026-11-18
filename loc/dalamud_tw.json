@@ -815,6 +815,18 @@
     "message": "如果啟用了此選項，伺服器資訊欄的元件將會向右擴展而不是向左擴展。",
     "description": "SettingsTabDtr.Draw"
   },
+  "DalamudSettingServerInfoBarWrap": {
+    "message": "伺服器資訊欄過長時換行",
+    "description": "SettingsTabDtr.Draw"
+  },
+  "DalamudSettingServerInfoBarWrapHint": {
+    "message": "啟用後，超出每列最大寬度（或會超出畫面邊緣）的項目會排到另一列。新的一列排在資訊欄下方；資訊欄位於畫面下半部時改排在上方。",
+    "description": "SettingsTabDtr.Draw"
+  },
+  "DalamudSettingServerInfoBarWrapWidth": {
+    "message": "每列最大寬度（0＝只在超出畫面邊緣時換行）",
+    "description": "SettingsTabDtr.Draw"
+  },
   "DalamudSettingsExperimental": {
     "message": "試驗性功能",
     "description": "SettingsTabExperimental.get_Title"

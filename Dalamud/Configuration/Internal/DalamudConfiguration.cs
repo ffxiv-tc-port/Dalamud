@@ -421,6 +421,17 @@ internal sealed class DalamudConfiguration : IInternalDisposableService
     public bool DtrSwapDirection { get; set; } = false;
 
     /// <summary>
+    /// Gets or sets a value indicating whether DTR entries that do not fit continue on another row.
+    /// </summary>
+    public bool DtrWrapWhenTooLong { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the maximum width of one row of DTR entries, in unscaled bar units.
+    /// 0 means entries only wrap at the screen edge.
+    /// </summary>
+    public int DtrWrapWidth { get; set; } = 500;
+
+    /// <summary>
     /// Gets or sets a value indicating whether the title screen menu is shown.
     /// </summary>
     public bool ShowTsm { get; set; } = true;

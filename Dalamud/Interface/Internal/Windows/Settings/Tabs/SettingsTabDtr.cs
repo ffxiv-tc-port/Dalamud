@@ -20,6 +20,8 @@ internal sealed class SettingsTabDtr : SettingsTab
     private List<string>? dtrIgnore;
     private int dtrSpacing;
     private bool dtrSwapDirection;
+    private bool dtrWrapWhenTooLong;
+    private int dtrWrapWidth;
 
     public override string Title => Loc.Localize("DalamudSettingsServerInfoBar", "Server Info Bar");
 
@@ -143,6 +145,12 @@ internal sealed class SettingsTabDtr : SettingsTab
         ImGui.TextColoredWrapped(ImGuiColors.DalamudGrey, Loc.Localize("DalamudSettingServerInfoBarDirectionHint", "If checked, the Server Info Bar elements will expand to the right instead of the left."));
         ImGui.Checkbox("Swap Direction"u8, ref this.dtrSwapDirection);
 
+        ImGui.Text(Loc.Localize("DalamudSettingServerInfoBarWrap", "Wrap the Server Info Bar when it gets too long"));
+        ImGui.TextColoredWrapped(ImGuiColors.DalamudGrey, Loc.Localize("DalamudSettingServerInfoBarWrapHint", "If checked, entries that do not fit within the maximum width (or before the screen edge) continue on another row. Rows go below the bar, or above it when the bar is in the lower half of the screen."));
+        ImGui.Checkbox("Wrap"u8, ref this.dtrWrapWhenTooLong);
+        ImGui.Text(Loc.Localize("DalamudSettingServerInfoBarWrapWidth", "Maximum row width (0 = only wrap at the screen edge)"));
+        ImGui.SliderInt("Max Width"u8, ref this.dtrWrapWidth, 0, 2000);
+
         base.Draw();
     }
 
@@ -161,6 +169,8 @@ internal sealed class SettingsTabDtr : SettingsTab
 
         this.dtrSpacing = configuration.DtrSpacing;
         this.dtrSwapDirection = configuration.DtrSwapDirection;
+        this.dtrWrapWhenTooLong = configuration.DtrWrapWhenTooLong;
+        this.dtrWrapWidth = configuration.DtrWrapWidth;
 
         this.dtrOrder = configuration.DtrOrder;
         this.dtrIgnore = configuration.DtrIgnore;
@@ -174,6 +184,8 @@ internal sealed class SettingsTabDtr : SettingsTab
 
         configuration.DtrSpacing = this.dtrSpacing;
         configuration.DtrSwapDirection = this.dtrSwapDirection;
+        configuration.DtrWrapWhenTooLong = this.dtrWrapWhenTooLong;
+        configuration.DtrWrapWidth = Math.Max(0, this.dtrWrapWidth);
 
         this.dtrOrder = configuration.DtrOrder;
         this.dtrIgnore = configuration.DtrIgnore;
