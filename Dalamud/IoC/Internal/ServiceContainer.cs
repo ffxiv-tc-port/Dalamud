@@ -213,6 +213,7 @@ internal class ServiceContainer : IServiceType
 
         var bytesBefore = GC.GetAllocatedBytesForCurrentThread();
         var started = Stopwatch.GetTimestamp();
+        cost.Begin(started);
         try
         {
             ctor.Invoke(instance, parameters);

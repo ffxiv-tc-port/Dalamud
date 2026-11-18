@@ -393,7 +393,7 @@ internal class LocalPlugin : IAsyncDisposable
             this.serviceScope = ioc.GetScope();
             this.serviceScope.RegisterPrivateScopes(this); // 添加这个 LocalPlugin 作为私有作用域，以便服务可以获取它
 
-            var constructorCost = new PluginLoadReport.ConstructorCost();
+            var constructorCost = new PluginLoadReport.ConstructorCost(this.InternalName);
             var loadReported = false;
             try
             {

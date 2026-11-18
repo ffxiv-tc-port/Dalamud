@@ -27,6 +27,10 @@ internal static class PluginLoadReport
     private static readonly ModuleLog Log = new("PerfDiag");
     private static readonly object Gate = new();
     private static readonly List<Batch> OpenBatches = [];
+    private static readonly List<ConstructorCost> RunningConstructors = [];
+
+    // OpenBatches.Count + RunningConstructors.Count, written under Gate: lets a hitch line skip the lock.
+    private static int busy;
 
     /// <summary>
     /// How a load ended.
@@ -58,8 +62,63 @@ internal static class PluginLoadReport
     {
         var batch = new Batch(name);
         lock (Gate)
+        {
             OpenBatches.Add(batch);
+            UpdateBusy();
+        }
+
         return batch;
+    }
+
+    /// <summary>
+    /// Describes the plugin loads under way, for a hitch line: open batches and constructors still running.
+    /// Any thread; never throws.
+    /// </summary>
+    /// <returns>Like <c>during plugin load batch "update" (3 loads finished; constructors running: A 4.9 s)</c>, or null when nothing loads.</returns>
+    public static string? DescribeLoading()
+    {
+        if (Volatile.Read(ref busy) == 0)
+            return null;
+
+        try
+        {
+            var now = Stopwatch.GetTimestamp();
+            var text = new StringBuilder();
+            lock (Gate)
+            {
+                if (OpenBatches.Count == 0 && RunningConstructors.Count == 0)
+                    return null;
+
+                text.Append(OpenBatches.Count switch
+                {
+                    0 => "during plugin loads",
+                    1 => "during plugin load batch ",
+                    _ => "during plugin load batches ",
+                });
+                for (var i = 0; i < OpenBatches.Count; i++)
+                {
+                    if (i > 0)
+                        text.Append(" and ");
+                    text.Append(Invariant($"\"{OpenBatches[i].Name}\" with {OpenBatches[i].Count} loads finished"));
+                }
+
+                text.Append(" (");
+                if (RunningConstructors.Count == 0)
+                    text.Append("no constructor running");
+                for (var i = 0; i < RunningConstructors.Count; i++)
+                {
+                    var running = RunningConstructors[i];
+                    text.Append(i == 0 ? "constructors running: " : ", ");
+                    text.Append(Invariant($"{running.Name} {(now - running.Started) / (double)Stopwatch.Frequency:0.0} s"));
+                }
+            }
+
+            return text.Append(')').ToString();
+        }
+        catch (Exception ex)
+        {
+            return "plugin loads unknown (" + ex.GetType().Name + ")";
+        }
     }
 
     /// <summary>
@@ -154,6 +213,9 @@ internal static class PluginLoadReport
         return text.ToString();
     }
 
+    // Only under Gate.
+    private static void UpdateBusy() => Volatile.Write(ref busy, OpenBatches.Count + RunningConstructors.Count);
+
     private static double Megabytes(long bytes) => bytes / BytesPerMegabyte;
 
     private static double Milliseconds(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
@@ -188,6 +250,16 @@ internal static class PluginLoadReport
     /// </remarks>
     internal sealed class ConstructorCost
     {
+        /// <summary>Initializes a new instance of the <see cref="ConstructorCost"/> class.</summary>
+        /// <param name="name">Internal name of the plugin, for hitch lines while the constructor runs.</param>
+        public ConstructorCost(string? name = null) => this.Name = name ?? "?";
+
+        /// <summary>Gets the internal name of the plugin.</summary>
+        public string Name { get; }
+
+        /// <summary>Gets when the constructor started, a <see cref="Stopwatch.GetTimestamp"/>; 0 before.</summary>
+        public long Started { get; private set; }
+
         /// <summary>Gets a value indicating whether the constructor ran, returning or throwing.</summary>
         public bool Ran { get; private set; }
 
@@ -207,6 +279,40 @@ internal static class PluginLoadReport
             this.ThreadBytes = threadBytes;
             this.Ticks = ticks;
             this.Ran = true;
+            try
+            {
+                lock (Gate)
+                {
+                    RunningConstructors.Remove(this);
+                    UpdateBusy();
+                }
+            }
+            catch (Exception)
+            {
+                // Only the hitch lines' "constructors running" lose this entry's removal.
+            }
+        }
+
+        /// <summary>
+        /// Marks the constructor as running, for hitch lines, until <see cref="Record"/>. Only the thread that runs
+        /// it, right before; never throws.
+        /// </summary>
+        /// <param name="started">The <see cref="Stopwatch.GetTimestamp"/> it starts at.</param>
+        public void Begin(long started)
+        {
+            this.Started = started;
+            try
+            {
+                lock (Gate)
+                {
+                    RunningConstructors.Add(this);
+                    UpdateBusy();
+                }
+            }
+            catch (Exception)
+            {
+                // Only the hitch lines miss this constructor.
+            }
         }
     }
 
@@ -226,6 +332,12 @@ internal static class PluginLoadReport
         /// <param name="name">Name of the batch.</param>
         internal Batch(string name) => this.name = name;
 
+        /// <summary>Gets the name of the batch.</summary>
+        internal string Name => this.name;
+
+        /// <summary>Gets the number of loads reported so far. Only under <see cref="Gate"/>.</summary>
+        internal int Count => this.entries.Count;
+
         /// <summary>
         /// Closes the batch and logs its summary unless no load was reported. Only the first call does anything;
         /// never throws.
@@ -242,6 +354,7 @@ internal static class PluginLoadReport
                 lock (Gate)
                 {
                     OpenBatches.Remove(this);
+                    UpdateBusy();
                     taken = [.. this.entries];
                 }
 

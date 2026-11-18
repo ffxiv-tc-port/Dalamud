@@ -588,7 +588,8 @@ internal sealed class Framework : IInternalDisposableService, IFramework
             this.frameIntervalMonitor.Frame(
                 now,
                 counters,
-                screen == GameScreen.InGame && this.gameInFront,
+                screen,
+                this.gameInFront,
                 this.lastUpdateTicks,
                 this.lastGameTickTicks,
                 this.gameWindowInFront);
