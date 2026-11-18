@@ -28,6 +28,9 @@ internal sealed unsafe partial class AetheryteList : IServiceType, IAetheryteLis
     [ServiceManager.ServiceDependency]
     private readonly ObjectTable objectTable = Service<ObjectTable>.Get();
 
+    [ServiceManager.ServiceDependency]
+    private readonly Framework framework = Service<Framework>.Get();
+
     [ServiceManager.ServiceConstructor]
     private AetheryteList()
     {
@@ -94,6 +97,36 @@ internal sealed unsafe partial class AetheryteList : IServiceType, IAetheryteLis
         return null;
     }
 
+    /// <summary>
+    /// Reads one entry for an in-progress enumeration. Re-checks LocalPlayer, Telepo and the list bounds on every call
+    /// and rebuilds the game list before reading whenever the framework tick differs from <paramref name="updatedAt"/>,
+    /// so an enumerator kept across ticks still updates before it reads, as <see cref="Length"/> does.
+    /// </summary>
+    /// <param name="index">Entry index.</param>
+    /// <param name="updatedAt">Tick stamp of this enumeration's last update; null before the first one.</param>
+    /// <returns>The entry, or null when the enumeration has to stop.</returns>
+    private AetheryteEntry? ReadForEnumeration(int index, ref DateTime? updatedAt)
+    {
+        var telepo = GetTelepo();
+        if (telepo == null)
+            return null;
+
+        if (this.objectTable.LocalPlayer == null)
+            return null;
+
+        var tick = this.framework.LastUpdateUTC;
+        if (updatedAt != tick)
+        {
+            this.Update(telepo);
+            updatedAt = tick;
+        }
+
+        if (telepo->TeleportList.First == telepo->TeleportList.Last || index >= telepo->TeleportList.Count)
+            return null;
+
+        return new AetheryteEntry(telepo->TeleportList[index]);
+    }
+
     private void Update(Telepo* telepo)
     {
         // this is very very important as otherwise it crashes
@@ -115,9 +148,15 @@ internal sealed partial class AetheryteList
     /// <inheritdoc/>
     public IEnumerator<IAetheryteEntry> GetEnumerator()
     {
-        for (var i = 0; i < this.Length; i++)
+        // One UpdateAetheryteList per tick for the whole loop; reading through Length/this[] would cost two per entry.
+        DateTime? updatedAt = null;
+        for (var i = 0; ; i++)
         {
-            yield return this[i];
+            var entry = this.ReadForEnumeration(i, ref updatedAt);
+            if (entry == null)
+                yield break;
+
+            yield return entry;
         }
     }
 
