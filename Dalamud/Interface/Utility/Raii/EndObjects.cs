@@ -26,6 +26,16 @@ public static partial class ImRaii
     public static IEndObject Child(ImU8String strId, Vector2 size, bool border, ImGuiWindowFlags flags)
         => new EndUnconditionally(ImGui.EndChild, ImGui.BeginChild(strId, size, border, flags));
 
+    // Child for code that runs every frame: the same BeginChild and EndChild, without boxing an end object.
+    internal static ChildEnd ChildUnboxed(ImU8String strId, Vector2 size)
+        => new(ImGui.BeginChild(strId, size));
+
+    internal static ChildEnd ChildUnboxed(ImU8String strId, Vector2 size, bool border)
+        => new(ImGui.BeginChild(strId, size, border));
+
+    internal static ChildEnd ChildUnboxed(ImU8String strId, Vector2 size, bool border, ImGuiWindowFlags flags)
+        => new(ImGui.BeginChild(strId, size, border, flags));
+
     public static IEndObject DragDropTarget()
         => Conditional(ImGui.EndDragDropTarget, ImGui.BeginDragDropTarget());
 
@@ -289,6 +299,16 @@ public static partial class ImRaii
             this.EndAction();
             this.Disposed = true;
         }
+    }
+
+    // Ends the child on Dispose, visible or not. Has no Disposed flag: dispose it exactly once, as a using does.
+    internal readonly struct ChildEnd : IDisposable
+    {
+        public ChildEnd(bool success) => this.Success = success;
+
+        public bool Success { get; }
+
+        public void Dispose() => ImGui.EndChild();
     }
 
     // Use end-function only on success.

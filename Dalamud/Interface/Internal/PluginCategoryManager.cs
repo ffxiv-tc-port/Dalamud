@@ -2,9 +2,12 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
-using CheapLoc;
 using Dalamud.Plugin.Internal;
 using Dalamud.Plugin.Internal.Types;
+using Dalamud.Plugin.Internal.Types.Manifest;
+
+// Labels here are read every frame; this keeps each one until the loc table changes.
+using Loc = Dalamud.Utility.Internal.CachedLoc;
 
 namespace Dalamud.Interface.Internal;
 
@@ -369,6 +372,56 @@ internal class PluginCategoryManager
 
         this.ResetContentDirty();
         return result;
+    }
+
+    /// <summary>
+    /// What <see cref="GetCurrentCategoryContent"/> returns, written into <paramref name="result"/> after clearing it,
+    /// for the installer's page that runs this every frame. Resets <see cref="IsContentDirty"/>.
+    /// </summary>
+    /// <param name="plugins">List of available plugins to install.</param>
+    /// <param name="result">Receives the plugins of the current category, in list order.</param>
+    public void FillCurrentCategoryContent(List<RemotePluginManifest> plugins, List<PluginManifest> result)
+    {
+        result.Clear();
+
+        if (this.IsSelectionValid)
+        {
+            var groupInfo = this.groupList[this.currentGroupIdx];
+
+            var includeAll = this.currentCategoryKind == CategoryKind.All ||
+                             this.currentCategoryKind == CategoryKind.Hidden ||
+                             groupInfo.GroupKind != GroupKind.Available;
+
+            if (includeAll)
+            {
+                foreach (var plugin in plugins)
+                    result.Add(plugin);
+            }
+            else
+            {
+                // Array.Find without its closure: the first match, or the default when none.
+                var selectedKind = default(CategoryKind);
+                foreach (var category in this.categoryList)
+                {
+                    if (category.CategoryKind == this.currentCategoryKind)
+                    {
+                        selectedKind = category.CategoryKind;
+                        break;
+                    }
+                }
+
+                foreach (var plugin in plugins)
+                {
+                    if (this.mapPluginCategories.TryGetValue(plugin, out var pluginCategoryIds) &&
+                        Array.IndexOf(pluginCategoryIds, selectedKind) >= 0)
+                    {
+                        result.Add(plugin);
+                    }
+                }
+            }
+        }
+
+        this.ResetContentDirty();
     }
 
     /// <summary>

@@ -123,6 +123,30 @@ internal class ProfileManager : IServiceType
         => this.DefaultProfile.WantsPlugin(workingPluginId) != null;
 
     /// <summary>
+    /// How many profiles declare a plugin, and the first of them in list order; what
+    /// <c>Profiles.Where(x => x.WantsPlugin(id) != null).ToArray()</c> gave, without the array.
+    /// </summary>
+    /// <param name="workingPluginId">The ID of the plugin.</param>
+    /// <param name="first">The first profile that declares it, or null.</param>
+    /// <returns>The number of profiles that declare it.</returns>
+    /// <remarks>Takes no lock, as the installer's LINQ did not; a list change during the walk throws as it did.</remarks>
+    public int CountProfilesWanting(Guid workingPluginId, out Profile? first)
+    {
+        first = null;
+        var count = 0;
+        foreach (var profile in this.profiles)
+        {
+            if (profile.WantsPlugin(workingPluginId) == null)
+                continue;
+
+            first ??= profile;
+            count++;
+        }
+
+        return count;
+    }
+
+    /// <summary>
     /// Add a new profile.
     /// </summary>
     /// <returns>The added profile.</returns>

@@ -93,6 +93,28 @@ internal sealed class PluginRowTextCache
         return cached.Author;
     }
 
+    /// <summary>The open row's "from repository" line: <paramref name="build"/>'s result for this URL.</summary>
+    /// <param name="row">What the row shows (the plugin); only held weakly.</param>
+    /// <param name="url">The repository URL.</param>
+    /// <param name="build">Builds the line in the current culture; must depend on nothing but its argument, the language and the culture.</param>
+    /// <returns>The repository line.</returns>
+    public string GetRepoLine(object row, string? url, Func<string?, string> build)
+    {
+        var generation = Volatile.Read(ref this.localizedGeneration);
+        var culture = CultureInfo.CurrentCulture;
+        var cached = this.rows.GetOrCreateValue(row);
+        if (!this.cacheLocalized || cached.Repo == null || !ReferenceEquals(cached.RepoUrl, url) ||
+            !ReferenceEquals(cached.RepoCulture, culture) || cached.RepoGeneration != generation)
+        {
+            cached.Repo = build(url);
+            cached.RepoUrl = url;
+            cached.RepoCulture = culture;
+            cached.RepoGeneration = generation;
+        }
+
+        return cached.Repo;
+    }
+
     /// <summary>A localized text that is the same for every row.</summary>
     /// <param name="slot">Where it is kept; one slot per text.</param>
     /// <param name="build">Reads the text.</param>
@@ -130,5 +152,13 @@ internal sealed class PluginRowTextCache
         public CultureInfo? AuthorCulture { get; set; }
 
         public int AuthorGeneration { get; set; }
+
+        public string? Repo { get; set; }
+
+        public string? RepoUrl { get; set; }
+
+        public CultureInfo? RepoCulture { get; set; }
+
+        public int RepoGeneration { get; set; }
     }
 }

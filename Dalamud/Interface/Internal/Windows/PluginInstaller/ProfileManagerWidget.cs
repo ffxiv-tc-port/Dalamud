@@ -2,7 +2,6 @@ using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
 
-using CheapLoc;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Configuration.Internal;
 using Dalamud.Interface.Colors;
@@ -16,6 +15,9 @@ using Dalamud.Plugin.Internal;
 using Dalamud.Plugin.Internal.Profiles;
 using Dalamud.Utility;
 using Serilog;
+
+// Labels here are read every frame; this keeps each one until the loc table changes.
+using Loc = Dalamud.Utility.Internal.CachedLoc;
 
 namespace Dalamud.Interface.Internal.Windows.PluginInstaller;
 

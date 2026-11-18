@@ -10,7 +10,6 @@ namespace Dalamud.Interface.Internal.Windows.PluginInstaller;
 /// <remarks>Not thread-safe; one instance per caller thread.</remarks>
 /// <typeparam name="T">The element type.</typeparam>
 internal sealed class StableStringKeySorter<T>
-    where T : class
 {
     private readonly Comparison<int> compareIndices;
 

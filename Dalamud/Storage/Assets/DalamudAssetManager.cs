@@ -339,6 +339,13 @@ internal sealed class DalamudAssetManager : IInternalDisposableService, IDalamud
         if (wrapTaskRef is not null)
             return wrapTaskRef;
 
+        return this.StartTextureWrap(ref wrapTaskRef, asset);
+    }
+
+    // Kept out of GetDalamudTextureWrapAsync: the lambda's closure is allocated on entry to the method holding it,
+    // and returning an already set slot is what every frame's icon read does.
+    private Task<IDalamudTextureWrap> StartTextureWrap(ref Task<IDalamudTextureWrap>? wrapTaskRef, DalamudAsset asset)
+    {
         var tcs = new TaskCompletionSource<IDalamudTextureWrap>();
         if (Interlocked.CompareExchange(ref wrapTaskRef, tcs.Task, null) is not { } wrapTask)
         {
