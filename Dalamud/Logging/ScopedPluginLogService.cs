@@ -117,6 +117,10 @@ internal class ScopedPluginLogService : IServiceType, IPluginLog
         if (level == LogEventLevel.Error)
             this.errorHandler.NotifyError();
 
+        // Same gate Logger.Write applies first; checked here so a filtered call skips building the prefixed template.
+        if (!this.Logger.IsEnabled(level))
+            return;
+
         this.Logger.Write(
             level,
             exception: exception,
