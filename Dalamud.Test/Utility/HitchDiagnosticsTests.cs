@@ -293,25 +293,26 @@ namespace Dalamud.Test.Utility
             Func<bool> inFrontNow = () => inFront;
             var step = Ticks(150);
 
-            monitor.Frame(step, counters, false, 0, 0, inFrontNow);
-            monitor.Frame(step * 2, counters, true, 0, 0, inFrontNow);
+            // Hidden at one end: a loading screen, then the window sampled behind.
+            monitor.Frame(step, counters, GameScreen.Loading, true, 0, 0, inFrontNow);
+            monitor.Frame(step * 2, counters, GameScreen.InGame, true, 0, 0, inFrontNow);
             Assert.Equal(0, monitor.LinesWritten);
 
-            monitor.Frame(step * 3, counters, true, 0, 0, inFrontNow);
+            monitor.Frame(step * 3, counters, GameScreen.InGame, true, 0, 0, inFrontNow);
             Assert.Equal(1, monitor.LinesWritten);
 
-            monitor.Frame(step * 4, counters, false, 0, 0, inFrontNow);
-            monitor.Frame(step * 5, counters, true, 0, 0, inFrontNow);
+            monitor.Frame(step * 4, counters, GameScreen.InGame, false, 0, 0, inFrontNow);
+            monitor.Frame(step * 5, counters, GameScreen.InGame, true, 0, 0, inFrontNow);
             Assert.Equal(1, monitor.LinesWritten);
 
             inFront = false;
-            monitor.Frame(step * 6, counters, true, 0, 0, inFrontNow);
+            monitor.Frame(step * 6, counters, GameScreen.InGame, true, 0, 0, inFrontNow);
             Assert.Equal(1, monitor.LinesWritten);
 
             inFront = true;
-            monitor.Frame((step * 6) + Ticks(100), counters, true, 0, 0, inFrontNow);
+            monitor.Frame((step * 6) + Ticks(100), counters, GameScreen.InGame, true, 0, 0, inFrontNow);
             Assert.Equal(1, monitor.LinesWritten);
-            monitor.Frame((step * 6) + Ticks(201), counters, true, 0, 0, inFrontNow);
+            monitor.Frame((step * 6) + Ticks(201), counters, GameScreen.InGame, true, 0, 0, inFrontNow);
             Assert.Equal(2, monitor.LinesWritten);
         }
 
@@ -333,7 +334,7 @@ namespace Dalamud.Test.Utility
 
             void Frame(int i)
             {
-                monitor.Frame(1 + (i * tick), HitchCounters.Read(), true, 0, 0, inFrontNow);
+                monitor.Frame(1 + (i * tick), HitchCounters.Read(), GameScreen.InGame, true, 0, 0, inFrontNow);
                 detector.Start();
                 attribution.Begin();
                 attribution.AddPlugin("A", i);
