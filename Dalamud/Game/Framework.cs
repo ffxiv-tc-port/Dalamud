@@ -98,7 +98,7 @@ internal sealed class Framework : IInternalDisposableService, IFramework
     {
         this.UpdateAttribution = new FrameworkUpdateAttribution();
         this.hitchDetector = new HitchDetector("FrameworkUpdate", this.configuration.FrameworkUpdateHitch, this.UpdateAttribution.Describe);
-        this.frameIntervalMonitor = new FrameIntervalMonitor(FrameIntervalHitchMs, 30 * Stopwatch.Frequency);
+        this.frameIntervalMonitor = new FrameIntervalMonitor(FrameIntervalHitchMs, 30 * Stopwatch.Frequency) { GapAttribution = FrameGapAttribution.Shared };
         this.gameWindowInFront = this.IsGameWindowInFront;
         this.gcPauseMonitor = new GcPauseMonitor(Stopwatch.GetTimestamp());
         this.allocationReport = new PluginAllocationReport(Stopwatch.GetTimestamp());
@@ -474,12 +474,14 @@ internal sealed class Framework : IInternalDisposableService, IFramework
 
         ThreadSafety.MarkMainThread();
         this.TickFrameState();
+        FrameGapAttribution.Shared.Reset();
         this.TickPerfDiagnostics();
 
         this.BeforeUpdate?.InvokeSafely(this);
 
         this.hitchDetector.Start();
         this.UpdateAttribution.Begin();
+        var updateSpan = FrameGapAttribution.Shared.Enter();
 
         try
         {
@@ -557,6 +559,7 @@ internal sealed class Framework : IInternalDisposableService, IFramework
         this.lastUpdateTicks = this.hitchDetector.LastElapsedTicks;
 
     original:
+        FrameGapAttribution.Shared.ExitUpdate(updateSpan);
         return this.CallOriginalUpdate(thisPtr);
     }
 

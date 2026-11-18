@@ -54,6 +54,12 @@ internal sealed class FrameIntervalMonitor
     /// <summary>Gets the number of lines written.</summary>
     public int LinesWritten { get; private set; }
 
+    /// <summary>Gets what a line tells about the time between the two updates; null leaves that part out.</summary>
+    public FrameGapAttribution? GapAttribution { get; init; }
+
+    /// <summary>Gets that part of the last line or kept detail, or null.</summary>
+    internal string? LastGapText { get; private set; }
+
     /// <summary>Takes the start of one framework update.</summary>
     /// <param name="now">The current <see cref="Stopwatch.GetTimestamp"/>.</param>
     /// <param name="counters">Runtime counters read now, on the framework thread.</param>
@@ -76,7 +82,7 @@ internal sealed class FrameIntervalMonitor
             {
                 var visible = this.lastScreen == GameScreen.InGame && this.lastInFront && screen == GameScreen.InGame && inFront;
                 if (visible && inFrontNow())
-                    wrote = this.Visible(now, gapMs, counters, previousUpdateTicks, previousGameTickTicks);
+                    wrote = this.Visible(now, now - this.lastTimestamp, gapMs, counters, previousUpdateTicks, previousGameTickTicks);
                 else
                     this.Hidden(screen, gapMs);
             }
@@ -94,12 +100,12 @@ internal sealed class FrameIntervalMonitor
         this.lastInFront = inFront;
     }
 
-    private bool Visible(long now, double gapMs, in HitchCounters counters, long updateTicks, long gameTickTicks)
+    private bool Visible(long now, long gapTicks, double gapMs, in HitchCounters counters, long updateTicks, long gameTickTicks)
     {
         var during = counters.Since(this.lastCounters);
         if (this.cooldown.TryLog(now, gapMs, out var leftOut, out var leftOutMaxMs, out var leftOutDetail, out var wantDetail))
         {
-            this.Write(gapMs, during, updateTicks, gameTickTicks, leftOut, leftOutMaxMs, leftOutDetail);
+            this.Write(gapMs, during, updateTicks, gameTickTicks, leftOut, leftOutMaxMs, leftOutDetail, this.DescribeGap(gapTicks, updateTicks));
             return true;
         }
 
@@ -108,6 +114,8 @@ internal sealed class FrameIntervalMonitor
             var text = HitchDetector.DescribeEnded(during, "the framework thread") + string.Create(
                 CultureInfo.InvariantCulture,
                 $"; the update before it: Dalamud and plugins {HitchCounters.Milliseconds(updateTicks):0.0} ms, the game's framework tick {HitchCounters.Milliseconds(gameTickTicks):0.0} ms");
+            if (this.DescribeGap(gapTicks, updateTicks) is { } gap)
+                text += "; " + gap;
             if (PluginLoadReport.DescribeLoading() is { } loadingNow)
                 text += "; " + loadingNow;
             this.cooldown.KeepDetail(text + ")");
@@ -165,11 +173,18 @@ internal sealed class FrameIntervalMonitor
             leftOutDetail == null ? HitchDetector.NoDetail : "; longest left out " + leftOutDetail);
     }
 
-    private void Write(double gapMs, in HitchCounters during, long updateTicks, long gameTickTicks, int leftOut, double leftOutMaxMs, string? leftOutDetail)
+    private string? DescribeGap(long gapTicks, long updateTicks)
+    {
+        var text = this.GapAttribution?.Describe(gapTicks, updateTicks);
+        this.LastGapText = text;
+        return text;
+    }
+
+    private void Write(double gapMs, in HitchCounters during, long updateTicks, long gameTickTicks, int leftOut, double leftOutMaxMs, string? leftOutDetail, string? gap)
     {
         this.LinesWritten++;
         Log.Warning(
-            "[FRAMEGAP] Long FrameInterval detected, {Total}ms > {Max}ms between two framework updates (logged in, not loading, game window in front); the update before it: Dalamud and plugins {UpdateMs:0.0} ms, the game's framework tick {GameTickMs:0.0} ms. During it: GC paused {GcPauseMs:0.0} ms, collections gen0 +{Gen0} gen1 +{Gen1} gen2 +{Gen2}; JIT on the framework thread {JitMs:0.0} ms for {JitMethods} methods; {LeftOut} more over the limit left out since the last line (longest {LeftOutMaxMs:0.0} ms){Extra:l}",
+            "[FRAMEGAP] Long FrameInterval detected, {Total}ms > {Max}ms between two framework updates (logged in, not loading, game window in front); the update before it: Dalamud and plugins {UpdateMs:0.0} ms, the game's framework tick {GameTickMs:0.0} ms. During it: GC paused {GcPauseMs:0.0} ms, collections gen0 +{Gen0} gen1 +{Gen1} gen2 +{Gen2}; JIT on the framework thread {JitMs:0.0} ms for {JitMethods} methods; {LeftOut} more over the limit left out since the last line (longest {LeftOutMaxMs:0.0} ms){Gap:l}{Extra:l}",
             gapMs,
             this.thresholdMs,
             HitchCounters.Milliseconds(updateTicks),
@@ -182,6 +197,7 @@ internal sealed class FrameIntervalMonitor
             during.JitMethods,
             leftOut,
             leftOutMaxMs,
+            gap == null ? string.Empty : "; " + gap,
             HitchDetector.Extra(leftOutDetail, PluginLoadReport.DescribeLoading()));
     }
 

@@ -34,6 +34,7 @@ using Dalamud.IoC.Internal;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
+using Dalamud.Utility.Internal;
 using Dalamud.Utility.Timing;
 using JetBrains.Annotations;
 using TerraFX.Interop.DirectX;
@@ -598,6 +599,19 @@ internal partial class InterfaceManager : IInternalDisposableService
     /// <summary>Draws Dalamud to the given scene representing the ImGui context.</summary>
     /// <param name="activeBackend">The scene to draw to.</param>
     private void RenderDalamudDraw(IImGuiBackend activeBackend)
+    {
+        var span = FrameGapAttribution.Shared.Enter();
+        try
+        {
+            this.RenderDalamudDrawFrame(activeBackend);
+        }
+        finally
+        {
+            FrameGapAttribution.Shared.ExitUiFrame(span);
+        }
+    }
+
+    private void RenderDalamudDrawFrame(IImGuiBackend activeBackend)
     {
         this.CumulativePresentCalls++;
         this.IsMainThreadInPresent = true;

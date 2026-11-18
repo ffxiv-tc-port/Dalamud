@@ -218,6 +218,7 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
 
             var meter = listener.AllocationMeter;
             var allocatedBefore = meter is null ? default : PluginAllocationMeter.Begin();
+            var span = FrameGapAttribution.Shared.Enter();
             try
             {
                 listener.FunctionDelegate.Invoke(eventType, args);
@@ -226,6 +227,10 @@ internal unsafe class AddonLifecycle : IInternalDisposableService
             {
                 if (!UnresolvedAddressLog.Instance.TryAbsorb(e, meter?.PluginName, $"{eventType} listener in {blame}"))
                     Log.Error(e, $"Exception in {blame} during {eventType} invoke.");
+            }
+            finally
+            {
+                FrameGapAttribution.Shared.ExitListener(span, listener.GapTally, eventType, listener.AddonName);
             }
 
             meter?.End(allocatedBefore);
@@ -479,6 +484,7 @@ internal class AddonLifecyclePluginScoped : IInternalDisposableService, IAddonLi
 
     private readonly List<AddonLifecycleEventListener> eventListeners = new();
     private readonly PluginAllocationMeter allocationMeter;
+    private readonly FrameGapAttribution.Tally gapTally;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AddonLifecyclePluginScoped"/> class.
@@ -487,6 +493,7 @@ internal class AddonLifecyclePluginScoped : IInternalDisposableService, IAddonLi
     internal AddonLifecyclePluginScoped(LocalPlugin plugin)
     {
         this.allocationMeter = new PluginAllocationMeter(plugin.InternalName, PluginAllocationMeter.AddonEvents);
+        this.gapTally = new FrameGapAttribution.Tally(plugin.InternalName);
     }
 
     /// <inheritdoc/>
@@ -512,7 +519,7 @@ internal class AddonLifecyclePluginScoped : IInternalDisposableService, IAddonLi
     /// <inheritdoc/>
     public void RegisterListener(AddonEvent eventType, string addonName, IAddonLifecycle.AddonEventDelegate handler)
     {
-        var listener = new AddonLifecycleEventListener(eventType, addonName, handler) { AllocationMeter = this.allocationMeter };
+        var listener = new AddonLifecycleEventListener(eventType, addonName, handler) { AllocationMeter = this.allocationMeter, GapTally = this.gapTally };
         this.eventListeners.Add(listener);
         this.addonLifecycleService.RegisterListener(listener);
     }

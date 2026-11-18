@@ -46,4 +46,9 @@ internal class AddonLifecycleEventListener
     /// Gets the meter that counts what the owning plugin's listeners allocate, or null for Dalamud's own listeners.
     /// </summary>
     internal PluginAllocationMeter? AllocationMeter { get; init; }
+
+    /// <summary>
+    /// Gets the owning plugin's time in the current frame gap, or null for Dalamud's own listeners.
+    /// </summary>
+    internal FrameGapAttribution.Tally? GapTally { get; init; }
 }

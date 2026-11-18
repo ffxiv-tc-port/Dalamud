@@ -289,6 +289,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
     private readonly Stopwatch stopwatch;
     private readonly HitchDetector hitchDetector;
     private readonly PluginAllocationMeter drawAllocations;
+    private readonly FrameGapAttribution.Tally drawTally;
     private readonly ImGuiStackMeter drawStacks;
     private readonly string namespaceName;
     private readonly InterfaceManager interfaceManager = Service<InterfaceManager>.Get();
@@ -323,6 +324,7 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
             this.hitchDetector = new HitchDetector($"UiBuilder({namespaceName})", this.configuration.UiBuilderHitch);
             this.namespaceName = namespaceName;
             this.plugin = plugin;
+            this.drawTally = new FrameGapAttribution.Tally(plugin.InternalName);
             UnresolvedAddressLog.Instance.RememberDisplayName(plugin.InternalName, plugin.Name);
 
             // 放在訂閱 Draw 之前：清理是後進先出，先退訂 Draw 才讓計數器退役。
@@ -757,6 +759,19 @@ public sealed class UiBuilder : IDisposable, IUiBuilder
     }
 
     private void OnDraw()
+    {
+        var start = FrameGapAttribution.Shared.BeginDraw();
+        try
+        {
+            this.DrawPlugin();
+        }
+        finally
+        {
+            FrameGapAttribution.Shared.EndDraw(start, this.drawTally);
+        }
+    }
+
+    private void DrawPlugin()
     {
         this.hitchDetector.Start();
 
