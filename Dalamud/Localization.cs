@@ -2,6 +2,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.Json;
 
 using CheapLoc;
 
@@ -22,10 +23,16 @@ public class Localization : IServiceType
 
     private const string FallbackLangCode = "en";
 
+    // LogicalName set in Dalamud.csproj; the only source is the repo's loc/dalamud_<lang>.json.
+    private const string BuiltinLocResourcePrefix = "Dalamud.loc.dalamud_";
+
     private readonly string locResourceDirectory;
     private readonly string locResourcePrefix;
     private readonly bool useEmbedded;
     private readonly Assembly assembly;
+
+    // Only Dalamud's own instance (FromAssets); plugins constructing Localization must not pick up Dalamud's strings.
+    private bool preferBuiltinLoc;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Localization"/> class.
@@ -149,7 +156,12 @@ public class Localization : IServiceType
 
         try
         {
-            Loc.Setup(this.ReadLocData(langCode), this.assembly);
+            if (!this.TrySetupBuiltin(langCode))
+            {
+                Loc.Setup(this.ReadLocData(langCode), this.assembly);
+                if (this.preferBuiltinLoc)
+                    Log.Information("使用資產目錄的 {LangCode:l} 語言檔（{Dir:l}）", langCode, this.locResourceDirectory);
+            }
         }
         catch (Exception ex)
         {
@@ -187,12 +199,56 @@ public class Localization : IServiceType
     /// <returns>A new instance.</returns>
     internal static Localization FromAssets(string assetDirectory, string? languageOverride)
     {
-        var t = new Localization(Path.Combine(assetDirectory, "UIRes", "loc", "dalamud"), "dalamud_");
+        var t = new Localization(Path.Combine(assetDirectory, "UIRes", "loc", "dalamud"), "dalamud_")
+        {
+            preferBuiltinLoc = true,
+        };
         if (!string.IsNullOrEmpty(languageOverride))
             t.SetupWithLangCode(languageOverride);
         else
             t.SetupWithUiCulture();
         return t;
+    }
+
+    /// <summary>
+    /// Sets up the built-in translation for <paramref name="langCode"/> if Dalamud ships one.
+    /// Returns false (caller falls back to the asset directory) when there is none or it is unusable.
+    /// </summary>
+    private bool TrySetupBuiltin(string langCode)
+    {
+        if (!this.preferBuiltinLoc)
+            return false;
+
+        using var stream = typeof(Localization).Assembly.GetManifestResourceStream($"{BuiltinLocResourcePrefix}{langCode}.json");
+        if (stream == null)
+            return false;
+
+        try
+        {
+            using var reader = new StreamReader(stream);
+            var json = reader.ReadToEnd();
+
+            int keyCount;
+            using (var doc = JsonDocument.Parse(json))
+            {
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                    throw new InvalidDataException("Built-in loc root is not a JSON object.");
+                keyCount = doc.RootElement.EnumerateObject().Count();
+            }
+
+            // An empty table would silently turn every string back to English.
+            if (keyCount == 0)
+                throw new InvalidDataException("Built-in loc has no keys.");
+
+            Loc.Setup(json, this.assembly);
+            Log.Information("使用內建 {LangCode:l} 語言檔（{KeyCount} 鍵）", langCode, keyCount);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "內建 {LangCode:l} 語言檔無法使用，改用資產目錄的語言檔", langCode);
+            return false;
+        }
     }
 
     private string ReadLocData(string langCode)

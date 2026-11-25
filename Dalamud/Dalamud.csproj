@@ -105,6 +105,7 @@
         <EmbeddedResource Include="Interface\ImGuiBackend\Renderers\imgui-vertex.hlsl.bytes">
             <LogicalName>imgui-vertex.hlsl.bytes</LogicalName>
         </EmbeddedResource>
+        <EmbeddedResource Include="..\loc\dalamud_tw.json" LogicalName="Dalamud.loc.dalamud_tw.json" WithCulture="false" Visible="false" />
     </ItemGroup>
     <ItemGroup>
         <ProjectReference Include="..\Dalamud.Common\Dalamud.Common.csproj" />
