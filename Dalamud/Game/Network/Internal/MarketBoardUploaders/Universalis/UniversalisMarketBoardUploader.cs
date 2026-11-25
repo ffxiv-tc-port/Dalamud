@@ -32,7 +32,7 @@ internal class UniversalisMarketBoardUploader : IMarketBoardUploader
         this.httpClient = happyHttpClient.SharedHttpClient;
 
     /// <inheritdoc/>
-    public async Task Upload(MarketBoardItemRequest request, ulong uploaderId, uint worldId)
+    public async Task<bool> Upload(MarketBoardItemRequest request, ulong uploaderId, uint worldId)
     {
         Log.Verbose("Starting Universalis upload");
 
@@ -108,10 +108,12 @@ internal class UniversalisMarketBoardUploader : IMarketBoardUploader
             Log.Warning("Universalis data upload for item#{CatalogId} returned status code {StatusCode}.\n" +
                         "    Response Body: {Body}", request.CatalogId, response.StatusCode, body);
         }
+
+        return response.IsSuccessStatusCode;
     }
 
     /// <inheritdoc/>
-    public async Task UploadTax(MarketTaxRates taxRates, ulong uploaderId, uint worldId)
+    public async Task<bool> UploadTax(MarketTaxRates taxRates, ulong uploaderId, uint worldId)
     {
         var taxUploadObject = new UniversalisTaxUploadRequest
         {
@@ -134,11 +136,12 @@ internal class UniversalisMarketBoardUploader : IMarketBoardUploader
         var taxUpload = JsonConvert.SerializeObject(taxUploadObject);
         Log.Verbose("{TaxPath}: {TaxUpload}", taxPath, taxUpload);
 
-        await this.httpClient.PostAsync($"{ApiBase}{taxPath}/{ApiKey}", new StringContent(taxUpload, Encoding.UTF8, "application/json"));
+        var response = await this.httpClient.PostAsync($"{ApiBase}{taxPath}/{ApiKey}", new StringContent(taxUpload, Encoding.UTF8, "application/json"));
 
         // ====================================================================================
 
         Log.Verbose("Universalis tax upload completed");
+        return response.IsSuccessStatusCode;
     }
 
     /// <inheritdoc/>
@@ -147,7 +150,7 @@ internal class UniversalisMarketBoardUploader : IMarketBoardUploader
     /// to track the available listings, that is done via the listings packet. All this does is remove
     /// a listing, or delete it, when a purchase has been made.
     /// </remarks>
-    public async Task UploadPurchase(MarketBoardPurchaseHandler purchaseHandler, ulong uploaderId, uint worldId)
+    public async Task<bool> UploadPurchase(MarketBoardPurchaseHandler purchaseHandler, ulong uploaderId, uint worldId)
     {
         var itemId = purchaseHandler.CatalogId;
 
@@ -171,10 +174,11 @@ internal class UniversalisMarketBoardUploader : IMarketBoardUploader
         message.Headers.Add("Authorization", ApiKey);
         message.Content = content;
 
-        await this.httpClient.SendAsync(message);
+        var response = await this.httpClient.SendAsync(message);
 
         // ====================================================================================
 
         Log.Verbose("Universalis purchase upload completed");
+        return response.IsSuccessStatusCode;
     }
 }

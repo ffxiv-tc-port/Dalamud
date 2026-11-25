@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Reactive.Concurrency;
 using System.Reactive.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 using Dalamud.Configuration.Internal;
@@ -15,6 +16,7 @@ using Dalamud.Game.Player;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Hooking;
 using Dalamud.Networking.Http;
+using Dalamud.Plugin.Services;
 using Dalamud.Utility;
 using Dalamud.Utility.Internal;
 
@@ -57,9 +59,11 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
     [ServiceManager.ServiceDependency]
     private readonly DalamudConfiguration configuration = Service<DalamudConfiguration>.Get();
 
-    private readonly MarketBoardUploadGuard uploadGuard = new(
+    private readonly MarketBoardUploadStats uploadStats = new(
         static () => Environment.TickCount64,
-        static line => Log.Information("{MbUploadGuardLine:l}", line));
+        static line => Log.Information("{MbUploadStatsLine:l}", line));
+
+    private readonly MarketBoardUploadGuard uploadGuard;
 
     private readonly MarketBoardRequestPairer pairer = new(
         static () => Environment.TickCount64,
@@ -73,6 +77,20 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         TargetSigScanner sigScanner,
         HappyHttpClient happyHttpClient)
     {
+        this.uploadGuard = new(
+            static () => Environment.TickCount64,
+            static line => Log.Information("{MbUploadGuardLine:l}", line),
+            this.uploadStats);
+
+        // 統計只在每幀檢查是否到期；刻意不宣告成服務相依，避免改動服務啟動順序。
+        Service<Framework>.GetAsync().ContinueWith(
+            task =>
+            {
+                if (task.IsCompletedSuccessfully && !this.disposing)
+                    task.Result.Update += this.OnFrameworkUpdateUploadStats;
+            },
+            TaskContinuationOptions.ExecuteSynchronously);
+
         this.uploader = new UniversalisMarketBoardUploader(happyHttpClient);
 
         this.addressResolver = new NetworkHandlersAddressResolver();
@@ -348,6 +366,10 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         this.mbSendPurchaseRequestHook?.Dispose();
         this.cfPopHook?.Dispose();
 
+        if (Service<Framework>.GetNullable(Service<Framework>.ExceptionPropagationMode.None) is { } framework)
+            framework.Update -= this.OnFrameworkUpdateUploadStats;
+        this.uploadStats.Flush();
+
         if (this.uploadGuard.BuildSummary() is { } summary)
             Log.Information("{MbUploadGuardLine:l}", summary);
         if (this.pairer.BuildSummary() is { } pairSummary)
@@ -486,6 +508,7 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
             Log.Error(
                 "Wrong number of Market Board listings received for request: {ListingsCount} != {RequestAmountToArrive} item#{RequestCatalogId}",
                 listings.Count, request.AmountToArrive, catalogId);
+            this.uploadStats.NoteCountMismatch();
             return;
         }
 
@@ -499,10 +522,11 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
         request.Listings.AddRange(listings);
         request.History.AddRange(sales);
 
-        Task.Run(() => this.uploader.Upload(request, uploaderId, worldId))
-            .ContinueWith(
-                task => Log.Error(task.Exception, "Market Board offerings data upload failed"),
-                TaskContinuationOptions.OnlyOnFaulted);
+        var upload = Task.Run(() => this.uploader.Upload(request, uploaderId, worldId));
+        upload.ContinueWith(
+            task => Log.Error(task.Exception, "Market Board offerings data upload failed"),
+            TaskContinuationOptions.OnlyOnFaulted);
+        this.CountWhenDone(upload, MarketBoardUploadGuard.Kind.Listings, catalogId, worldId);
     }
 
     private IDisposable HandleMarketTaxRates()
@@ -527,10 +551,11 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
                                taxes.CrystariumTax,
                                taxes.SharlayanTax);
 
-                           Task.Run(() => this.uploader.UploadTax(taxes, uploaderInfo.UploaderId, uploaderInfo.WorldId))
-                               .ContinueWith(
-                                   task => Log.Error(task.Exception, "Market Board tax data upload failed"),
-                                   TaskContinuationOptions.OnlyOnFaulted);
+                           var upload = Task.Run(() => this.uploader.UploadTax(taxes, uploaderInfo.UploaderId, uploaderInfo.WorldId));
+                           upload.ContinueWith(
+                               task => Log.Error(task.Exception, "Market Board tax data upload failed"),
+                               TaskContinuationOptions.OnlyOnFaulted);
+                           this.CountWhenDone(upload, MarketBoardUploadGuard.Kind.Tax, 0, uploaderInfo.WorldId);
                        },
                        ex => Log.Error(ex, "Failed to handle Market Board tax data event"));
     }
@@ -557,10 +582,11 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
                                handler.CatalogId,
                                handler.PricePerUnit * handler.ItemQuantity,
                                handler.ListingId);
-                           Task.Run(() => this.uploader.UploadPurchase(handler, uploaderInfo.UploaderId, uploaderInfo.WorldId))
-                               .ContinueWith(
-                                   task => Log.Error(task.Exception, "Market Board purchase data upload failed"),
-                                   TaskContinuationOptions.OnlyOnFaulted);
+                           var upload = Task.Run(() => this.uploader.UploadPurchase(handler, uploaderInfo.UploaderId, uploaderInfo.WorldId));
+                           upload.ContinueWith(
+                               task => Log.Error(task.Exception, "Market Board purchase data upload failed"),
+                               TaskContinuationOptions.OnlyOnFaulted);
+                           this.CountWhenDone(upload, MarketBoardUploadGuard.Kind.Purchase, handler.CatalogId, uploaderInfo.WorldId);
                        },
                        ex => Log.Error(ex, "Failed to handle Market Board purchase event"));
     }
@@ -568,6 +594,28 @@ internal unsafe class NetworkHandlers : IInternalDisposableService
     private bool ShouldUpload<T>(T any)
     {
         return this.configuration.IsMbCollect;
+    }
+
+    // 擲例外或被取消的上傳也算一筆失敗；例外本身由既有的 OnlyOnFaulted 接續記錄。
+    private void CountWhenDone(Task<bool> upload, MarketBoardUploadGuard.Kind kind, uint itemId, uint worldId)
+    {
+        upload.ContinueWith(
+            task => this.uploadStats.NoteUpload(kind, itemId, worldId, task.IsCompletedSuccessfully && task.Result),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private void OnFrameworkUpdateUploadStats(IFramework framework)
+    {
+        try
+        {
+            this.uploadStats.Tick();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Could not write the market board upload summary");
+        }
     }
 
     private void MarketPurchasePacketDetour(uint targetId, nint packetData)

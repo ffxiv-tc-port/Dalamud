@@ -26,6 +26,7 @@ internal sealed class MarketBoardUploadGuard
 
     private readonly Func<long> clockMs;
     private readonly Action<string> log;
+    private readonly MarketBoardUploadStats? stats;
     private readonly object gate = new();
     private readonly SkipStat[] skips = new SkipStat[KindCount * ReasonCount];
     private readonly long[] passed = new long[KindCount];
@@ -38,10 +39,12 @@ internal sealed class MarketBoardUploadGuard
     /// </summary>
     /// <param name="clockMs">Monotonic clock in milliseconds.</param>
     /// <param name="log">Receives each finished diagnostic line.</param>
-    public MarketBoardUploadGuard(Func<long> clockMs, Action<string> log)
+    /// <param name="stats">Also counts every skip and turned-off upload, unthrottled; optional.</param>
+    public MarketBoardUploadGuard(Func<long> clockMs, Action<string> log, MarketBoardUploadStats? stats = null)
     {
         this.clockMs = clockMs;
         this.log = log;
+        this.stats = stats;
     }
 
     /// <summary>The three upload paths.</summary>
@@ -182,6 +185,7 @@ internal sealed class MarketBoardUploadGuard
             }
         }
 
+        this.stats?.NoteSkip(reason);
         if (line != null)
             this.log(line);
     }
@@ -191,6 +195,7 @@ internal sealed class MarketBoardUploadGuard
     /// </summary>
     public void NoteDisabled()
     {
+        this.stats?.NoteDisabled();
         lock (this.gate)
         {
             if (this.disabledLogged)
