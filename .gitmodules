@@ -1,27 +1,36 @@
 [submodule "lib/FFXIVClientStructs"]
 	path = lib/FFXIVClientStructs
 	url = https://github.com/ffxiv-tc-port/FFXIVClientStructs.git
+	branch = tc-7.30
 [submodule "lib/Nomade040-nmd"]
 	path = lib/Nomade040-nmd
 	url = https://github.com/ffxiv-tc-port/nmd.git
+	branch = master
 [submodule "lib/TsudaKageyu-minhook"]
 	path = lib/TsudaKageyu-minhook
 	url = https://github.com/ffxiv-tc-port/minhook.git
+	branch = master
 [submodule "lib/FfxivArgLauncher"]
 	path = lib/FfxivArgLauncher
 	url = https://github.com/ffxiv-tc-port/FfxivArgLauncher.git
+	branch = main
 [submodule "lib/cimgui"]
 	path = lib/cimgui
 	url = https://github.com/ffxiv-tc-port/gc-cimgui
+	branch = tc-submodule-url
 [submodule "lib/cimplot"]
 	path = lib/cimplot
 	url = https://github.com/ffxiv-tc-port/gc-cimplot
+	branch = tc-submodule-url
 [submodule "lib/cimguizmo"]
 	path = lib/cimguizmo
 	url = https://github.com/ffxiv-tc-port/gc-cimguizmo
+	branch = tc-submodule-url
 [submodule "lib/Hexa.NET.ImGui"]
 	path = lib/Hexa.NET.ImGui
 	url = https://github.com/ffxiv-tc-port/Hexa.NET.ImGui.git
+	branch = dalamud
 [submodule "lib/Lumina"]
 	path = lib/Lumina
 	url = https://github.com/ffxiv-tc-port/Lumina.git
+	branch = tc-7.30
