@@ -139,17 +139,17 @@ internal sealed class SettingsTabDtr : SettingsTab
 
         ImGui.Text(Loc.Localize("DalamudSettingServerInfoBarSpacing", "Server Info Bar spacing"));
         ImGui.TextColoredWrapped(ImGuiColors.DalamudGrey, Loc.Localize("DalamudSettingServerInfoBarSpacingHint", "Configure the amount of space between entries in the server info bar here."));
-        ImGui.SliderInt("Spacing"u8, ref this.dtrSpacing, 0, 40);
+        ImGui.SliderInt(Loc.Localize("DalamudSettingServerInfoBarSpacingSlider", "Spacing"), ref this.dtrSpacing, 0, 40);
 
         ImGui.Text(Loc.Localize("DalamudSettingServerInfoBarDirection", "Server Info Bar direction"));
         ImGui.TextColoredWrapped(ImGuiColors.DalamudGrey, Loc.Localize("DalamudSettingServerInfoBarDirectionHint", "If checked, the Server Info Bar elements will expand to the right instead of the left."));
-        ImGui.Checkbox("Swap Direction"u8, ref this.dtrSwapDirection);
+        ImGui.Checkbox(Loc.Localize("DalamudSettingServerInfoBarSwapDirection", "Swap Direction"), ref this.dtrSwapDirection);
 
         ImGui.Text(Loc.Localize("DalamudSettingServerInfoBarWrap", "Wrap the Server Info Bar when it gets too long"));
         ImGui.TextColoredWrapped(ImGuiColors.DalamudGrey, Loc.Localize("DalamudSettingServerInfoBarWrapHint", "If checked, entries that do not fit within the maximum width (or before the screen edge) continue on another row. Rows go below the bar, or above it when the bar is in the lower half of the screen."));
-        ImGui.Checkbox("Wrap"u8, ref this.dtrWrapWhenTooLong);
+        ImGui.Checkbox(Loc.Localize("DalamudSettingServerInfoBarWrapCheckbox", "Wrap"), ref this.dtrWrapWhenTooLong);
         ImGui.Text(Loc.Localize("DalamudSettingServerInfoBarWrapWidth", "Maximum row width (0 = only wrap at the screen edge)"));
-        ImGui.SliderInt("Max Width"u8, ref this.dtrWrapWidth, 0, 2000);
+        ImGui.SliderInt(Loc.Localize("DalamudSettingServerInfoBarWrapWidthSlider", "Max Width"), ref this.dtrWrapWidth, 0, 2000);
 
         base.Draw();
     }

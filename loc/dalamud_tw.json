@@ -827,6 +827,22 @@
     "message": "每列最大寬度（0＝只在超出畫面邊緣時換行）",
     "description": "SettingsTabDtr.Draw"
   },
+  "DalamudSettingServerInfoBarSpacingSlider": {
+    "message": "間距",
+    "description": "SettingsTabDtr.Draw"
+  },
+  "DalamudSettingServerInfoBarSwapDirection": {
+    "message": "反轉方向",
+    "description": "SettingsTabDtr.Draw"
+  },
+  "DalamudSettingServerInfoBarWrapCheckbox": {
+    "message": "自動換行",
+    "description": "SettingsTabDtr.Draw"
+  },
+  "DalamudSettingServerInfoBarWrapWidthSlider": {
+    "message": "最大寬度",
+    "description": "SettingsTabDtr.Draw"
+  },
   "DalamudSettingsExperimental": {
     "message": "試驗性功能",
     "description": "SettingsTabExperimental.get_Title"
