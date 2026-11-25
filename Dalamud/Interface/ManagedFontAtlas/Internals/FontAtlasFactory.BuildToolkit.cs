@@ -535,7 +535,7 @@ internal sealed partial class FontAtlasFactory
                     "zh-HK" => "Microsoft JhengHei UI",
                     "zh-TW" => "Microsoft JhengHei UI",
                     "zh-Hans" => "Microsoft YaHei UI",
-                    "zh-Hant" => "Microsoft YaHei UI",
+                    "zh-Hant" => "Microsoft JhengHei UI",
                     "zu-ZA" => "Segoe UI",
                     _ => null,
                 };
